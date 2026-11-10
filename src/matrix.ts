@@ -46,7 +46,17 @@ const LoginSchema = z.object({
 export async function loginWithToken(homeserver: string, loginToken: string, deviceName: string, http: OidcHttp = {}): Promise<MatrixSession> {
   const url = `${base(homeserver)}/_matrix/client/v3/login`;
   const body = { type: 'm.login.token', token: loginToken, refresh_token: true, initial_device_display_name: deviceName };
-  const answer = parseAnswer(LoginSchema, await postJson(url, body, http), url);
+  let raw: unknown;
+  try {
+    raw = await postJson(url, body, http);
+  } catch (error) {
+    // Synapse login tokens are single use and last 2 minutes
+    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+      throw new TwakeAiError('login_cancelled', 'The Twake Chat sign-in took too long or was already used: start the connection again.');
+    }
+    throw error;
+  }
+  const answer = parseAnswer(LoginSchema, raw, url);
   const now = (http.now ?? nowS)();
   return {
     userId: answer.user_id,

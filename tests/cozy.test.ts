@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   COZY_SCOPE,
   cozyAuthorizeUrl,
+  cozyClientExists,
   deleteCozyClient,
   exchangeCozyCode,
   exchangeOidcForCozy,
@@ -124,5 +125,18 @@ describe('context and unregistration', () => {
   it('deletes the client with its registration token', async () => {
     await deleteCozyClient(cozy.url, client);
     expect(cozy.deleted).toEqual([client.clientId]);
+  });
+});
+
+describe('review fixes', () => {
+  it('does not take an unknown answer for an enabled exchange', async () => {
+    cozy.oidcMissing = true;
+    expect(await oidcExchangeEnabled(cozy.url)).toBe(false);
+  });
+
+  it('tells whether the registered client still exists', async () => {
+    expect(await cozyClientExists(cozy.url, client)).toBe(true);
+    await deleteCozyClient(cozy.url, client);
+    expect(await cozyClientExists(cozy.url, client)).toBe(false);
   });
 });

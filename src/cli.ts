@@ -59,15 +59,27 @@ export function defaultDeps(): CliDeps {
     chooseVault: (paths) => chooseVault(paths),
     now: () => Math.floor(Date.now() / 1000),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    readLine: async (question) => {
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        return await rl.question(question);
-      } finally {
-        rl.close();
-      }
-    },
+    readLine: (question) => readLineFrom(process.stdin, process.stdout, question),
   };
+}
+
+/** One line from `input`; refuses, instead of hanging, when the input closes first (no terminal, `< /dev/null`). */
+export function readLineFrom(input: NodeJS.ReadableStream, output: NodeJS.WritableStream, question: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const rl = createInterface({ input, output });
+    let answered = false;
+    // 'line' and 'close' are synchronous events: a line followed at once by the end of the input still counts
+    rl.once('line', (line) => {
+      answered = true;
+      rl.close();
+      resolve(line);
+    });
+    rl.once('close', () => {
+      if (!answered) reject(new TwakeAiError('login_cancelled', 'No address was pasted (the input closed): run the command again in a terminal.'));
+    });
+    rl.setPrompt(question);
+    rl.prompt();
+  });
 }
 
 export function packageVersion(): string {
@@ -138,6 +150,10 @@ async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number>
       strict: true,
     }),
   );
+  if (values.agent !== undefined && !values.chat) throw new TwakeAiError('usage', `--agent goes with --chat.\n\n${USAGE}`);
+  if ((values.drive || values.chat) && (values.email !== undefined || values['client-id'] !== undefined || values.scope !== undefined)) {
+    throw new TwakeAiError('usage', `--email, --client-id and --scope belong to the Twake sign-in, not to --drive or --chat.\n\n${USAGE}`);
+  }
   if (values.drive || values.chat) return connectService(values, io, d);
   // a damaged configuration must not stop the sign-in that repairs it
   const saved = await loadConfig(d.paths).catch(() => undefined);

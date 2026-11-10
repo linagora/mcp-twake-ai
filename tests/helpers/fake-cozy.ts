@@ -11,6 +11,10 @@ export interface FakeCozy {
   apps: string[];
   /** allow_oauth_token: POST /oidc/access_token exchanges an IdP token */
   oidcExchange: boolean;
+  /** /oidc/access_token does not exist (404) */
+  oidcMissing: boolean;
+  /** the exchange itself fails for a registered client */
+  oidcExchangeFails: boolean;
   /** IdP tokens received by /oidc/access_token */
   oidcTokens: string[];
   /** exp claim of the JWT access tokens it issues */
@@ -42,6 +46,8 @@ export async function startFakeCozy(): Promise<FakeCozy> {
     deleted: [],
     apps: ['mail', 'chat', 'space', 'project'],
     oidcExchange: false,
+    oidcMissing: false,
+    oidcExchangeFails: false,
     oidcTokens: [],
     tokenExp: 4_000_000_000,
     close: () =>
@@ -87,6 +93,13 @@ export async function startFakeCozy(): Promise<FakeCozy> {
         grant_types: ['authorization_code', 'refresh_token'],
       });
     }
+    if (req.method === 'GET' && url.pathname.startsWith('/auth/register/')) {
+      const clientId = decodeURIComponent(url.pathname.slice('/auth/register/'.length));
+      const entry = clients.get(clientId);
+      if (!entry) return json(404, { error: 'not found' });
+      if (entry.registration !== bearer) return json(401, { error: 'unauthorized' });
+      return json(200, { client_id: clientId, client_name: 'Twake AI' });
+    }
     if (req.method === 'DELETE' && url.pathname.startsWith('/auth/register/')) {
       const clientId = decodeURIComponent(url.pathname.slice('/auth/register/'.length));
       if (clients.get(clientId)?.registration !== bearer) return json(401, { error: 'unauthorized' });
@@ -127,8 +140,12 @@ export async function startFakeCozy(): Promise<FakeCozy> {
     }
     if (req.method === 'POST' && url.pathname === '/oidc/access_token') {
       const body = JSON.parse(raw) as { client_id?: string; client_secret?: string; oidc_token?: string };
+      if (cozy.oidcMissing) return json(404, { error: 'not found' });
       if (!cozy.oidcExchange) return json(400, { error: 'this endpoint is not enabled' });
+      // cozy-stack validates the IdP token first (userinfo), then looks the client up
+      if (!(body.oidc_token ?? '').startsWith('idp-')) return json(400, { error: 'invalid token' });
       if (clients.get(body.client_id ?? '')?.secret !== body.client_secret) return json(400, { error: 'the client must be registered' });
+      if (cozy.oidcExchangeFails) return json(400, { error: 'invalid token' });
       cozy.oidcTokens.push(body.oidc_token ?? '');
       return json(200, issue(body.client_id ?? '', true));
     }

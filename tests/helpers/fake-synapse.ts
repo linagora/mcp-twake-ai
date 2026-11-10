@@ -14,6 +14,8 @@ export interface FakeSynapse {
   deviceNames: Record<string, string>;
   loggedOut: string[];
   refreshCount: number;
+  /** every access token issued so far expires (as refreshable Synapse tokens do after 5 minutes) */
+  expireIssuedAccessTokens(): void;
   close(): Promise<void>;
 }
 
@@ -31,6 +33,7 @@ export async function startFakeSynapse(): Promise<FakeSynapse> {
   const loginTokens = new Set<string>();
   const refreshTokens = new Map<string, string>(); // refresh token → device
   const accessTokens = new Map<string, string>(); // access token → device
+  const expired = new Set<string>();
   let devices = 0;
   const token = (prefix: string) => `${prefix}-${randomBytes(6).toString('hex')}`;
 
@@ -42,6 +45,9 @@ export async function startFakeSynapse(): Promise<FakeSynapse> {
     deviceNames: {},
     loggedOut: [],
     refreshCount: 0,
+    expireIssuedAccessTokens() {
+      for (const access of accessTokens.keys()) expired.add(access);
+    },
     close: () =>
       new Promise((resolve) => {
         server.closeAllConnections();
@@ -100,7 +106,7 @@ export async function startFakeSynapse(): Promise<FakeSynapse> {
     }
     if (req.method === 'POST' && url.pathname === '/_matrix/client/v3/logout') {
       const device = accessTokens.get(bearer);
-      if (!device) return json(401, { errcode: 'M_UNKNOWN_TOKEN', error: 'Unknown token' });
+      if (!device || expired.has(bearer)) return json(401, { errcode: 'M_UNKNOWN_TOKEN', error: 'Unknown token', soft_logout: true });
       synapse.loggedOut.push(device);
       return json(200, {});
     }

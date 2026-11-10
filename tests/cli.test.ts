@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { main, type CliDeps, type Io } from '../src/cli.js';
+import { PassThrough, Readable } from 'node:stream';
+import { main, readLineFrom, type CliDeps, type Io } from '../src/cli.js';
 import { writePrivateFile } from '../src/files.js';
 import { chooseVault } from '../src/vault.js';
 import { startFakeIdp, type FakeIdp } from './helpers/fake-idp.js';
@@ -261,6 +262,22 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await main(['token', 'chat'], io, await testDeps())).toBe(2);
     expect(io.err).toContain('--agent');
     expect(io.out).toBe('');
+  });
+
+  it('refuses flags that do not go together', async () => {
+    const deps = await signedIn();
+    for (const argv of [['login', '--agent', 'hermes'], ['login', '--drive', '--email', 'bob@example.com'], ['login', '--chat', '--agent', 'hermes', '--client-id', 'x']]) {
+      const io = captureIo();
+      expect(await main(argv, io, deps)).toBe(2);
+      expect(io.out).toBe('');
+    }
+  });
+
+  it('gives up cleanly when the input closes before an address is pasted', async () => {
+    await expect(readLineFrom(Readable.from([]), new PassThrough(), 'Address: ')).rejects.toMatchObject({ code: 'login_cancelled' });
+    expect(await readLineFrom(Readable.from(['http://127.0.0.1:8765/callback?x=1\n']), new PassThrough(), 'Address: ')).toBe(
+      'http://127.0.0.1:8765/callback?x=1',
+    );
   });
 
   it('asks to connect Drive before serving its tokens', async () => {

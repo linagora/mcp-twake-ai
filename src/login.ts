@@ -1,7 +1,7 @@
 import { loadConfig, saveConfig, type TwakeAiConfig } from './config.js';
 import { completeFromUserinfo, type TwakeEnvironment } from './discovery.js';
 import { TwakeAiError } from './errors.js';
-import { OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
+import { COZY_GRANT, matrixGrant, OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
 import { withLock } from './lock.js';
 import { LOOPBACK_PORTS, waitForCallback } from './loopback.js';
 import {
@@ -17,7 +17,7 @@ import {
   type TokenSet,
 } from './oidc.js';
 import type { AppPaths } from './paths.js';
-import { writeCachedToken } from './token-cache.js';
+import { deleteCachedToken, writeCachedToken } from './token-cache.js';
 import type { Vault } from './vault.js';
 
 export { OIDC_GRANT, OIDC_REFRESH_KEY };
@@ -64,16 +64,29 @@ export async function loginOidc(request: LoginRequest, deps: LoginDeps): Promise
     await deps.vault.set(OIDC_REFRESH_KEY, refreshToken);
     await writeCachedToken(deps.paths, OIDC_GRANT, { accessToken: tokens.accessToken, expiresAt: tokens.expiresAt });
   });
-  // signing in again must not drop Drive and Chat, unless this is another domain
   const previous = await loadConfig(deps.paths).catch(() => undefined);
-  const kept = previous && previous.environment.domain === request.environment.domain ? { drive: previous.drive, chat: previous.chat } : {};
+  const vault = deps.vault.kind === 'keyring' ? 'keyring' : 'file';
+  const environment = completeFromUserinfo(request.environment, userinfo, request.email);
+  let drive: TwakeAiConfig['drive'];
+  let chat: TwakeAiConfig['chat'];
+  if (previous) {
+    // Drive and Chat stay connected only for the same account, whose secrets are in the same vault, on the same servers
+    const sameAccount =
+      previous.email.trim().toLowerCase() === request.email.trim().toLowerCase() && previous.vault === vault && previous.environment.domain === environment.domain;
+    drive = sameAccount && previous.environment.cozy.instance === environment.cozy.instance ? previous.drive : undefined;
+    chat = sameAccount && previous.environment.matrix.homeserver === environment.matrix.homeserver ? previous.chat : undefined;
+    // a dropped connection's cached tokens must not be served to the new account
+    if (previous.drive && !drive) await deleteCachedToken(deps.paths, COZY_GRANT);
+    for (const agent of previous.chat && !chat ? Object.keys(previous.chat) : []) await deleteCachedToken(deps.paths, matrixGrant(agent));
+  }
   const config: TwakeAiConfig = {
     version: 1,
     email: request.email.trim(),
-    vault: deps.vault.kind === 'keyring' ? 'keyring' : 'file',
+    vault,
     oidc: { clientId: request.client.clientId, scope: request.client.scope },
-    environment: completeFromUserinfo(request.environment, userinfo, request.email),
-    ...kept,
+    environment,
+    drive,
+    chat,
   };
   await saveConfig(deps.paths, config);
   return config;

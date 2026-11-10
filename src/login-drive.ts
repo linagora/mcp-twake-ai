@@ -1,6 +1,7 @@
 import { saveConfig, type TwakeAiConfig } from './config.js';
 import {
   cozyAuthorizeUrl,
+  cozyClientExists,
   exchangeCozyCode,
   exchangeOidcForCozy,
   fetchPlatformApps,
@@ -40,9 +41,11 @@ export async function loginDrive(
   }
   requireSecureUrl(instance, 'The Twake Drive instance');
   const { client, config: registered } = await ensureClient(config, instance, ports, deps);
+  const timeoutMs = options.timeoutMs ?? 5 * 60_000;
+  // the IdP token exchange avoids the browser; if it fails anyway, the browser sign-in still works
   const tokens = (await oidcExchangeEnabled(instance, deps.http))
-    ? await exchangeOidcForCozy(instance, client, await deps.oidcToken(), deps.http)
-    : await authorize(instance, client, mode, ports, options.timeoutMs ?? 5 * 60_000, deps);
+    ? await exchangeOidcForCozy(instance, client, await deps.oidcToken(), deps.http).catch(() => authorize(instance, client, mode, ports, timeoutMs, deps))
+    : await authorize(instance, client, mode, ports, timeoutMs, deps);
   const refreshToken = tokens.refreshToken;
   if (!refreshToken) throw new TwakeAiError('unsupported', `${instance} gave no refresh token: Twake Drive cannot stay connected.`);
   await withLock(deps.paths.locksDir, COZY_GRANT, async () => {
@@ -64,7 +67,8 @@ async function ensureClient(
 ): Promise<{ client: CozyClient; config: TwakeAiConfig }> {
   const [clientSecret, registrationToken] = await Promise.all([deps.vault.get(COZY_KEYS.clientSecret), deps.vault.get(COZY_KEYS.registrationToken)]);
   if (config.drive && clientSecret && registrationToken) {
-    return { client: { clientId: config.drive.clientId, clientSecret, registrationToken }, config };
+    const client = { clientId: config.drive.clientId, clientSecret, registrationToken };
+    if (await cozyClientExists(instance, client, deps.http)) return { client, config };
   }
   const client = await registerCozyClient(instance, ports.map((port) => `http://127.0.0.1:${port}/callback`), deps.http);
   await deps.vault.set(COZY_KEYS.clientSecret, client.clientSecret);

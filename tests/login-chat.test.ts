@@ -96,3 +96,14 @@ describe('loginChat', () => {
     expect(synapse.deviceNames).toEqual({});
   });
 });
+
+describe('loginChat after the review', () => {
+  it('logs the previous device out even when its access token has expired', async () => {
+    const { config, deps } = await setup();
+    const first = await loginChat(config, 'hermes', 'browser', deps, [0]);
+    synapse.expireIssuedAccessTokens();
+    const again = await loginChat(first, 'hermes', 'browser', deps, [0]);
+    expect(again.chat?.hermes?.deviceId).toBe('DEVICE2');
+    expect(synapse.loggedOut).toEqual(['DEVICE1']);
+  });
+});

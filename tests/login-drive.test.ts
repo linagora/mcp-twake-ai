@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig, saveConfig, type TwakeAiConfig } from '../src/config.js';
+import { deleteCozyClient } from '../src/cozy.js';
 import { COZY_KEYS } from '../src/grants.js';
 import { loginDrive, type DriveLoginDeps } from '../src/login-drive.js';
 import { readCachedToken } from '../src/token-cache.js';
@@ -101,5 +102,26 @@ describe('loginDrive', () => {
     const { config, deps } = await setup();
     const withoutInstance = { ...config, environment: { ...config.environment, cozy: {} } };
     await expect(loginDrive(withoutInstance, 'browser', deps, [0])).rejects.toMatchObject({ code: 'unsupported' });
+  });
+});
+
+describe('loginDrive after the review', () => {
+  it('registers a new client when "Twake AI" was removed from the connected devices', async () => {
+    const { config, deps } = await setup();
+    const first = await loginDrive(config, 'browser', deps, [0]);
+    const clientSecret = (await deps.vault.get(COZY_KEYS.clientSecret)) ?? '';
+    const registrationToken = (await deps.vault.get(COZY_KEYS.registrationToken)) ?? '';
+    await deleteCozyClient(cozy.url, { clientId: first.drive?.clientId ?? '', clientSecret, registrationToken });
+    const again = await loginDrive(first, 'browser', deps, [0]);
+    expect(again.drive?.clientId).not.toBe(first.drive?.clientId);
+    expect(cozy.registrations).toBe(2);
+  });
+
+  it('falls back to the browser when the IdP token exchange fails', async () => {
+    cozy.oidcExchange = true;
+    cozy.oidcExchangeFails = true;
+    const { config, deps } = await setup();
+    const updated = await loginDrive(config, 'browser', deps, [0]);
+    expect(updated.drive?.clientId).toMatch(/^client-/);
   });
 });

@@ -102,7 +102,8 @@ export async function oidcExchangeEnabled(instance: string, http: HttpOptions = 
     await postJson(`${instance}/oidc/access_token`, { client_id: 'probe', client_secret: 'probe', scope: COZY_SCOPE, oidc_token: 'probe' }, http);
     return true;
   } catch (error) {
-    return error instanceof HttpError && !error.body.includes('this endpoint is not enabled');
+    // enabled: the stack rejects the dummy token itself (400); anything else (404, 403, network…) means no
+    return error instanceof HttpError && error.status === 400 && !error.body.includes('this endpoint is not enabled');
   }
 }
 
@@ -110,6 +111,17 @@ export async function exchangeOidcForCozy(instance: string, client: CozyClient, 
   const url = `${instance}/oidc/access_token`;
   const body = { client_id: client.clientId, client_secret: client.clientSecret, scope: COZY_SCOPE, oidc_token: oidcToken };
   return toTokens(await postJson(url, body, http), (http.now ?? nowS)(), url);
+}
+
+/** Whether the client registered by twake-ai still exists: the user may have removed "Twake AI" from the connected devices. */
+export async function cozyClientExists(instance: string, client: CozyClient, http: HttpOptions = {}): Promise<boolean> {
+  try {
+    await getJson(`${instance}/auth/register/${encodeURIComponent(client.clientId)}`, http, { authorization: `Bearer ${client.registrationToken}` });
+    return true;
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 401 || error.status === 404)) return false;
+    throw error;
+  }
 }
 
 export async function deleteCozyClient(instance: string, client: CozyClient, http: HttpOptions = {}): Promise<void> {

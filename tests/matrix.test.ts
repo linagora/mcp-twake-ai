@@ -76,3 +76,9 @@ describe('sessions', () => {
     expect(synapse.loggedOut).toEqual(['DEVICE1']);
   });
 });
+
+describe('spent login tokens', () => {
+  it('says the sign-in took too long when the login token is spent', async () => {
+    await expect(loginWithToken(synapse.url, 'loginToken-spent', 'Twake AI · hermes')).rejects.toMatchObject({ code: 'login_cancelled' });
+  });
+});
