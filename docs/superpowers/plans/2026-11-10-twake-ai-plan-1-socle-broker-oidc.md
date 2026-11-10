@@ -1767,11 +1767,11 @@ describe('emailDomain', () => {
 
 describe('discover', () => {
   it('finds every Twake.ai service of the LINAGORA SaaS from the email address', async () => {
-    expect(await discover('mmaudet@linagora.com', deps(linagoraRoutes, linagoraSrv))).toEqual(linagoraEnvironment);
+    expect(await discover('jdoe@linagora.com', deps(linagoraRoutes, linagoraSrv))).toEqual(linagoraEnvironment);
   });
 
   it('accepts an address typed with spaces and capitals', async () => {
-    expect((await discover('  MMaudet@Linagora.COM ', deps(linagoraRoutes, linagoraSrv))).domain).toBe('linagora.com');
+    expect((await discover('  JDoe@Linagora.COM ', deps(linagoraRoutes, linagoraSrv))).domain).toBe('linagora.com');
   });
 
   it('says the domain is not a Twake.ai domain when it has no Matrix client discovery', async () => {
@@ -1790,7 +1790,7 @@ describe('discover', () => {
   });
 
   it('reports a network failure as such, not as a foreign domain', async () => {
-    await expect(discover('mmaudet@linagora.com', deps({}))).rejects.toMatchObject({ code: 'network' });
+    await expect(discover('jdoe@linagora.com', deps({}))).rejects.toMatchObject({ code: 'network' });
   });
 
   it('leaves out what it cannot find, and falls back to the JMAP well-known URL', async () => {
@@ -1799,7 +1799,7 @@ describe('discover', () => {
       'https://jmap.linagora.com/.well-known/jmap': () => new Response('{}', { status: 401 }),
     };
     delete routes['https://space.linagora.com/'];
-    const env = await discover('mmaudet@linagora.com', deps(routes, { '_jmap._tcp.linagora.com': linagoraSrv['_jmap._tcp.linagora.com']! }));
+    const env = await discover('jdoe@linagora.com', deps(routes, { '_jmap._tcp.linagora.com': linagoraSrv['_jmap._tcp.linagora.com']! }));
     expect(env.services).toEqual({
       mail: { url: 'https://jmap.linagora.com/.well-known/jmap', source: 'discovered' },
       project: { url: 'https://projects.linagora.com', source: 'convention' },
@@ -1808,7 +1808,7 @@ describe('discover', () => {
 
   it('keeps a non-standard SRV port and prefers the lowest priority', async () => {
     const env = await discover(
-      'mmaudet@linagora.com',
+      'jdoe@linagora.com',
       deps(linagoraRoutes, {
         '_caldavs._tcp.linagora.com': [
           { name: 'backup.linagora.com.', port: 443, priority: 10, weight: 1 },
@@ -1822,12 +1822,12 @@ describe('discover', () => {
 
 describe('completeFromUserinfo', () => {
   it('takes the Twake Drive instance from workplaceFqdn', () => {
-    const env = completeFromUserinfo(linagoraEnvironment, { workplaceFqdn: 'mmaudet.twake.linagora.com' }, 'mmaudet@linagora.com');
-    expect(env.cozy).toEqual({ pattern: 'https://{username}.twake.linagora.com', instance: 'https://mmaudet.twake.linagora.com' });
+    const env = completeFromUserinfo(linagoraEnvironment, { workplaceFqdn: 'jdoe.twake.linagora.com' }, 'jdoe@linagora.com');
+    expect(env.cozy).toEqual({ pattern: 'https://{username}.twake.linagora.com', instance: 'https://jdoe.twake.linagora.com' });
   });
 
   it('falls back to the instance pattern with the local part of the address', () => {
-    expect(completeFromUserinfo(linagoraEnvironment, {}, 'MMaudet@linagora.com').cozy.instance).toBe('https://mmaudet.twake.linagora.com');
+    expect(completeFromUserinfo(linagoraEnvironment, {}, 'JDoe@linagora.com').cozy.instance).toBe('https://jdoe.twake.linagora.com');
   });
 });
 ```

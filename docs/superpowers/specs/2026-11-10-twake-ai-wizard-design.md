@@ -130,7 +130,7 @@ Relevée le 2026-11-10 sur le SaaS LINAGORA (`prenom@linagora.com`) :
 | 3 | DNS `SRV _jmap._tcp.<domaine>` | `jmap.linagora.com:443`, puis la session JMAP via `/.well-known/jmap` sur cet hôte (à défaut, `/jmap/session`) |
 | 4 | DNS `SRV _caldavs._tcp.<domaine>` | `dav.linagora.com:443` |
 | 5 | convention `space.<domaine>` et `projects.<domaine>`, vérifiée par une requête | `space.linagora.com`, `projects.linagora.com` (marquées « devinées » dans l'interface) |
-| 6 | après connexion : userinfo `workplaceFqdn` | instance cozy exacte (ex. `mmaudet.twake.linagora.com`) ; le modèle `{username}` de l'étape 1 ne sert qu'en repli |
+| 6 | après connexion : userinfo `workplaceFqdn` | instance cozy exacte (ex. `jdoe.twake.linagora.com`) ; le modèle `{username}` de l'étape 1 ne sert qu'en repli |
 | 7 | après connexion : `GET https://<instance>/settings/context` | `additional_platform_apps` : apps activées pour l'organisation (`mail`, `chat`, `space`, `project`, `calendar`…), utilisées pour pré-cocher les services |
 | 8 | `GET <homeserver>/_matrix/client/v3/login` | flux `m.login.sso` (IdP `oidc-twake`) et `m.login.token` |
 
