@@ -109,9 +109,14 @@ async function srvBase(service: string, domain: string, deps: DiscoveryDeps): Pr
   } catch {
     return undefined;
   }
-  const best = [...records].sort((a, b) => a.priority - b.priority || b.weight - a.weight)[0];
+  // DNS answers are not authenticated: only targets inside the email's domain may later receive the user's tokens
+  const inDomain = (record: SrvRecord) => {
+    const host = record.name.replace(/\.$/, '').toLowerCase();
+    return host === domain || host.endsWith(`.${domain}`);
+  };
+  const best = records.filter(inDomain).sort((a, b) => a.priority - b.priority || b.weight - a.weight)[0];
   if (!best) return undefined;
-  const host = best.name.replace(/\.$/, '');
+  const host = best.name.replace(/\.$/, '').toLowerCase();
   return best.port === 443 ? `https://${host}` : `https://${host}:${best.port}`;
 }
 
