@@ -112,7 +112,8 @@ Bibliothèques pressenties : `@clack/prompts` (questions), `open` (navigateur), 
   - les agents déclarés, avec, pour chaque entrée écrite, son nom et l'empreinte de ce qui a été écrit ;
   - l'identifiant du client OAuth cozy, et le `user_id` et le `device_id` Matrix par agent.
 - Coffre de l'OS : refresh token OIDC, refresh token cozy et secret du client cozy, jetons Matrix par agent.
-- `~/.cache/twake-ai/tokens.json` (0600) : jetons d'accès en cache avec leur `expires_at`. Ça évite de solliciter le Trousseau macOS à chaque appel.
+- `~/.cache/twake-ai/tokens/<autorisation>.json` (0600, un fichier par autorisation : `oidc`, `cozy`, `matrix-<agent>`) : jeton d'accès en cache avec son `expires_at`. Ça évite de solliciter le Trousseau macOS à chaque appel. Un fichier par autorisation permet à deux autorisations de se renouveler en même temps sans écraser le cache l'une de l'autre.
+- Variable `TWAKE_AI_HOME` : si elle est définie, tous ces répertoires sont regroupés sous ce chemin (tests, test réel, plusieurs comptes).
 - `~/.local/share/twake-ai/chat/<agent>/` : store E2EE et index de Chat, un par agent.
 - `~/.local/state/twake-ai/twake-ai.log` : journal, jetons masqués.
 
@@ -385,6 +386,7 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 | Demande | Équipe | Bloquant ? |
 |---|---|---|
 | Client OIDC « twake-ai-agents » (section 7.4) | IdP / exploitation SaaS | **oui** |
+| Les six MCP lancent `*_TOKEN_COMMAND` avec `execFile('/bin/sh', ['-c', …])` (vérifié le 2026-11-10 dans `token-command.ts` de chaque dépôt) : sous Windows, il n'y a pas de `/bin/sh`. Il faut passer par `cmd.exe /d /s /c` quand `process.platform === 'win32'` | dépôts MCP | **oui pour Windows** |
 | Ajouter les URL de Space et Project dans `.well-known/matrix/client` (par exemple sous une clé `app.twake.ai`) | exploitation SaaS | non : la convention `<service>.<domaine>` sert de repli |
 | Activer `allow_oauth_token` sur les contextes cozy du SaaS, avec `userinfo_url` vers l'IdP | exploitation cozy | non : sert à Drive sans redirection ni navigateur |
 | Activer `login/get_token` (MSC3882) sur Synapse | exploitation Matrix | non : évite une redirection par agent pour Chat |
@@ -394,8 +396,8 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 ## 15. À vérifier au début de l'implémentation
 
 1. Prise en charge de l'élicitation par Claude Desktop et Cursor.
-2. Comment chaque MCP exécute `*_TOKEN_COMMAND` : à travers un shell, ou en découpant la chaîne en arguments. Ça décide du guillemetage des chemins avec espaces, notamment sous Windows (`C:\Program Files\nodejs\node.exe`, un nom d'utilisateur avec espace dans `%LOCALAPPDATA%`).
-3. Les audiences acceptées par `jmap.linagora.com` et `dav.linagora.com` avec un jeton OIDC, et si `dav.linagora.com` a besoin de `DAV_HREF_PREFIX`.
+2. ~~Comment chaque MCP exécute `*_TOKEN_COMMAND`~~ : vérifié le 2026-11-10, les six passent par `/bin/sh -c`. Sous Linux et macOS, `TOKEN_CMD` met donc chaque chemin entre apostrophes POSIX. Sous Windows, il faut d'abord corriger les MCP (section 14).
+3. Les audiences acceptées par `jmap.linagora.com` et `dav.linagora.com` avec un jeton OIDC. (`dav.linagora.com` sert DAV à la racine : `/.well-known/caldav` redirige vers `/calendars`, donc pas de `DAV_HREF_PREFIX`. `jmap.linagora.com/.well-known/jmap` redirige vers `/jmap/session`.)
 4. Si LemonLDAP fait tourner les refresh tokens, et quelle est la durée de la session hors ligne.
 5. Si Synapse renvoie un refresh token avec `refresh_token: true`, et si `login/get_token` est activé.
 6. L'URL de la session JMAP à partir de la cible SRV (`/.well-known/jmap`).
