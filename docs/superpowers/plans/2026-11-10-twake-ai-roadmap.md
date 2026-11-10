@@ -7,7 +7,7 @@ La spec est découpée en quatre plans. Chacun livre un logiciel qui fonctionne 
 | Plan | Livre | Sections de la spec | Dépend de |
 |---|---|---|---|
 | **1. Socle et broker OIDC** (`2026-11-10-twake-ai-plan-1-socle-broker-oidc.md`) | `twake-ai login`, `twake-ai token <mail\|dav\|space\|project>` : le `my-token-broker` des README, utilisable tout de suite à la main | 5.2 (discovery, auth OIDC, vault), 5.3, 6, 7.1 (OIDC), 7.2, 7.4 | — |
-| **2. Drive et Chat** | `token drive`, `token chat --agent X`, `login --agent X`, mode sans navigateur par URL collée | 6 (étape 7, apps activées), 7.1 (cozy, Matrix), 7.2 | plan 1 |
+| **2. Drive et Chat** (`2026-11-10-twake-ai-plan-2-drive-chat.md`) | `token drive`, `token chat --agent X`, `login --agent X`, mode sans navigateur par URL collée | 6 (étape 7, apps activées), 7.1 (cozy, Matrix), 7.2 | plan 1 |
 | **3. Lanceur, agents, export** | installation des MCP en versions figées dans le préfixe privé, `twake-ai run`, les cinq adaptateurs d'agents, `twake-ai export` | 5.3 (préfixe), 9, 10, 11 | plans 1 et 2 |
 | **4. Parcours complet et exploitation** | `twake-ai setup` interactif et non interactif (bannière, i18n fr/en), `status`, `logout`, `uninstall`, journal, CI sur 3 OS, test réel | 8, 12, 13.4, 13.5 | plans 1 à 3 |
 
