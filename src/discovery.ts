@@ -38,13 +38,18 @@ const MatrixClientWellKnownSchema = z.object({
   'app.twake.chat': z.object({ common_settings: z.object({ application_url: z.string() }).optional() }).optional(),
 });
 
+/** A plain DNS host name: nothing that a URL parser would read as a path, a fragment, a port or credentials. */
+const HOST_NAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+
 export function emailDomain(email: string): string {
   const trimmed = email.trim();
   const at = trimmed.lastIndexOf('@');
   if (at < 1 || at === trimmed.length - 1 || /\s/.test(trimmed)) {
     throw new TwakeAiError('usage', `"${email}" is not an email address.`);
   }
-  return trimmed.slice(at + 1).toLowerCase();
+  const domain = trimmed.slice(at + 1).toLowerCase();
+  if (!HOST_NAME.test(domain)) throw new TwakeAiError('usage', `"${email}" is not an email address.`);
+  return domain;
 }
 
 const notTwake = (domain: string) =>
@@ -112,7 +117,8 @@ async function srvBase(service: string, domain: string, deps: DiscoveryDeps): Pr
   // DNS answers are not authenticated: only targets inside the email's domain may later receive the user's tokens
   const inDomain = (record: SrvRecord) => {
     const host = record.name.replace(/\.$/, '').toLowerCase();
-    return host === domain || host.endsWith(`.${domain}`);
+    // a plain host name first: `attacker.example/.linagora.com` ends with the domain but is not in it
+    return HOST_NAME.test(host) && (host === domain || host.endsWith(`.${domain}`));
   };
   const best = records.filter(inDomain).sort((a, b) => a.priority - b.priority || b.weight - a.weight)[0];
   if (!best) return undefined;

@@ -197,3 +197,23 @@ describe('discover: SRV targets', () => {
     expect(env.services.dav?.url).toBe('https://dav.linagora.com/');
   });
 });
+
+describe('discover: host names', () => {
+  it('ignores SRV targets that are not plain host names, whatever they end with', async () => {
+    const env = await discover(
+      'jdoe@linagora.com',
+      deps(linagoraRoutes, {
+        '_jmap._tcp.linagora.com': [{ name: 'attacker.example/.linagora.com', port: 443, priority: 0, weight: 1 }],
+        '_caldavs._tcp.linagora.com': [{ name: 'attacker.example#.linagora.com', port: 443, priority: 0, weight: 1 }],
+      }),
+    );
+    expect(env.services.mail).toBeUndefined();
+    expect(env.services.dav).toBeUndefined();
+  });
+
+  it('refuses an email domain that is not a plain host name', () => {
+    for (const bad of ['<jdoe@linagora.com>', 'jdoe@attacker.example/x', 'jdoe@linagora.com#x', 'jdoe@linagora..com']) {
+      expect(() => emailDomain(bad)).toThrow(expect.objectContaining({ code: 'usage' }));
+    }
+  });
+});
