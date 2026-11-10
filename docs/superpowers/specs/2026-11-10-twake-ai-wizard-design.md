@@ -388,7 +388,8 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 | Ajouter les URL de Space et Project dans `.well-known/matrix/client` (par exemple sous une clé `app.twake.ai`) | exploitation SaaS | non : la convention `<service>.<domaine>` sert de repli |
 | Activer `allow_oauth_token` sur les contextes cozy du SaaS, avec `userinfo_url` vers l'IdP | exploitation cozy | non : sert à Drive sans redirection ni navigateur |
 | Activer `login/get_token` (MSC3882) sur Synapse | exploitation Matrix | non : évite une redirection par agent pour Chat |
-| Mettre à jour le README de mcp-twake-chat (il est publié sur npm) et renvoyer, dans les six README, vers `twake-ai` comme broker | dépôts MCP | non |
+| README de mcp-twake-chat : installation par npm (correction prête sur la branche `docs/npm-install`) | dépôt mcp-twake-chat | non |
+| Une fois `twake-ai` publié, renvoyer vers lui comme broker dans les six README, à la place de `my-token-broker` | dépôts MCP | non |
 
 ## 15. À vérifier au début de l'implémentation
 
