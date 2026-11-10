@@ -7,6 +7,7 @@ import { readCachedToken } from '../src/token-cache.js';
 import { MemoryVault } from '../src/vault.js';
 import { startFakeIdp, type FakeIdp } from './helpers/fake-idp.js';
 import { tempPaths } from './helpers/tmp.js';
+import { saveConfig } from '../src/config.js';
 
 let idp: FakeIdp;
 let environment: TwakeEnvironment;
@@ -106,5 +107,24 @@ describe('chooseLoginMode', () => {
     expect(chooseLoginMode({ noBrowser: false, env: { SSH_CONNECTION: '1.2.3.4 5 6.7.8.9 22', DISPLAY: ':0' }, platform: 'linux' })).toBe('device');
     expect(chooseLoginMode({ noBrowser: false, env: {}, platform: 'linux' })).toBe('device');
     expect(chooseLoginMode({ noBrowser: true, env: {}, platform: 'darwin' })).toBe('device');
+  });
+});
+
+describe('signing in again', () => {
+  it('keeps the Drive and Chat connections', async () => {
+    const d = await deps();
+    const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    await saveConfig(d.paths, { ...first, drive: { clientId: 'client-1', apps: ['mail'] }, chat: { hermes: { userId: '@alice:example.com', deviceId: 'D1' } } });
+    const again = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    expect(again.drive).toEqual({ clientId: 'client-1', apps: ['mail'] });
+    expect(again.chat).toEqual({ hermes: { userId: '@alice:example.com', deviceId: 'D1' } });
+  });
+
+  it('drops them when signing in to another domain', async () => {
+    const d = await deps();
+    const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    await saveConfig(d.paths, { ...first, drive: { clientId: 'client-1', apps: [] } });
+    const other = await loginOidc({ email: 'alice@other.example', environment: { ...environment, domain: 'other.example' }, client, mode: 'browser', ports: [0] }, d);
+    expect(other.drive).toBeUndefined();
   });
 });

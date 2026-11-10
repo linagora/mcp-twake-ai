@@ -1,6 +1,7 @@
-import { saveConfig, type TwakeAiConfig } from './config.js';
+import { loadConfig, saveConfig, type TwakeAiConfig } from './config.js';
 import { completeFromUserinfo, type TwakeEnvironment } from './discovery.js';
 import { TwakeAiError } from './errors.js';
+import { OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
 import { withLock } from './lock.js';
 import { LOOPBACK_PORTS, waitForCallback } from './loopback.js';
 import {
@@ -19,8 +20,7 @@ import type { AppPaths } from './paths.js';
 import { writeCachedToken } from './token-cache.js';
 import type { Vault } from './vault.js';
 
-export const OIDC_GRANT = 'oidc';
-export const OIDC_REFRESH_KEY = 'oidc.refresh_token';
+export { OIDC_GRANT, OIDC_REFRESH_KEY };
 
 export type LoginMode = 'browser' | 'device';
 
@@ -64,12 +64,16 @@ export async function loginOidc(request: LoginRequest, deps: LoginDeps): Promise
     await deps.vault.set(OIDC_REFRESH_KEY, refreshToken);
     await writeCachedToken(deps.paths, OIDC_GRANT, { accessToken: tokens.accessToken, expiresAt: tokens.expiresAt });
   });
+  // signing in again must not drop Drive and Chat, unless this is another domain
+  const previous = await loadConfig(deps.paths).catch(() => undefined);
+  const kept = previous && previous.environment.domain === request.environment.domain ? { drive: previous.drive, chat: previous.chat } : {};
   const config: TwakeAiConfig = {
     version: 1,
     email: request.email.trim(),
     vault: deps.vault.kind === 'keyring' ? 'keyring' : 'file',
     oidc: { clientId: request.client.clientId, scope: request.client.scope },
     environment: completeFromUserinfo(request.environment, userinfo, request.email),
+    ...kept,
   };
   await saveConfig(deps.paths, config);
   return config;
