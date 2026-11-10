@@ -1,12 +1,14 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
-import type { CatalogContext } from '../src/catalog.js';
+import { tokenCommand, type CatalogContext } from '../src/catalog.js';
 import type { TwakeAiConfig } from '../src/config.js';
 import { defaultServices, exportFiles, writeExport } from '../src/exporter.js';
-import { prefixDir } from '../src/installer.js';
+import { serverDir } from '../src/installer.js';
 import { installFakeMcp } from './helpers/fake-mcp.js';
 import { tempDir, tempPaths } from './helpers/tmp.js';
 
@@ -49,8 +51,7 @@ describe('exportFiles', () => {
       elicitation: { enabled: true, timeout: 300 },
     });
     expect(files['claude-code.sh']).toContain(`claude mcp add-json --scope user twake-mail '{"type":"stdio","command":"/usr/bin/node"`);
-    expect(files['mail.env']).toContain(`JMAP_SESSION_URL="https://jmap.linagora.com/jmap/session"`);
-    expect(files['chat.env']).toContain(`MATRIX_TOKEN_COMMAND="'/usr/bin/node' '/opt/twake-ai/build/bin.js' 'token' 'chat' '--agent' 'zed'"`);
+    expect(files['mail.env']).toContain(`JMAP_SESSION_URL='https://jmap.linagora.com/jmap/session'`);
     expect(files['README.md']).toContain('mcpServers.json');
   });
 
@@ -58,7 +59,7 @@ describe('exportFiles', () => {
     const ctx = await context();
     const files = await exportFiles({ agent: 'zed', services: ['project'], raw: true }, ctx);
     const entry = JSON.parse(files['mcpServers.json']!).mcpServers['twake-project'];
-    expect(entry.args).toEqual([join(prefixDir(ctx.paths), 'node_modules', 'mcp-twake-project', 'build', 'index.js')]);
+    expect(entry.args).toEqual([join(serverDir(ctx.paths, 'mcp-twake-project'), 'node_modules', 'mcp-twake-project', 'build', 'index.js')]);
     expect(entry.env).toMatchObject({ TWAKE_PROJECT_URL: 'https://projects.linagora.com', TWAKE_PROJECT_TOKEN_COMMAND: expect.stringContaining("'token' 'project'") });
   });
 
@@ -77,5 +78,36 @@ describe('defaultServices and writeExport', () => {
     await writeExport(dir, { 'claude-code.sh': '#!/bin/sh\n', 'README.md': '# x\n' });
     expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# x\n');
     if (process.platform !== 'win32') expect((await stat(join(dir, 'claude-code.sh'))).mode & 0o111).not.toBe(0);
+  });
+});
+
+describe('exportFiles: safety and re-export', () => {
+  it.skipIf(process.platform === 'win32')('writes .env files that a POSIX shell sources without running anything', async () => {
+    const ctx = await context();
+    const hostile = { ...ctx, config: { ...ctx.config, environment: { ...ctx.config.environment, services: { mail: { url: 'https://jmap.linagora.com/$(touch pwned)`touch pwned2`', source: 'discovered' as const } } } } };
+    const files = await exportFiles({ agent: 'zed', services: ['mail'], raw: false }, hostile);
+    const dir = await tempDir();
+    await writeExport(dir, files);
+    const read = (name: string) => execFileSync('/bin/sh', ['-c', `set -a; . ./mail.env; printf '%s' "$${name}"`], { cwd: dir, encoding: 'utf8' });
+    expect(read('JMAP_SESSION_URL')).toBe('https://jmap.linagora.com/$(touch pwned)`touch pwned2`');
+    expect(read('JMAP_TOKEN_COMMAND')).toBe(tokenCommand('mail', undefined, ctx));
+    expect(existsSync(join(dir, 'pwned')) || existsSync(join(dir, 'pwned2'))).toBe(false);
+  });
+
+  it('carries TWAKE_AI_HOME into every entry, so the agent uses the same account', async () => {
+    const ctx = await context();
+    const launcher = await exportFiles({ agent: 'zed', services: ['mail'], raw: false, twakeAiHome: '/b' }, ctx);
+    expect(JSON.parse(launcher['mcpServers.json']!).mcpServers['twake-mail'].env).toEqual({ TWAKE_AI_HOME: '/b' });
+    const raw = await exportFiles({ agent: 'zed', services: ['mail'], raw: true, twakeAiHome: '/b' }, ctx);
+    expect(JSON.parse(raw['mcpServers.json']!).mcpServers['twake-mail'].env).toMatchObject({ TWAKE_AI_HOME: '/b', JMAP_AUTH_METHOD: 'command' });
+    expect(raw['mail.env']).toContain(`TWAKE_AI_HOME='/b'`);
+  });
+
+  it('writes a Claude Code script that can be run again', async () => {
+    const files = await exportFiles({ agent: 'zed', services: ['mail'], raw: false }, await context());
+    const script = files['claude-code.sh']!;
+    const remove = script.indexOf('claude mcp remove --scope user twake-mail >/dev/null 2>&1 || true');
+    expect(remove).toBeGreaterThan(-1);
+    expect(script.indexOf('claude mcp add-json --scope user twake-mail')).toBeGreaterThan(remove);
   });
 });

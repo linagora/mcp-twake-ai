@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CATALOG } from '../../src/catalog.js';
 import type { ServiceId } from '../../src/broker.js';
-import { prefixDir, type Runner } from '../../src/installer.js';
+import { serverDir, type Runner } from '../../src/installer.js';
 import type { AppPaths } from '../../src/paths.js';
 
 /**
@@ -35,7 +35,7 @@ rl.on('close', () => process.exit(0));
 /** Puts a package that looks like the pinned MCP server of `service` in the private prefix. */
 export async function installFakeMcp(paths: AppPaths, service: ServiceId, script = FAKE_MCP, version = CATALOG[service].version): Promise<void> {
   const pkg = CATALOG[service];
-  const dir = join(prefixDir(paths), 'node_modules', pkg.name);
+  const dir = join(serverDir(paths, pkg.name), 'node_modules', pkg.name);
   await mkdir(join(dir, 'build'), { recursive: true });
   await writeFile(join(dir, 'package.json'), JSON.stringify({ name: pkg.name, version, type: 'module', bin: { [pkg.name]: 'build/index.js' } }));
   await writeFile(join(dir, 'build', 'index.js'), script);

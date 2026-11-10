@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TwakeAiError } from './errors.js';
 import { getJson, HttpError, parseAnswer, postJson, requestJson, type HttpOptions } from './http.js';
+import { isSafeDeviceId } from './grants.js';
 import type { OidcHttp } from './oidc.js';
 
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -36,7 +37,7 @@ export interface MatrixSession {
 
 const LoginSchema = z.object({
   user_id: z.string(),
-  device_id: z.string(),
+  device_id: z.string().refine(isSafeDeviceId, 'not a usable device id'),
   access_token: z.string(),
   refresh_token: z.string().nullish(),
   expires_in_ms: z.number().nullish(),

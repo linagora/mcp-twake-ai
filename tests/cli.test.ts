@@ -299,6 +299,25 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toContain(out);
   });
 
+  it('checks every service before creating a Chat device or installing anything', async () => {
+    const deps = await signedIn();
+    const npm = fakeNpm(deps.paths);
+    deps.runInstall = npm;
+    const io = captureIo();
+    expect(await main(['export', '--agent', 'zed', '--services', 'drive,chat', '--out', join(deps.paths.dataDir, '..', 'x')], io, deps)).toBe(1);
+    expect(io.err).toContain('twake-ai login --drive');
+    expect(synapse.deviceNames).toEqual({});
+    expect(npm.calls).toEqual([]);
+  });
+
+  it('says how to leave Chat out when it comes by default', async () => {
+    const deps = await signedIn();
+    deps.runInstall = fakeNpm(deps.paths);
+    const io = captureIo();
+    expect(await main(['export', '--agent', 'zed', '--out', join(deps.paths.dataDir, '..', 'y')], io, deps)).toBe(0);
+    expect(io.out).toContain('--services');
+  });
+
   it('refuses an unknown service in --services', async () => {
     const io = captureIo();
     expect(await main(['export', '--agent', 'zed', '--services', 'mail,calendar'], io, await signedIn())).toBe(2);

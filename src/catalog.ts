@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import type { ServiceId } from './broker.js';
 import type { TwakeAiConfig } from './config.js';
 import { TwakeAiError } from './errors.js';
-import { checkAgentId } from './grants.js';
+import { checkAgentId, isSafeDeviceId } from './grants.js';
 import type { AppPaths } from './paths.js';
 
 export interface McpPackage {
@@ -90,6 +90,9 @@ export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContex
     case 'chat': {
       const device = config.chat?.[agent];
       if (!device) throw new TwakeAiError('login_required', `Twake Chat is not connected for ${agent}: run \`twake-ai login --chat --agent ${agent}\`.`);
+      if (!isSafeDeviceId(device.deviceId)) {
+        throw new TwakeAiError('bad_response', `The Twake Chat device id of ${agent} is not usable: run \`twake-ai login --chat --agent ${agent}\`.`);
+      }
       return {
         MATRIX_USER_ID: device.userId,
         MATRIX_TOKEN_COMMAND: tokenCommand('chat', agent, ctx),

@@ -24,6 +24,11 @@ export function checkAgentId(agent: string): string {
   return agent;
 }
 
+/** Matrix device ids become folder names (the encryption store): letters, digits, `.`, `_`, `-`, never `.` or `..`. */
+export function isSafeDeviceId(deviceId: string): boolean {
+  return /^[A-Za-z0-9._-]{1,255}$/.test(deviceId) && deviceId !== '.' && deviceId !== '..';
+}
+
 export const matrixGrant = (agent: string) => `matrix-${checkAgentId(agent)}`;
 
 export const matrixKey = (agent: string, kind: 'access_token' | 'refresh_token') => `matrix.${checkAgentId(agent)}.${kind}`;

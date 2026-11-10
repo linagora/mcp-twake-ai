@@ -130,3 +130,10 @@ describe('detectLanguage', () => {
     expect(detectLanguage({})).toBe('en');
   });
 });
+
+describe('serviceEnv: Chat device ids', () => {
+  it('refuses a device id that could name another folder', () => {
+    const hostile = { ...ctx, config: { ...config, chat: { hermes: { userId: '@jdoe:linagora.com', deviceId: '../../x' } } } };
+    expect(() => serviceEnv('chat', 'hermes', hostile)).toThrow(expect.objectContaining({ code: 'bad_response' }));
+  });
+});

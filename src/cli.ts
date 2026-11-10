@@ -2,7 +2,7 @@ import { resolveSrv } from 'node:dns/promises';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { getToken, isServiceId, SERVICE_IDS, type ServiceId } from './broker.js';
-import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig } from './config.js';
+import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig, type TwakeAiConfig } from './config.js';
 import { discover, type DiscoveryDeps } from './discovery.js';
 import { TwakeAiError } from './errors.js';
 import { hostOf, HttpError } from './http.js';
@@ -15,7 +15,7 @@ import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
 import { fileURLToPath } from 'node:url';
-import { detectLanguage, systemTimezone } from './catalog.js';
+import { detectLanguage, serviceEnv, systemTimezone } from './catalog.js';
 import { runService } from './launcher.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
 import { ensureInstalled, type Runner } from './installer.js';
@@ -298,14 +298,25 @@ async function exportCommand(args: string[], io: Io, d: CliDeps): Promise<number
     if (!isServiceId(service)) throw new TwakeAiError('usage', `"${service}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
   }
   const chosen = services as ServiceId[];
+  const ctxFor = (current: TwakeAiConfig) => ({
+    config: current,
+    paths: d.paths,
+    nodePath: d.nodePath,
+    cliPath: d.cliPath,
+    language: detectLanguage(d.env),
+    timezone: systemTimezone(),
+  });
+  // every other service is checked before anything is created or installed
+  for (const service of chosen) if (service !== 'chat') serviceEnv(service, agent, ctxFor(config));
   if (chosen.includes('chat') && !config.chat?.[agent]) {
+    if (values.services === undefined) io.stdout(`Twake Chat is included: its device for ${agent} is created now (choose other services with --services).\n`);
     // later, the token command runs inside the MCP server and cannot open a browser: the device is created now
     await connectService({ chat: true, agent, 'no-browser': values['no-browser'] }, io, d);
     config = (await loadConfig(d.paths)) ?? config;
   }
-  const ctx = { config, paths: d.paths, nodePath: d.nodePath, cliPath: d.cliPath, language: detectLanguage(d.env), timezone: systemTimezone() };
+  const ctx = ctxFor(config);
   await ensureInstalled(d.paths, chosen, { run: d.runInstall, print: (line) => io.stdout(`${line}\n`) });
-  const files = await exportFiles({ agent, services: chosen, raw: values.raw ?? false }, ctx);
+  const files = await exportFiles({ agent, services: chosen, raw: values.raw ?? false, twakeAiHome: d.env.TWAKE_AI_HOME }, ctx);
   const out = resolvePath(values.out ?? 'twake-ai-export');
   await writeExport(out, files);
   io.stdout(`Wrote ${Object.keys(files).length} files to ${out}: see its README.md.\n`);
