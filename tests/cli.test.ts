@@ -65,6 +65,8 @@ async function testDeps(): Promise<CliDeps & { clock: { t: number } }> {
     sleep: async (ms) => void (clock.t += ms / 1000),
     loopbackPorts: [0],
     readLine: async () => '',
+    nodePath: '/usr/bin/node',
+    cliPath: '/opt/twake-ai/build/bin.js',
   };
 }
 
@@ -285,5 +287,15 @@ describe('main: Twake Drive and Twake Chat', () => {
     const io = captureIo();
     expect(await main(['token', 'drive'], io, deps)).toBe(1);
     expect(io.err).toContain('twake-ai login --drive');
+  });
+});
+
+describe('main: run', () => {
+  it('needs a service and an agent', async () => {
+    for (const argv of [['run'], ['run', 'mail'], ['run', 'calendar', '--agent', 'hermes'], ['run', 'mail', '--agent', '../x']]) {
+      const io = captureIo();
+      expect(await main(argv, io, await testDeps())).toBe(2);
+      expect(io.out).toBe('');
+    }
   });
 });

@@ -14,6 +14,9 @@ import { checkAgentId } from './grants.js';
 import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
+import { fileURLToPath } from 'node:url';
+import { detectLanguage, systemTimezone } from './catalog.js';
+import { runService } from './launcher.js';
 
 export interface Io {
   stdout(text: string): void;
@@ -42,6 +45,9 @@ export interface CliDeps {
   sleep(ms: number): Promise<void>;
   /** reads one line typed by the user (the address pasted back when there is no browser) */
   readLine(question: string): Promise<string>;
+  /** absolute paths of node and of twake-ai's command, written into agent configurations and token commands */
+  nodePath: string;
+  cliPath: string;
   loopbackPorts?: number[];
 }
 
@@ -60,6 +66,8 @@ export function defaultDeps(): CliDeps {
     now: () => Math.floor(Date.now() / 1000),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     readLine: (question) => readLineFrom(process.stdin, process.stdout, question),
+    nodePath: process.execPath,
+    cliPath: fileURLToPath(new URL('./bin.js', import.meta.url)),
   };
 }
 
@@ -92,6 +100,7 @@ const USAGE = `usage:
   twake-ai login --drive [--no-browser]
   twake-ai login --chat --agent <id> [--no-browser]
   twake-ai token <${SERVICE_IDS.join('|')}> [--agent <id>]
+  twake-ai run <${SERVICE_IDS.join('|')}> --agent <id>
   twake-ai --version
 `;
 
@@ -115,6 +124,8 @@ export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()
         return await loginCommand(args, io, deps);
       case 'token':
         return await tokenCommand(args, io, deps);
+      case 'run':
+        return await runCommand(args, deps);
       default:
         io.stderr(USAGE);
         return 2;
@@ -241,4 +252,22 @@ async function tokenCommand(args: string[], io: Io, d: CliDeps): Promise<number>
   }, values.agent);
   io.stdout(`${JSON.stringify(token)}\n`);
   return 0;
+}
+
+/** run <service> --agent <id>: what agent configurations start. stdout belongs to the MCP server. */
+async function runCommand(args: string[], d: CliDeps): Promise<number> {
+  const { positionals, values } = usageErrors(() =>
+    parseArgs({ args, options: { agent: { type: 'string' } }, allowPositionals: true, strict: true }),
+  );
+  const [service, ...extra] = positionals;
+  if (!service || !isServiceId(service) || extra.length > 0 || values.agent === undefined) throw new TwakeAiError('usage', USAGE);
+  checkAgentId(values.agent);
+  return runService(service, values.agent, {
+    paths: d.paths,
+    env: d.env,
+    nodePath: d.nodePath,
+    cliPath: d.cliPath,
+    language: detectLanguage(d.env),
+    timezone: systemTimezone(),
+  });
 }
