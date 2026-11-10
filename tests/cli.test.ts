@@ -12,6 +12,9 @@ import { tempPaths } from './helpers/tmp.js';
 import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
+import { fakeNpm } from './helpers/fake-mcp.js';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const run = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -280,6 +283,25 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await readLineFrom(Readable.from(['http://127.0.0.1:8765/callback?x=1\n']), new PassThrough(), 'Address: ')).toBe(
       'http://127.0.0.1:8765/callback?x=1',
     );
+  });
+
+  it('exports for an agent, creating its Chat device and installing the servers first', async () => {
+    const deps = await signedIn();
+    const npm = fakeNpm(deps.paths);
+    deps.runInstall = npm;
+    const out = join(deps.paths.dataDir, '..', 'export');
+    const io = captureIo();
+    expect(await main(['export', '--agent', 'zed', '--services', 'chat', '--out', out], io, deps)).toBe(0);
+    expect(io.out).toContain('Twake Chat connected for zed');
+    expect(npm.calls[0]).toContain('mcp-twake-chat@0.6.0');
+    const servers = JSON.parse(await readFile(join(out, 'mcpServers.json'), 'utf8')).mcpServers;
+    expect(servers['twake-chat'].args).toEqual(['/opt/twake-ai/build/bin.js', 'run', 'chat', '--agent', 'zed']);
+    expect(io.out).toContain(out);
+  });
+
+  it('refuses an unknown service in --services', async () => {
+    const io = captureIo();
+    expect(await main(['export', '--agent', 'zed', '--services', 'mail,calendar'], io, await signedIn())).toBe(2);
   });
 
   it('asks to connect Drive before serving its tokens', async () => {

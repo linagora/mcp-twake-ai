@@ -50,6 +50,16 @@ twake-ai login --chat --agent hermes   # gives that agent its own Twake Chat dev
 - **Twake Chat** encrypts messages end to end, and the encryption keys belong to a device. Each agent therefore gets its own device, "Twake AI · <agent>", listed in your Twake Chat sessions. `twake-ai token chat --agent hermes` prints the token together with its `device_id` and `user_id`, as mcp-twake-chat expects. Signing in again for the same agent replaces its device and logs the old one out.
 - **Over SSH or without a display:** `twake-ai` prints the address to open on a phone or another computer. At the end, the browser shows a page that cannot load: paste its address back into the terminal.
 
+## Any agent: `twake-ai export`
+
+```bash
+twake-ai export --agent zed                         # every service found and connected
+twake-ai export --agent cursor --services mail,chat --out ./cursor-config
+twake-ai export --agent zed --raw                   # the servers and their full environment
+```
+
+`export` installs the pinned Twake.ai MCP servers into twake-ai's private folder, creates the agent's Twake Chat device if needed, and writes `mcpServers.json` (Claude Desktop, Cursor, Windsurf, Cline, Gemini CLI…), `vscode-mcp.json`, `hermes.yaml`, `codex.toml`, `claude-code.sh` and one `<service>.env` per service, with a README saying where each goes. By default the entries start `twake-ai run <service> --agent <id>`, which builds the server's environment (URLs, token command, language, time zone); variables already set in the agent's environment win. No file holds a secret.
+
 ## Files
 
 | What | Where (Linux, macOS) |

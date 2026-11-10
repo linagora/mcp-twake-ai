@@ -1,7 +1,7 @@
 import { resolveSrv } from 'node:dns/promises';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { getToken, isServiceId, SERVICE_IDS } from './broker.js';
+import { getToken, isServiceId, SERVICE_IDS, type ServiceId } from './broker.js';
 import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig } from './config.js';
 import { discover, type DiscoveryDeps } from './discovery.js';
 import { TwakeAiError } from './errors.js';
@@ -17,6 +17,9 @@ import { LOOPBACK_PORTS } from './loopback.js';
 import { fileURLToPath } from 'node:url';
 import { detectLanguage, systemTimezone } from './catalog.js';
 import { runService } from './launcher.js';
+import { defaultServices, exportFiles, writeExport } from './exporter.js';
+import { ensureInstalled, type Runner } from './installer.js';
+import { resolve as resolvePath } from 'node:path';
 
 export interface Io {
   stdout(text: string): void;
@@ -45,6 +48,8 @@ export interface CliDeps {
   sleep(ms: number): Promise<void>;
   /** reads one line typed by the user (the address pasted back when there is no browser) */
   readLine(question: string): Promise<string>;
+  /** npm, replaceable in tests */
+  runInstall?: Runner;
   /** absolute paths of node and of twake-ai's command, written into agent configurations and token commands */
   nodePath: string;
   cliPath: string;
@@ -101,6 +106,7 @@ const USAGE = `usage:
   twake-ai login --chat --agent <id> [--no-browser]
   twake-ai token <${SERVICE_IDS.join('|')}> [--agent <id>]
   twake-ai run <${SERVICE_IDS.join('|')}> --agent <id>
+  twake-ai export --agent <id> [--services <list>] [--raw] [--out <dir>] [--no-browser]
   twake-ai --version
 `;
 
@@ -124,6 +130,8 @@ export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()
         return await loginCommand(args, io, deps);
       case 'token':
         return await tokenCommand(args, io, deps);
+      case 'export':
+        return await exportCommand(args, io, deps);
       case 'run':
         return await runCommand(args, deps);
       default:
@@ -270,4 +278,36 @@ async function runCommand(args: string[], d: CliDeps): Promise<number> {
     language: detectLanguage(d.env),
     timezone: systemTimezone(),
   });
+}
+
+/** export --agent <id>: the configuration files for any agent, after installing the servers they start. */
+async function exportCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
+  const { values } = usageErrors(() =>
+    parseArgs({
+      args,
+      options: { agent: { type: 'string' }, services: { type: 'string' }, raw: { type: 'boolean' }, out: { type: 'string' }, 'no-browser': { type: 'boolean' } },
+      strict: true,
+    }),
+  );
+  if (values.agent === undefined) throw new TwakeAiError('usage', `export needs --agent <id>: the agent these files are for.\n\n${USAGE}`);
+  const agent = checkAgentId(values.agent);
+  let config = await loadConfig(d.paths);
+  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `twake-ai login --email <address>`.');
+  const services = values.services === undefined ? defaultServices(config) : values.services.split(',').map((s) => s.trim());
+  for (const service of services) {
+    if (!isServiceId(service)) throw new TwakeAiError('usage', `"${service}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
+  }
+  const chosen = services as ServiceId[];
+  if (chosen.includes('chat') && !config.chat?.[agent]) {
+    // later, the token command runs inside the MCP server and cannot open a browser: the device is created now
+    await connectService({ chat: true, agent, 'no-browser': values['no-browser'] }, io, d);
+    config = (await loadConfig(d.paths)) ?? config;
+  }
+  const ctx = { config, paths: d.paths, nodePath: d.nodePath, cliPath: d.cliPath, language: detectLanguage(d.env), timezone: systemTimezone() };
+  await ensureInstalled(d.paths, chosen, { run: d.runInstall, print: (line) => io.stdout(`${line}\n`) });
+  const files = await exportFiles({ agent, services: chosen, raw: values.raw ?? false }, ctx);
+  const out = resolvePath(values.out ?? 'twake-ai-export');
+  await writeExport(out, files);
+  io.stdout(`Wrote ${Object.keys(files).length} files to ${out}: see its README.md.\n`);
+  return 0;
 }
