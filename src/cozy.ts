@@ -6,7 +6,7 @@ import type { OidcHttp, TokenSet } from './oidc.js';
 /** The permissions mcp-twake-drive needs (its README). */
 export const COZY_SCOPE =
   'io.cozy.files io.cozy.files.* io.cozy.notes io.cozy.permissions io.cozy.sharings:GET io.cozy.settings:GET io.cozy.contacts:GET';
-export const COZY_SOFTWARE_ID = 'github.com/linagora/twake-ai';
+export const COZY_SOFTWARE_ID = 'github.com/linagora/mcp-twake-wizard';
 
 export interface CozyClient {
   clientId: string;

@@ -15,7 +15,7 @@
 - Toutes les contraintes du plan 1 restent valables (ESM, `.js` dans les imports, fichiers 0600, erreurs `TwakeAiError` sur une ligne, contrat de `token`, aucun réseau dans les tests, lignes d'attribution dans les commits).
 - Scope cozy, repris du README de mcp-twake-drive : `io.cozy.files io.cozy.files.* io.cozy.notes io.cozy.permissions io.cozy.sharings:GET io.cozy.settings:GET io.cozy.contacts:GET`.
 - Client cozy :
-  - `client_name: "Twake AI"`, `software_id: "github.com/linagora/twake-ai"`, `client_kind: "desktop"` ;
+  - `client_name: "Twake AI"`, `software_id: "github.com/linagora/mcp-twake-wizard"`, `client_kind: "desktop"` ;
   - redirections `http://127.0.0.1:8765/callback`, `:8766` et `:8767` ;
   - PKCE `S256` (pris en charge par cozy-stack, `docs/auth.md`).
 - Device Matrix : `initial_device_display_name: "Twake AI · <agent>"`, et `refresh_token: true` dans `POST /login`.
@@ -294,7 +294,7 @@ git commit -m "feat: JSON posts and sign-in callbacks pasted from another device
 **Interfaces:**
 - Consumes : `getJson`, `postForm`, `postJson`, `requestJson`, `parseAnswer`, `requireSecureUrl`, `HttpError`, `HttpOptions` (`src/http.ts`) ; `OidcHttp`, `TokenSet` (`src/oidc.ts`) ; `TwakeAiError`.
 - Produces :
-  - `COZY_SCOPE: string`, `COZY_SOFTWARE_ID = 'github.com/linagora/twake-ai'`
+  - `COZY_SCOPE: string`, `COZY_SOFTWARE_ID = 'github.com/linagora/mcp-twake-wizard'`
   - `interface CozyClient { clientId: string; clientSecret: string; registrationToken: string }`
   - `registerCozyClient(instance, redirectUris: string[], http?): Promise<CozyClient>`
   - `cozyAuthorizeUrl(instance, { clientId, redirectUri, state, challenge }): string`
@@ -610,7 +610,7 @@ import type { OidcHttp, TokenSet } from './oidc.js';
 /** The permissions mcp-twake-drive needs (its README). */
 export const COZY_SCOPE =
   'io.cozy.files io.cozy.files.* io.cozy.notes io.cozy.permissions io.cozy.sharings:GET io.cozy.settings:GET io.cozy.contacts:GET';
-export const COZY_SOFTWARE_ID = 'github.com/linagora/twake-ai';
+export const COZY_SOFTWARE_ID = 'github.com/linagora/mcp-twake-wizard';
 
 export interface CozyClient {
   clientId: string;
