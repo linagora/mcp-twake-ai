@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getJson, HttpError, requireSecureUrl } from '../src/http.js';
+import { getJson, HttpError, postJson, requireSecureUrl } from '../src/http.js';
 
 const fetchReturning = (response: () => Response) => (async () => response()) as unknown as typeof fetch;
 
@@ -82,5 +82,18 @@ describe('error translation', () => {
       return response;
     });
     await expect(getJson('https://example.com/doc', { fetch: redirected })).rejects.toMatchObject({ code: 'insecure_endpoint' });
+  });
+});
+
+describe('postJson', () => {
+  it('sends JSON and does not follow redirects', async () => {
+    let seen: RequestInit | undefined;
+    const capture = (async (_url: string, init: RequestInit) => {
+      seen = init;
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+    expect(await postJson('https://x.example/a', { a: 1 }, { fetch: capture })).toEqual({ ok: true });
+    expect(seen).toMatchObject({ method: 'POST', redirect: 'manual', body: '{"a":1}' });
+    expect((seen?.headers as Record<string, string>)['content-type']).toBe('application/json');
   });
 });

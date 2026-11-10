@@ -111,3 +111,12 @@ export function parseAnswer<T>(schema: z.ZodType<T>, raw: unknown, url: string):
   const where = issue?.path.length ? issue.path.join('.') : 'body';
   throw new TwakeAiError('bad_response', `${url} answered something twake-ai cannot read (${where}: ${issue?.message ?? 'invalid'}).`);
 }
+
+/** POST JSON without following redirects (Matrix and cozy-stack APIs). */
+export function postJson(url: string, body: unknown, options?: HttpOptions, headers: Record<string, string> = {}): Promise<unknown> {
+  return requestJson(
+    url,
+    { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) },
+    options,
+  );
+}
