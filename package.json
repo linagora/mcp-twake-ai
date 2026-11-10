@@ -1,0 +1,40 @@
+{
+  "name": "twake-ai",
+  "version": "0.1.0",
+  "description": "Install, configure and authenticate the Twake.ai MCP servers in your AI agents",
+  "type": "module",
+  "bin": {
+    "twake-ai": "build/bin.js"
+  },
+  "files": [
+    "build",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/linagora/twake-ai.git"
+  },
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@napi-rs/keyring": "^2.1.2",
+    "open": "^11.0.4",
+    "proper-lockfile": "^4.1.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/proper-lockfile": "^4.1.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
