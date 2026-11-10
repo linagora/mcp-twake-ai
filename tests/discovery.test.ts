@@ -132,3 +132,42 @@ describe('completeFromUserinfo', () => {
     expect(completeFromUserinfo(linagoraEnvironment, {}, 'MMaudet@linagora.com').cozy.instance).toBe('https://mmaudet.twake.linagora.com');
   });
 });
+
+describe('discover: endpoint safety and fallbacks', () => {
+  const matrixClient = fixture('matrix-client.json') as Record<string, unknown>;
+  const withWellKnown = (body: unknown): Routes => ({ ...linagoraRoutes, 'https://linagora.com/.well-known/matrix/client': () => Response.json(body) });
+
+  it('refuses an identity provider announced in plain http', async () => {
+    const routes = withWellKnown({ ...matrixClient, 'm.authentication': { issuer: 'http://sso.linagora.com/' } });
+    await expect(discover('mmaudet@linagora.com', deps(routes, linagoraSrv))).rejects.toMatchObject({ code: 'insecure_endpoint' });
+  });
+
+  it('refuses a homeserver announced in plain http', async () => {
+    const routes = withWellKnown({ ...matrixClient, 'm.homeserver': { base_url: 'http://matrix.linagora.com/' } });
+    await expect(discover('mmaudet@linagora.com', deps(routes, linagoraSrv))).rejects.toMatchObject({ code: 'insecure_endpoint' });
+  });
+
+  it('ignores a JMAP redirect to plain http and uses /jmap/session', async () => {
+    const routes: Routes = {
+      ...linagoraRoutes,
+      'https://jmap.linagora.com/.well-known/jmap': () => new Response(null, { status: 302, headers: { location: 'http://jmap.linagora.com/jmap/session' } }),
+    };
+    expect((await discover('mmaudet@linagora.com', deps(routes, linagoraSrv))).services.mail).toEqual({
+      url: 'https://jmap.linagora.com/jmap/session',
+      source: 'discovered',
+    });
+  });
+
+  it('falls back to /jmap/session when the JMAP well-known URL does not exist', async () => {
+    const routes: Routes = { ...linagoraRoutes, 'https://jmap.linagora.com/.well-known/jmap': () => new Response('Not found', { status: 404 }) };
+    expect((await discover('mmaudet@linagora.com', deps(routes, linagoraSrv))).services.mail).toEqual({
+      url: 'https://jmap.linagora.com/jmap/session',
+      source: 'discovered',
+    });
+  });
+
+  it('says the domain is unavailable, not foreign, when its discovery answers 503', async () => {
+    const routes: Routes = { 'https://linagora.com/.well-known/matrix/client': () => new Response('down', { status: 503 }) };
+    await expect(discover('mmaudet@linagora.com', deps(routes))).rejects.toMatchObject({ code: 'unavailable' });
+  });
+});

@@ -18,6 +18,22 @@ export interface FakeIdp {
   /** undefined: responses carry no expires_in */
   expiresIn: number | undefined;
   userinfo: Record<string, unknown>;
+  /** merged into the discovery document (another issuer, an http endpoint…) */
+  metadataOverrides: Record<string, unknown>;
+  /** the token endpoint answers 307 to this URL */
+  redirectTokenTo: string | undefined;
+  /** requests received on /capture (where a followed redirect would land) */
+  captured: number;
+  /** the token endpoint answers this HTTP status (503…) */
+  tokenFailureStatus: number | undefined;
+  /** the token endpoint rejects the client (invalid_client) */
+  rejectClient: boolean;
+  expiresInAsString: boolean;
+  omitAccessToken: boolean;
+  deviceVerificationUri: string | undefined;
+  /** client_id and scope of the last authorization or device request */
+  lastClientId: string | undefined;
+  lastScope: string | undefined;
   issueRefreshToken(): string;
   close(): Promise<void>;
 }
@@ -50,6 +66,16 @@ export async function startFakeIdp(): Promise<FakeIdp> {
     offlineAccess: true,
     expiresIn: 300,
     userinfo: { sub: 'alice', email: 'alice@example.com', workplaceFqdn: 'alice.twake.example.com' },
+    metadataOverrides: {},
+    redirectTokenTo: undefined,
+    captured: 0,
+    tokenFailureStatus: undefined,
+    rejectClient: false,
+    expiresInAsString: false,
+    omitAccessToken: false,
+    deviceVerificationUri: undefined,
+    lastClientId: undefined,
+    lastScope: undefined,
     issueRefreshToken() {
       const refresh = token('refresh');
       refreshTokens.add(refresh);
@@ -65,8 +91,9 @@ export async function startFakeIdp(): Promise<FakeIdp> {
   const issue = (withRefresh: boolean) => {
     const access = token('access');
     accessTokens.add(access);
-    const body: Record<string, unknown> = { access_token: access, token_type: 'Bearer' };
-    if (idp.expiresIn !== undefined) body.expires_in = idp.expiresIn;
+    const body: Record<string, unknown> = { token_type: 'Bearer' };
+    if (!idp.omitAccessToken) body.access_token = access;
+    if (idp.expiresIn !== undefined) body.expires_in = idp.expiresInAsString ? String(idp.expiresIn) : idp.expiresIn;
     if (withRefresh && idp.offlineAccess) body.refresh_token = idp.issueRefreshToken();
     return body;
   };
@@ -87,10 +114,13 @@ export async function startFakeIdp(): Promise<FakeIdp> {
           userinfo_endpoint: `${idp.url}/userinfo`,
           revocation_endpoint: `${idp.url}/revoke`,
           device_authorization_endpoint: `${idp.url}/device`,
+          ...idp.metadataOverrides,
         });
       case '/authorize': {
         // the user is already signed in at the IdP: straight back with a code
         const code = token('code');
+        idp.lastClientId = url.searchParams.get('client_id') ?? undefined;
+        idp.lastScope = url.searchParams.get('scope') ?? undefined;
         const redirectUri = url.searchParams.get('redirect_uri') ?? '';
         codes.set(code, { challenge: url.searchParams.get('code_challenge') ?? '', redirectUri });
         const back = new URL(redirectUri);
@@ -99,17 +129,30 @@ export async function startFakeIdp(): Promise<FakeIdp> {
         res.writeHead(302, { location: back.toString() });
         return res.end();
       }
-      case '/device':
+      case '/device': {
         devicePolls = 0;
+        idp.lastClientId = form.get('client_id') ?? undefined;
+        idp.lastScope = form.get('scope') ?? undefined;
+        const verification = idp.deviceVerificationUri ?? `${idp.url}/activate`;
         return json(200, {
           device_code: 'device-1',
           user_code: 'ABCD-EFGH',
-          verification_uri: `${idp.url}/activate`,
-          verification_uri_complete: `${idp.url}/activate?user_code=ABCD-EFGH`,
+          verification_uri: verification,
+          verification_uri_complete: `${verification}?user_code=ABCD-EFGH`,
           expires_in: 600,
           interval: 5,
         });
+      }
+      case '/capture':
+        idp.captured++;
+        return json(200, { access_token: 'stolen', expires_in: 300 });
       case '/token': {
+        if (idp.redirectTokenTo) {
+          res.writeHead(307, { location: idp.redirectTokenTo });
+          return res.end();
+        }
+        if (idp.tokenFailureStatus) return json(idp.tokenFailureStatus, { error: 'temporarily_unavailable' });
+        if (idp.rejectClient) return json(401, { error: 'invalid_client' });
         const grant = form.get('grant_type');
         if (grant === 'authorization_code') {
           const code = form.get('code') ?? '';

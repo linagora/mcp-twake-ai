@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { chooseVault, FileVault, KeyringVault, openVault, type KeyringEntry, type KeyringEntryFactory } from '../src/vault.js';
+import { writePrivateFile } from '../src/files.js';
+import { chooseVault, FileVault, KeyringVault, openVault, pinnedEntryFactory, type KeyringEntry, type KeyringEntryFactory } from '../src/vault.js';
 import { tempPaths } from './helpers/tmp.js';
 
 function fakeKeyring(): { factory: KeyringEntryFactory; store: Map<string, string> } {
@@ -89,5 +90,47 @@ describe('openVault', () => {
     const { factory } = fakeKeyring();
     expect((await openVault('file', paths)).kind).toBe('file');
     expect((await openVault('keyring', paths, async () => factory)).kind).toBe('keyring');
+  });
+});
+
+describe('keyring store', () => {
+  it('pins Linux entries to the Secret Service, never the kernel keyring that a reboot erases', () => {
+    const calls: unknown[][] = [];
+    class FakeEntry {
+      constructor(...args: unknown[]) {
+        calls.push(args);
+      }
+      getPassword() {
+        return null;
+      }
+      setPassword() {}
+      deletePassword() {
+        return true;
+      }
+    }
+    pinnedEntryFactory(FakeEntry)('twake-ai', 'oidc.refresh_token');
+    expect(calls).toEqual([['twake-ai', 'oidc.refresh_token', { linux: { store: 'secret-service' } }]]);
+  });
+
+  it('explains a keychain that cannot be read, with the way out', async () => {
+    const locked: KeyringEntryFactory = () => ({
+      getPassword: () => {
+        throw new Error('Platform failure: the keychain is locked');
+      },
+      setPassword: () => undefined,
+      deletePassword: () => false,
+    });
+    await expect(new KeyringVault(locked).get('oidc.refresh_token')).rejects.toMatchObject({
+      code: 'keychain',
+      message: expect.stringContaining('TWAKE_AI_VAULT=file'),
+    });
+  });
+});
+
+describe('FileVault with a damaged file', () => {
+  it('names the damaged secrets file to delete', async () => {
+    const { paths } = await tempPaths();
+    await writePrivateFile(paths.vaultFile, '{"oidc.refresh');
+    await expect(new FileVault(paths).get('x')).rejects.toMatchObject({ code: 'damaged_file', message: expect.stringContaining(paths.vaultFile) });
   });
 });

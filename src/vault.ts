@@ -1,3 +1,4 @@
+import { TwakeAiError } from './errors.js';
 import { readPrivateJson, writePrivateFile } from './files.js';
 import { withLock } from './lock.js';
 import type { AppPaths } from './paths.js';
@@ -53,7 +54,14 @@ export class FileVault implements Vault {
   }
 
   private async read(): Promise<Record<string, string>> {
-    return ((await readPrivateJson(this.paths.vaultFile)) ?? {}) as Record<string, string>;
+    try {
+      return ((await readPrivateJson(this.paths.vaultFile)) ?? {}) as Record<string, string>;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new TwakeAiError('damaged_file', `${this.paths.vaultFile} is damaged: delete it, then run \`twake-ai login\`.`);
+      }
+      throw error;
+    }
   }
 
   private async update(change: (values: Record<string, string>) => void): Promise<void> {
@@ -73,6 +81,23 @@ export interface KeyringEntry {
 
 export type KeyringEntryFactory = (service: string, account: string) => KeyringEntry;
 
+export type KeyringEntryConstructor = new (
+  service: string,
+  account: string,
+  options?: { linux?: { store?: 'secret-service' | 'keyutils' } },
+) => KeyringEntry;
+
+/** On Linux, the Secret Service only: the kernel keyring the library would silently fall back to is erased at reboot. */
+export function pinnedEntryFactory(Entry: KeyringEntryConstructor): KeyringEntryFactory {
+  return (service, account) => new Entry(service, account, { linux: { store: 'secret-service' } });
+}
+
+const keychainError = (error: unknown) =>
+  new TwakeAiError(
+    'keychain',
+    `The system keychain could not be used (${String((error as Error)?.message ?? error).split('\n')[0]}): unlock it, or sign in again with TWAKE_AI_VAULT=file twake-ai login.`,
+  );
+
 /** macOS Keychain, Windows Credential Manager, Secret Service on Linux. */
 export class KeyringVault implements Vault {
   readonly kind = 'keyring' as const;
@@ -80,11 +105,19 @@ export class KeyringVault implements Vault {
   constructor(private readonly entry: KeyringEntryFactory) {}
 
   async get(key: string): Promise<string | undefined> {
-    return this.entry(KEYRING_SERVICE, key).getPassword() ?? undefined;
+    try {
+      return this.entry(KEYRING_SERVICE, key).getPassword() ?? undefined;
+    } catch (error) {
+      throw keychainError(error);
+    }
   }
 
   async set(key: string, value: string): Promise<void> {
-    this.entry(KEYRING_SERVICE, key).setPassword(value);
+    try {
+      this.entry(KEYRING_SERVICE, key).setPassword(value);
+    } catch (error) {
+      throw keychainError(error);
+    }
   }
 
   async delete(key: string): Promise<void> {
@@ -98,7 +131,7 @@ export class KeyringVault implements Vault {
 
 async function loadKeyring(): Promise<KeyringEntryFactory> {
   const { Entry } = await import('@napi-rs/keyring');
-  return (service, account) => new Entry(service, account);
+  return pinnedEntryFactory(Entry);
 }
 
 /** Picks the vault once, at login: the OS keychain when it works, else the 0600 file. TWAKE_AI_VAULT=file forces the file. */

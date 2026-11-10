@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { TwakeAiError } from './errors.js';
-import { getJson, HttpError, send, type HttpOptions } from './http.js';
+import { getJson, HttpError, isSecureUrl, requireSecureUrl, send, type HttpOptions } from './http.js';
 import { fetchOidcMetadata, OidcMetadataSchema } from './oidc.js';
 
 export interface SrvRecord {
@@ -61,7 +61,7 @@ export async function discover(email: string, deps: DiscoveryDeps): Promise<Twak
     wellKnown = MatrixClientWellKnownSchema.parse(await getJson(`https://${domain}/.well-known/matrix/client`, deps));
   } catch (error) {
     // offline is not the same as foreign: only an answer that is not a Twake.ai discovery means foreign
-    if (error instanceof TwakeAiError && error.code === 'network') throw error;
+    if (error instanceof TwakeAiError && (error.code === 'network' || error.code === 'unavailable')) throw error;
     if (error instanceof HttpError || error instanceof z.ZodError || error instanceof TwakeAiError) throw notTwake(domain);
     throw error;
   }
@@ -74,10 +74,12 @@ export async function discover(email: string, deps: DiscoveryDeps): Promise<Twak
     probeConvention(`https://space.${domain}`, deps),
     probeConvention(`https://projects.${domain}`, deps),
   ]);
+  const homeserver = requireSecureUrl(wellKnown['m.homeserver'].base_url, `The Matrix homeserver of ${domain}`);
+  const tom = wellKnown['t.server'] && requireSecureUrl(wellKnown['t.server'].base_url, `The ToM server of ${domain}`);
   return {
     domain,
     oidc,
-    matrix: { homeserver: wellKnown['m.homeserver'].base_url, tom: wellKnown['t.server']?.base_url },
+    matrix: { homeserver, tom },
     services: { mail, dav, space, project },
     cozy: { pattern: cozyPattern(wellKnown['app.twake.chat']?.common_settings?.application_url) },
   };
@@ -117,17 +119,21 @@ async function discoverJmap(domain: string, deps: DiscoveryDeps): Promise<Endpoi
   const base = await srvBase('_jmap._tcp', domain, deps);
   if (!base) return undefined;
   const wellKnown = `${base}/.well-known/jmap`;
+  const usual: Endpoint = { url: `${base}/jmap/session`, source: 'discovered' };
   try {
     const response = await send(wellKnown, { method: 'GET', redirect: 'manual' }, deps);
     void response.body?.cancel();
     const location = response.headers.get('location');
     if (response.status >= 300 && response.status < 400 && location) {
-      return { url: new URL(location, wellKnown).toString(), source: 'discovered' };
+      const target = new URL(location, wellKnown).toString();
+      return isSecureUrl(target) ? { url: target, source: 'discovered' } : usual;
     }
+    // RFC 8620 §2.2: the well-known URL is itself a session URL when it answers (401 without credentials)
+    if (response.status < 400 || response.status === 401) return { url: wellKnown, source: 'discovered' };
   } catch {
-    // the well-known URL is a valid JMAP session URL too
+    // unreachable for now: keep the usual session URL
   }
-  return { url: wellKnown, source: 'discovered' };
+  return usual;
 }
 
 async function discoverDav(domain: string, deps: DiscoveryDeps): Promise<Endpoint | undefined> {

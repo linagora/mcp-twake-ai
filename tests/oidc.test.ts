@@ -149,3 +149,60 @@ describe('device flow', () => {
     await expect(startDeviceAuthorization({ ...meta, device_authorization_endpoint: undefined }, client)).rejects.toMatchObject({ code: 'unsupported' });
   });
 });
+
+describe('endpoint safety', () => {
+  it('refuses metadata that announces another issuer', async () => {
+    idp.metadataOverrides = { issuer: 'https://other.example.com' };
+    await expect(fetchOidcMetadata(idp.url)).rejects.toMatchObject({ code: 'bad_response', message: expect.stringContaining('https://other.example.com') });
+  });
+
+  it('accepts the issuer written with a trailing slash', async () => {
+    expect((await fetchOidcMetadata(`${idp.url}/`)).issuer).toBe(idp.url);
+  });
+
+  it('refuses a plain-http endpoint outside this computer', async () => {
+    idp.metadataOverrides = { token_endpoint: 'http://sso.example.com/token' };
+    await expect(fetchOidcMetadata(idp.url)).rejects.toMatchObject({
+      code: 'insecure_endpoint',
+      message: expect.stringContaining('http://sso.example.com/token'),
+    });
+  });
+
+  it('does not follow a redirect of the token endpoint, so the refresh token stays put', async () => {
+    idp.redirectTokenTo = `${idp.url}/capture`;
+    await expect(refreshTokens(meta, client, idp.issueRefreshToken())).rejects.toMatchObject({ code: 'bad_response' });
+    expect(idp.captured).toBe(0);
+  });
+
+  it('refuses a device verification page in plain http', async () => {
+    idp.deviceVerificationUri = 'http://evil.example/activate';
+    await expect(startDeviceAuthorization(meta, client)).rejects.toMatchObject({ code: 'insecure_endpoint' });
+  });
+});
+
+describe('token responses and failures', () => {
+  it('reads expires_in sent as a numeric string', async () => {
+    idp.expiresInAsString = true;
+    expect((await refreshTokens(meta, client, idp.issueRefreshToken(), { now: () => 2000 })).expiresAt).toBe(2300);
+  });
+
+  it('explains an unreadable token response on one line, naming the endpoint', async () => {
+    idp.omitAccessToken = true;
+    const error = await refreshTokens(meta, client, idp.issueRefreshToken()).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'bad_response', message: expect.stringContaining(`${idp.url}/token`) });
+    expect((error as Error).message).not.toContain('\n');
+  });
+
+  it('names the client when the identity provider no longer knows it', async () => {
+    idp.rejectClient = true;
+    await expect(refreshTokens(meta, client, idp.issueRefreshToken())).rejects.toMatchObject({
+      code: 'login_required',
+      message: expect.stringContaining('twake-ai-agents'),
+    });
+  });
+
+  it('says the identity provider is unavailable during an outage', async () => {
+    idp.tokenFailureStatus = 503;
+    await expect(refreshTokens(meta, client, idp.issueRefreshToken())).rejects.toMatchObject({ code: 'unavailable' });
+  });
+});

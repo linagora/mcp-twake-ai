@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TwakeEnvironmentSchema } from './discovery.js';
+import { TwakeAiError } from './errors.js';
 import { readPrivateJson, writePrivateFile } from './files.js';
 import type { AppPaths } from './paths.js';
 
@@ -17,8 +18,18 @@ export const ConfigSchema = z.object({
 export type TwakeAiConfig = z.infer<typeof ConfigSchema>;
 
 export async function loadConfig(paths: AppPaths): Promise<TwakeAiConfig | undefined> {
-  const raw = await readPrivateJson(paths.configFile);
-  return raw === undefined ? undefined : ConfigSchema.parse(raw);
+  const damaged = new TwakeAiError('damaged_file', `${paths.configFile} is damaged: delete it, then run \`twake-ai login --email <address>\`.`);
+  let raw: unknown;
+  try {
+    raw = await readPrivateJson(paths.configFile);
+  } catch (error) {
+    if (error instanceof SyntaxError) throw damaged;
+    throw error;
+  }
+  if (raw === undefined) return undefined;
+  const config = ConfigSchema.safeParse(raw);
+  if (!config.success) throw damaged;
+  return config.data;
 }
 
 export async function saveConfig(paths: AppPaths, config: TwakeAiConfig): Promise<void> {

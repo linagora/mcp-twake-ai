@@ -5,6 +5,7 @@ import { getToken, isServiceId, SERVICE_IDS } from './broker.js';
 import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig } from './config.js';
 import { discover, type DiscoveryDeps } from './discovery.js';
 import { TwakeAiError } from './errors.js';
+import { hostOf, HttpError } from './http.js';
 import { chooseLoginMode, loginOidc } from './login.js';
 import { appPaths, type AppPaths } from './paths.js';
 import { chooseVault, openVault, type Vault } from './vault.js';
@@ -90,13 +91,18 @@ export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()
         return 2;
     }
   } catch (error) {
-    if (error instanceof TwakeAiError) {
-      io.stderr(`twake-ai: ${error.message}\n`);
-      return error.code === 'usage' ? 2 : 1;
-    }
-    io.stderr(`twake-ai: unexpected error: ${(error as Error).message}\n`);
-    return 1;
+    io.stderr(`twake-ai: ${describeError(error)}\n`);
+    return error instanceof TwakeAiError && error.code === 'usage' ? 2 : 1;
   }
+}
+
+/** One line for the user (an MCP server shows only the last line of stderr). Usage errors keep the usage text. */
+function describeError(error: unknown): string {
+  if (error instanceof TwakeAiError) return error.message;
+  if (error instanceof HttpError) {
+    return `${hostOf(error.url)} refused the request (HTTP ${error.status}${error.oauthError ? `, ${error.oauthError}` : ''}).`;
+  }
+  return `unexpected error: ${String((error as Error)?.message ?? error).split('\n')[0]}`;
 }
 
 async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
@@ -112,7 +118,9 @@ async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number>
       strict: true,
     }),
   );
-  const email = values.email ?? (await loadConfig(d.paths))?.email;
+  // a damaged configuration must not stop the sign-in that repairs it
+  const saved = await loadConfig(d.paths).catch(() => undefined);
+  const email = values.email ?? saved?.email;
   if (!email) throw new TwakeAiError('usage', `--email is required the first time.\n\n${USAGE}`);
   io.stdout(`Looking up the Twake.ai services of ${email.trim()}…\n`);
   const environment = await discover(email, { fetch: d.fetch, resolveSrv: d.resolveSrv });
@@ -120,20 +128,21 @@ async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     if (!endpoint) continue;
     io.stdout(`  ${endpoint.source === 'convention' ? '~' : '✓'} ${service.padEnd(8)} ${endpoint.url}\n`);
   }
+  const vault = await d.chooseVault(d.paths);
   const config = await loginOidc(
     {
       email,
       environment,
       client: {
-        clientId: values['client-id'] ?? d.env.TWAKE_AI_OIDC_CLIENT_ID ?? DEFAULT_CLIENT_ID,
-        scope: values.scope ?? DEFAULT_SCOPE,
+        clientId: values['client-id'] ?? d.env.TWAKE_AI_OIDC_CLIENT_ID ?? saved?.oidc.clientId ?? DEFAULT_CLIENT_ID,
+        scope: values.scope ?? saved?.oidc.scope ?? DEFAULT_SCOPE,
       },
       mode: chooseLoginMode({ noBrowser: values['no-browser'] ?? false, env: d.env, platform: d.platform }),
       ports: d.loopbackPorts,
     },
     {
       paths: d.paths,
-      vault: await d.chooseVault(d.paths),
+      vault,
       http: { fetch: d.fetch, now: d.now, sleep: d.sleep },
       openUrl: d.openUrl,
       print: (line) => io.stdout(`${line}\n`),
@@ -141,6 +150,7 @@ async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number>
   );
   const drive = config.environment.cozy.instance;
   io.stdout(`Signed in as ${config.email}.${drive ? ` Twake Drive: ${drive}` : ''}\n`);
+  io.stdout(vault.kind === 'keyring' ? 'Session kept in the system keychain.\n' : `Session kept in ${d.paths.vaultFile} (readable by you only).\n`);
   return 0;
 }
 

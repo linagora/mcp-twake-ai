@@ -12,27 +12,32 @@
 - An account on the Twake.ai SaaS
 - The OIDC client `twake-ai-agents` on your identity provider (public client, PKCE, `offline_access`, loopback redirect URIs `http://127.0.0.1:8765/callback` to `:8767`, device flow, and the audiences of the Twake.ai backends). Another client can be used with `--client-id` or `TWAKE_AI_OIDC_CLIENT_ID`.
 
-## Sign in
+## Install and sign in
 
 ```bash
-npx twake-ai login --email jane.doe@example.com
+npm install -g twake-ai
+twake-ai login --email jane.doe@example.com
 ```
+
+The MCP servers call `twake-ai` on their own, long after you signed in: it has to stay installed (`npx` would not leave a `twake-ai` command behind).
 
 `twake-ai` finds your Twake.ai services from your address, opens your browser to sign in, and stores the session. Over SSH or without a display it shows a code to enter from another device instead (`--no-browser` forces it).
 
 ## Use it from an MCP server
 
-Every Twake.ai MCP server takes a command that prints a token:
+Every Twake.ai MCP server takes a command that prints a token. Give it the absolute path of `twake-ai` (`command -v twake-ai` prints it): some agents, such as Claude Desktop started from the Finder, do not see your `PATH`.
 
 ```bash
 claude mcp add twake-project --scope user \
   -e TWAKE_PROJECT_URL=https://projects.example.com \
-  -e "TWAKE_PROJECT_TOKEN_COMMAND=twake-ai token project" \
+  -e "TWAKE_PROJECT_TOKEN_COMMAND=$(command -v twake-ai) token project" \
   -e TWAKE_PROJECT_OIDC_ISSUER=https://sso.example.com/ \
   -- npx -y mcp-twake-project
 ```
 
-`twake-ai token <mail|dav|space|project>` prints `{"access_token": "...", "expires_at": <epoch s>}`. It serves the cached token while it is valid for more than 60 seconds, and otherwise renews it under a lock shared by every process, so several servers in several agents never spend the same refresh token twice. When the session has expired it exits with an error that says to run `twake-ai login`.
+`twake-ai token <mail|dav|space|project>` prints `{"access_token": "...", "expires_at": <epoch s>}`. It serves the cached token while it is valid for more than 60 seconds, and otherwise renews it under a lock shared by every process, so several servers in several agents never spend the same refresh token twice. When the session has expired it exits with an error that says to run `twake-ai login`, which signs you in again with the same identity provider client.
+
+Every address `twake-ai` discovers must use HTTPS (plain http is accepted only for `localhost`), and the identity provider's discovery document must speak for the issuer your domain announces.
 
 ## Files
 
