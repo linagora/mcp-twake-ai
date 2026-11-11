@@ -25,6 +25,21 @@ describe('handshake', () => {
     expect(await handshake({ command: process.execPath, args: [await script(HELLO)] }, process.env)).toEqual({ ok: true, detail: '2 tools' });
   });
 
+  it('ignores lines that are not answers: null, and requests from the server', async () => {
+    const odd = await script(`const rl = require('node:readline').createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  const m = JSON.parse(line);
+  const send = (x) => process.stdout.write(JSON.stringify(x) + '\\n');
+  if (m.method === 'initialize') {
+    process.stdout.write('null\\n');
+    send({ jsonrpc: '2.0', id: 1, method: 'roots/list' });
+    send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion, capabilities: {}, serverInfo: { name: 'odd', version: '1' } } });
+  }
+  if (m.method === 'tools/list') send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'a' }] } });
+});`);
+    expect(await handshake({ command: process.execPath, args: [odd] }, process.env)).toEqual({ ok: true, detail: '1 tools' });
+  });
+
   it('reports the last line of stderr when the server stops at once', async () => {
     const dying = await script("process.stderr.write('starting\\ntoken command failed: No Twake session on this computer\\n'); process.exit(1);");
     expect(await handshake({ command: process.execPath, args: [dying] }, process.env)).toEqual({ ok: false, detail: 'token command failed: No Twake session on this computer' });

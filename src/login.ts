@@ -1,5 +1,5 @@
 import { loadConfig, saveConfig, type TwakeAiConfig } from './config.js';
-import { completeFromUserinfo, type TwakeEnvironment } from './discovery.js';
+import { completeFromUserinfo, type Endpoint, type TwakeEnvironment } from './discovery.js';
 import { TwakeAiError } from './errors.js';
 import { COZY_GRANT, matrixGrant, OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
 import { withLock } from './lock.js';
@@ -46,6 +46,8 @@ export interface LoginDeps {
   http: OidcHttp;
   openUrl(url: string): Promise<void>;
   print(line: string): void;
+  /** The calendar server that takes the Twake session (chooseDav); left as discovered without it. */
+  findDav?(environment: TwakeEnvironment, accessToken: string): Promise<Endpoint | undefined>;
 }
 
 /** Signs in once at the IdP, keeps the refresh token in the vault and saves the completed configuration. */
@@ -66,7 +68,14 @@ export async function loginOidc(request: LoginRequest, deps: LoginDeps): Promise
   });
   const previous = await loadConfig(deps.paths).catch(() => undefined);
   const vault = deps.vault.kind === 'keyring' ? 'keyring' : 'file';
-  const environment = completeFromUserinfo(request.environment, userinfo, request.email);
+  let environment = completeFromUserinfo(request.environment, userinfo, request.email);
+  if (deps.findDav) {
+    const found = environment.services.dav;
+    const dav = await deps.findDav(environment, tokens.accessToken);
+    if (dav && dav.url !== found?.url) deps.print(`Twake Calendar: ${dav.url}`);
+    if (dav) environment = { ...environment, services: { ...environment.services, dav } };
+    else if (found) deps.print(`✗ Twake Calendar: ${found.url} does not take your Twake session, the calendar may not work.`);
+  }
   let drive: TwakeAiConfig['drive'];
   let chat: TwakeAiConfig['chat'];
   if (previous) {

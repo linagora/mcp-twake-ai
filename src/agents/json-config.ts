@@ -27,7 +27,9 @@ function damaged(file: string, why: string): TwakeAiError {
 }
 
 /** The servers of a JSON (or JSONC) settings file; a file the agent itself could not read is refused. */
-function servers(a: JsonAgent, text: string): Record<string, Entry> {
+function servers(a: JsonAgent, raw: string): Record<string, Entry> {
+  // editors on Windows may start the file with a byte order mark: JSON parsers refuse it, the agents do not
+  const text = raw.replace(/^\uFEFF/, '');
   if (text.trim() === '') return {};
   const errors: ParseError[] = [];
   const config = parse(text, errors, { allowTrailingComma: true }) as unknown;
@@ -52,7 +54,9 @@ function jsonAgent(a: JsonAgent, now: () => Date): AgentAdapter {
     detect: () => isDirectory(a.home),
     read,
     async write(change) {
-      const text = (await readText(a.file)) ?? '';
+      const raw = (await readText(a.file)) ?? '';
+      const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
+      const text = raw.slice(bom.length);
       servers(a, text);
       const eol = text.includes('\r\n') ? '\r\n' : '\n';
       const formattingOptions = { insertSpaces: true, tabSize: 2, eol };
@@ -61,7 +65,7 @@ function jsonAgent(a: JsonAgent, now: () => Date): AgentAdapter {
       for (const [name, entry] of Object.entries(change.set)) out = applyEdits(out, modify(out, [a.key, name], entry, { formattingOptions }));
       const backup = await backupFile(a.file, now());
       try {
-        await writeFileAtomic(a.file, out);
+        await writeFileAtomic(a.file, bom + out);
         servers(a, (await readText(a.file)) ?? '');
       } catch (error) {
         await restoreFile(a.file, backup).catch(() => undefined);

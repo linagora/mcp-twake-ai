@@ -14,6 +14,39 @@ describe('mask', () => {
   });
 });
 
+describe('mask, beyond snake_case', () => {
+  it('also hides camelCase names, escaped JSON and Matrix tokens, and leaves error codes readable', () => {
+    expect(mask('{"refreshToken":"r-1","accessToken":"a-1"}')).toBe('{"refreshToken":"***","accessToken":"***"}');
+    expect(mask('body {\\"refresh_token\\":\\"r-2\\"}')).toBe('body {\\"refresh_token\\":\\"***\\"}');
+    expect(mask('token syt_YWxpY2U_abcdef_123 and syr_YWxpY2U_xyz_456')).toBe('token *** and ***');
+    expect(mask('{"errcode":"M_UNKNOWN_TOKEN"}')).toBe('{"errcode":"M_UNKNOWN_TOKEN"}');
+    // an authorization code is masked whatever its case: an error code is never worth a leak
+    expect(mask('?code=ABCDEF_GHIJ&state=s')).toBe('?code=***&state=s');
+  });
+
+  it('masks a JSON-escaped token whole, and leaves ordinary sentences alone', () => {
+    expect(mask('{"access_token":"abc\\/def+ghi=="}')).toBe('{"access_token":"***"}');
+    expect(mask('{"token":"abc"}')).toBe('{"token":"***"}');
+    expect(mask('sso.example.com gave no refresh token: client "twake-ai-agents" may lack offline_access')).toBe('sso.example.com gave no refresh token: client "twake-ai-agents" may lack offline_access');
+    expect(mask('the server stopped (exit code: 2)')).toBe('the server stopped (exit code: 2)');
+    expect(mask('a basic check failed')).toBe('a basic check failed');
+  });
+
+  it('hides a secret written after a colon, and authorization schemes in any case', () => {
+    expect(mask('token: dGhpcyBpcyBhIHNlY3JldCB0b2tlbg')).toBe('token: ***');
+    expect(mask('password: correct-horse-battery-staple')).toBe('password: ***');
+    expect(mask('AUTHORIZATION: BASIC dHdha2U6c2VjcmV0')).toBe('AUTHORIZATION: BASIC ***');
+    expect(mask('authorization: BEARER abc.def-ghi')).toBe('authorization: BEARER ***');
+    expect(mask('the refresh token: client "x" may lack offline_access')).toBe('the refresh token: client "x" may lack offline_access');
+  });
+
+  it('hides the other secrets a request may carry', () => {
+    expect(mask('token=r-3&token_type_hint=refresh_token')).toBe('token=***&token_type_hint=refresh_token');
+    expect(mask('password=hunter2 client_assertion=eyX.y.z')).toBe('password=*** client_assertion=***');
+    expect(mask('Authorization: Basic dHdha2U6c2VjcmV0')).toBe('Authorization: Basic ***');
+  });
+});
+
 describe('journal', () => {
   it('appends a private, masked line per call', async () => {
     const { paths } = await tempPaths();

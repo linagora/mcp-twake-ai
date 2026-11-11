@@ -109,11 +109,11 @@ describe('userinfo and revocation', () => {
     expect(await fetchUserinfo(meta, tokens.accessToken)).toMatchObject({ workplaceFqdn: 'alice.twake.example.com' });
   });
 
-  it('revokes a refresh token, and does nothing without a revocation endpoint', async () => {
+  it('revokes a refresh token, and says so when the provider has no revocation endpoint', async () => {
     const refresh = idp.issueRefreshToken();
     await revokeToken(meta, client, refresh);
     expect(idp.revoked).toEqual([refresh]);
-    await revokeToken({ ...meta, revocation_endpoint: undefined }, client, 'other');
+    await expect(revokeToken({ ...meta, revocation_endpoint: undefined }, client, 'other')).rejects.toMatchObject({ code: 'unsupported' });
     expect(idp.revoked).toEqual([refresh]);
   });
 });

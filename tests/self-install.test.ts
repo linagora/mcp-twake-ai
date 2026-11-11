@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isNpxCache, removeShortcut, selfInstall, shortcutPath, writeShortcut } from '../src/self-install.js';
+import { isNpxCache, removeShortcut, selfInstall, shortcutInPath, shortcutPath, writeShortcut } from '../src/self-install.js';
 import { serverDir } from '../src/installer.js';
 import { tempDir, tempPaths } from './helpers/tmp.js';
 
@@ -73,5 +73,9 @@ describe('self-install', () => {
     expect((await writeShortcut(place, '/usr/bin/node', '/x.js')).written).toBe(false);
     expect((await lstat(path)).isSymbolicLink()).toBe(true);
     expect(await readFile(target, 'utf8')).toBe('#!/usr/bin/env node\n');
+  });
+  it('finds the shortcut folder in a Windows PATH whatever its case', async () => {
+    const place = { platform: 'win32' as const, env: { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local', PATH: 'C:\\Windows;C:\\USERS\\X\\APPDATA\\LOCAL\\TWAKE-AI\\BIN' }, home: 'C:\\Users\\x' };
+    expect(shortcutInPath(place)).toBe(true);
   });
 });

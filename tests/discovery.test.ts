@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { completeFromUserinfo, discover, emailDomain, type DiscoveryDeps, type SrvRecord, type TwakeEnvironment } from '../src/discovery.js';
+import { chooseDav, completeFromUserinfo, discover, emailDomain, type DiscoveryDeps, type SrvRecord, type TwakeEnvironment } from '../src/discovery.js';
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/linagora/${name}`, import.meta.url), 'utf8')) as unknown;
 
@@ -130,6 +130,49 @@ describe('completeFromUserinfo', () => {
 
   it('falls back to the instance pattern with the local part of the address', () => {
     expect(completeFromUserinfo(linagoraEnvironment, {}, 'JDoe@linagora.com').cozy.instance).toBe('https://jdoe.twake.linagora.com');
+  });
+});
+
+describe('chooseDav', () => {
+  const srvDav = { ...linagoraEnvironment, services: { dav: { url: 'https://dav.linagora.com/', source: 'discovered' as const } } };
+  /** A calendar server per URL: the status its PROPFIND answers; every request is kept. */
+  function calendars(statuses: Record<string, number>) {
+    const requests: { url: string; method?: string; headers: Record<string, string> }[] = [];
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, method: init?.method, headers: init?.headers as Record<string, string> });
+      if (!(url in statuses)) throw new TypeError(`fetch failed (no route for ${url})`);
+      return new Response(null, { status: statuses[url] });
+    }) as typeof globalThis.fetch;
+    return { fetch, requests };
+  }
+
+  it('keeps the server found in DNS when it takes the Twake session, asking it with the token', async () => {
+    const server = calendars({ 'https://dav.linagora.com/calendars/': 207 });
+    expect(await chooseDav(srvDav, 'access-1', { fetch: server.fetch })).toEqual({ url: 'https://dav.linagora.com/', source: 'discovered' });
+    expect(server.requests).toEqual([
+      { url: 'https://dav.linagora.com/calendars/', method: 'PROPFIND', headers: expect.objectContaining({ authorization: 'Bearer access-1', depth: '0' }) },
+    ]);
+  });
+
+  it('turns to the Twake Calendar side service, under /dav/, when the server found in DNS takes only Basic', async () => {
+    const server = calendars({ 'https://dav.linagora.com/calendars/': 401, 'https://twcalendar.linagora.com/dav/calendars/': 207 });
+    expect(await chooseDav(srvDav, 'access-1', { fetch: server.fetch })).toEqual({
+      url: 'https://twcalendar.linagora.com/dav/',
+      source: 'convention',
+      hrefPrefix: '/dav',
+    });
+  });
+
+  it('tries the side service when DNS gives no calendar server', async () => {
+    const server = calendars({ 'https://twcalendar.linagora.com/dav/calendars/': 207 });
+    expect((await chooseDav(linagoraEnvironment, 'access-1', { fetch: server.fetch }))?.url).toBe('https://twcalendar.linagora.com/dav/');
+  });
+
+  it('finds none when no server takes the session or none answers', async () => {
+    const server = calendars({ 'https://dav.linagora.com/calendars/': 401, 'https://twcalendar.linagora.com/dav/calendars/': 404 });
+    expect(await chooseDav(srvDav, 'access-1', { fetch: server.fetch })).toBeUndefined();
+    expect(await chooseDav(srvDav, 'access-1', { fetch: calendars({}).fetch })).toBeUndefined();
   });
 });
 

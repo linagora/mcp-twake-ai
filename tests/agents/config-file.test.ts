@@ -54,6 +54,16 @@ describe('agent configuration files', () => {
     expect(await readFile(real, 'utf8')).toBe('{"mcpServers":{}}');
   });
 
+  it.skipIf(windows)('writes the file a broken link points to, keeping the link', async () => {
+    const dir = await tempDir();
+    const link = join(dir, 'mcp.json');
+    const real = join(dir, 'dotfiles', 'mcp.json');
+    await symlink(real, link);
+    await writeFileAtomic(link, '{}');
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await readFile(real, 'utf8')).toBe('{}');
+  });
+
   it('puts the copy back, or removes a file that did not exist', async () => {
     const file = join(await tempDir(), 'mcp.json');
     await writeFile(file, 'before');

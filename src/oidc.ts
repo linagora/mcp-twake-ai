@@ -129,7 +129,9 @@ export async function refreshTokens(meta: OidcMetadata, client: OidcClient, refr
 }
 
 export async function revokeToken(meta: OidcMetadata, client: OidcClient, token: string, http: HttpOptions = {}): Promise<void> {
-  if (!meta.revocation_endpoint) return;
+  if (!meta.revocation_endpoint) {
+    throw new TwakeAiError('unsupported', `${meta.issuer} offers no revocation: the session ends when it expires, or from your account page.`);
+  }
   await postForm(meta.revocation_endpoint, { client_id: client.clientId, token, token_type_hint: 'refresh_token' }, http);
 }
 

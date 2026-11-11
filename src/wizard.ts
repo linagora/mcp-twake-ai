@@ -13,7 +13,7 @@ export interface WizardKit {
   signIn(email: string): Promise<{ email: string }>;
   agents(): Promise<{ id: AgentId; label: string; detected: boolean; elicitation: boolean }[]>;
   services(): Promise<{ id: ServiceId; label: string; preselected: boolean }[]>;
-  plan(agents: AgentId[], services: ServiceId[]): Promise<{ text: string; conflicts: { agent: AgentId; label: string; name: string; key: string }[] }>;
+  plan(agents: AgentId[], services: ServiceId[]): Promise<{ text: string; conflicts: { agent: AgentId; label: string; name: string; key: string; removal?: boolean }[] }>;
   apply(agents: AgentId[], services: ServiceId[], accepted: Set<string>): Promise<{ code: number; reload: string[] }>;
   check(agents: AgentId[]): Promise<{ ok: boolean; line: string }[]>;
   revoke(): Promise<void>;
@@ -72,7 +72,8 @@ export async function runWizard(kit: WizardKit, prompter: Prompter, nodeVersion:
     prompter.note(plan.text, say('planTitle'));
     const accepted = new Set<string>();
     for (const conflict of plan.conflicts) {
-      if (await prompter.confirm({ message: say('replaceEntry', { agent: conflict.label, name: conflict.name }), initialValue: false })) accepted.add(conflict.key);
+      const question = say(conflict.removal ? 'removeEntry' : 'replaceEntry', { agent: conflict.label, name: conflict.name });
+      if (await prompter.confirm({ message: question, initialValue: false })) accepted.add(conflict.key);
     }
     if (!(await prompter.confirm({ message: say('confirmApply'), initialValue: true }))) throw new SetupCancelled();
     applying = true;

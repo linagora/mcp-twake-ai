@@ -84,12 +84,15 @@ export function handshake(entry: { command: string; args: string[]; env?: Record
     });
     const send = (message: object) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
     createInterface({ input: child.stdout }).on('line', (line) => {
-      let message: { id?: unknown; error?: { message?: string }; result?: { tools?: unknown[] } };
+      let message: { id?: unknown; method?: unknown; error?: { message?: string }; result?: { tools?: unknown[] } };
       try {
         message = JSON.parse(line) as typeof message;
       } catch {
         return;
       }
+      // only answers count: not a stray value, nor a request or notification from the server (which may reuse an id)
+      if (typeof message !== 'object' || message === null || message.method !== undefined) return;
+      if (!('result' in message) && !('error' in message)) return;
       if (message.error) return finish({ ok: false, detail: message.error.message ?? 'error' });
       if (message.id === 1) {
         send({ method: 'notifications/initialized' });

@@ -126,6 +126,18 @@ describe('main', () => {
     expect(idp.refreshCount).toBe(1);
   });
 
+  it('keeps, after sign-in, the calendar server that takes the Twake session', async () => {
+    const deps = await testDeps();
+    const others = deps.fetch;
+    deps.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+      String(input) === 'https://twcalendar.example.com/dav/calendars/' && init?.method === 'PROPFIND'
+        ? new Response(null, { status: 207 })
+        : others(input, init)) as typeof fetch;
+    expect(await main(['login', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
+    const saved = await loadConfig(deps.paths);
+    expect(saved?.environment.services.dav).toEqual({ url: 'https://twcalendar.example.com/dav/', source: 'convention', hrefPrefix: '/dav' });
+  });
+
   it('signs in from another device with --no-browser', async () => {
     const io = captureIo();
     expect(await main(['login', '--email', 'alice@example.com', '--no-browser'], io, await testDeps())).toBe(0);
@@ -421,7 +433,7 @@ describe('main: Twake Drive and Twake Chat', () => {
     const { deps, cursor } = await readyForSetup();
     await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
     const io = captureIo();
-    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
     expect(io.out).toContain('replaces an entry configured outside mcp-twake-ai: add --force');
     expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail']).toEqual({ command: 'my-mail' });
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--force'], captureIo(), deps)).toBe(0);
@@ -449,7 +461,8 @@ describe('main: Twake Drive and Twake Chat', () => {
   it('leaves out an agent that is not installed, and says which ones are', async () => {
     const { deps } = await readyForSetup();
     const io = captureIo();
-    expect(await main(['setup', '--agents', 'claude-desktop,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    // an agent asked for and not installed: the setup is not complete
+    expect(await main(['setup', '--agents', 'claude-desktop,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
     expect(io.out).toContain('Claude Desktop: not found on this computer');
     const usage = captureIo();
     expect(await main(['setup'], usage, deps)).toBe(2);
@@ -467,7 +480,8 @@ describe('main: Twake Drive and Twake Chat', () => {
     await mkdir(join(deps.home, '.hermes'), { recursive: true });
     await writeFile(join(deps.home, '.hermes', 'config.yaml'), 'mcp_servers:\n  twake_mail:\n');
     const io = captureIo();
-    expect(await main(['setup', '--agents', 'hermes,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    // the emptied entry is left alone without --force: exit 1, Cursor written all the same
+    expect(await main(['setup', '--agents', 'hermes,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
     expect(io.out).toMatch(/! twake_mail\s+replaces an entry configured outside mcp-twake-ai/);
     expect(JSON.parse((await readText(cursor))!).mcpServers).toHaveProperty('twake-mail');
   });
@@ -673,8 +687,11 @@ describe('main: Twake Drive and Twake Chat', () => {
     const shortcut = shortcutPath({ platform: deps.platform, env: deps.env, home: deps.home });
     expect(await readText(shortcut)).toContain(join(installed, 'build', 'bin.js'));
     expect(io.out).toContain('to your PATH');
-    expect(await main(['uninstall', '--yes'], captureIo(), deps)).toBe(0);
+    const removed = captureIo();
+    expect(await main(['uninstall', '--yes'], removed, deps)).toBe(0);
     expect(await readText(shortcut)).toBeUndefined();
+    // run from npx's cache, nothing was installed globally: no npm uninstall -g to suggest
+    expect(removed.out).not.toContain('npm uninstall -g');
   });
 
   it('giving up after signing in again keeps the session, Drive and Chat that were there before', async () => {
@@ -749,6 +766,81 @@ describe('main: Twake Drive and Twake Chat', () => {
     const io = captureIo();
     expect(await main(['setup', '--services', 'mail'], io, deps)).toBe(2);
     expect(io.err).toContain('--agents');
+  });
+
+  it('exits with 1 when an entry was left alone for lack of --force, naming it', async () => {
+    const { deps, cursor } = await readyForSetup();
+    await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
+    expect(io.out).toContain('left as they are: twake-mail');
+  });
+
+  it('exits with 1 when an agent named is not installed, and says why for Claude Code', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'claude-code,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
+    expect(io.out).toContain('Claude Code: the claude command is not in PATH, left out.');
+  });
+
+  it('does not suggest --yes when no agent can be set up', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'claude-desktop', '--services', 'mail'], io, deps)).toBe(1);
+    expect(io.out).not.toContain('--yes');
+  });
+
+  it('keeps the Chat stores and other files when the cache and data folders are one', async () => {
+    const { deps } = await readyForSetup();
+    const shared = join(deps.home, 'shared');
+    deps.paths = { ...deps.paths, cacheDir: shared, tokensDir: join(shared, 'tokens'), dataDir: shared };
+    await mkdir(join(shared, 'chat', 'cursor'), { recursive: true });
+    await writeFile(join(shared, 'someone-else.txt'), 'keep');
+    expect(await main(['uninstall', '--yes'], captureIo(), deps)).toBe(0);
+    expect(await readText(join(shared, 'someone-else.txt'))).toBe('keep');
+    expect(await stat(join(shared, 'chat', 'cursor')).then(() => true, () => false)).toBe(true);
+  });
+
+  it('shows what uninstall revoked, and exits with 1 when a revocation failed', async () => {
+    const { deps } = await readyForSetup();
+    const ok = captureIo();
+    idp.close();
+    expect(await main(['uninstall', '--yes'], ok, deps)).toBe(1);
+    expect(ok.out).toMatch(/✗ Twake session: /);
+  });
+
+  it('shows the revocations uninstall made', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['uninstall', '--yes'], io, deps)).toBe(0);
+    expect(io.out).toContain('✓ Twake session revoked');
+  });
+
+  it('shows the guided setup a plan without command-line hints', async () => {
+    const { deps, cursor } = await readyForSetup();
+    await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([true, ['cursor'], ['mail'], false, CANCEL]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(1);
+    const shown = (deps.prompter as ReturnType<typeof scriptedPrompter>).shown.join('\n');
+    expect(shown).toContain('twake-mail');
+    expect(shown).not.toContain('--force');
+  });
+
+  it('leaves no journal behind even when a revocation fails during uninstall', async () => {
+    const { deps } = await readyForSetup();
+    idp.close();
+    expect(await main(['uninstall', '--yes'], captureIo(), deps)).toBe(1);
+    expect(await stat(journalFile(deps.paths)).then(() => true, () => false)).toBe(false);
+  });
+
+  it('exits with 0 when the user of the guided setup declines a replacement', async () => {
+    const { deps, cursor } = await readyForSetup();
+    await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([true, ['cursor'], ['mail'], false, true]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail']).toEqual({ command: 'my-mail' });
   });
 });
 

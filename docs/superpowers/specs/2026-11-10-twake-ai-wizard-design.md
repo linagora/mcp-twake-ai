@@ -128,7 +128,7 @@ Relevée le 2026-11-10 sur le SaaS LINAGORA (`prenom@linagora.com`) :
 | 1 | `https://<domaine>/.well-known/matrix/client` | `m.homeserver` (`matrix.linagora.com`), `t.server` (ToM, `tom.linagora.com`), `m.authentication.issuer` (`https://sso.linagora.com/`), `app.twake.chat.common_settings.application_url` (`https://{username}-settings.twake.linagora.com/`) |
 | 2 | `<issuer>/.well-known/openid-configuration` | endpoints authorize, token, userinfo, revoke ; PKCE S256 ; `device_authorization_endpoint` ; scope et claim `workplaceFqdn` |
 | 3 | DNS `SRV _jmap._tcp.<domaine>` | `jmap.linagora.com:443`, puis la session JMAP via `/.well-known/jmap` sur cet hôte (à défaut, `/jmap/session`) |
-| 4 | DNS `SRV _caldavs._tcp.<domaine>` | `dav.linagora.com:443` |
+| 4 | DNS `SRV _caldavs._tcp.<domaine>` ; après connexion, le premier serveur dont `calendars/` répond 207 à un PROPFIND avec le jeton : la cible SRV, sinon le side service de Twake Calendar `https://twcalendar.<domaine>/dav/` (`DAV_HREF_PREFIX=/dav`) | `dav.linagora.com:443` n'accepte que Basic (realm ESN) ; `twcalendar.linagora.com/dav/` accepte le jeton (vérifié le 2026-11-11) |
 | 5 | convention `space.<domaine>` et `projects.<domaine>`, vérifiée par une requête | `space.linagora.com`, `projects.linagora.com` (marquées « devinées » dans l'interface) |
 | 6 | après connexion : userinfo `workplaceFqdn` | instance cozy exacte (ex. `jdoe.twake.linagora.com`) ; le modèle `{username}` de l'étape 1 ne sert qu'en repli |
 | 7 | après connexion : `GET https://<instance>/settings/context` | `additional_platform_apps` : apps activées pour l'organisation (`mail`, `chat`, `space`, `project`, `calendar`…), utilisées pour pré-cocher les services |
@@ -189,7 +189,7 @@ Client OIDC « twake-ai-agents » :
 - `offline_access` (refresh token) ; dire si les refresh tokens tournent à chaque usage ;
 - device flow autorisé ;
 - redirections loopback sur une **liste de ports fixes**, par exemple `http://127.0.0.1:8765/callback`, `:8766`, `:8767`. Rien ne garantit que LemonLDAP ignore le port comme le prévoit la RFC 8252 ;
-- audiences additionnelles : `twake-projects`, `twakespace`, ainsi que celles qu'acceptent JMAP (`jmap.linagora.com`) et DAV (`dav.linagora.com`) ;
+- audiences additionnelles : `twake-projects`, `twake-space`, `tmail` (JMAP) et `tcalendar` (side service de Twake Calendar) ;
 - claims userinfo : `email`, `uuid`, `sid`, `org_id` (pour Space) et `workplaceFqdn`.
 
 ## 8. Parcours `setup`
@@ -216,7 +216,7 @@ Au lancement, une bannière s'affiche, toujours dans cette disposition, quelle q
   Mail · Calendar · Drive · Chat · Space · Project        v1.0.0
 ```
 
-- Dégradé horizontal truecolor du bleu Twake (`#2F6BFF`) vers le cyan (`#00D1C1`), sous-titre en gris (`#9AA4B5`).
+- Couleurs du logo Twake (son SVG officiel) : chaque lettre prend la couleur du logo au même endroit, vert `#4FB500`, bleu `#0094FF` et violet `#A033FF` en haut, jaune `#FFC700` en bas à gauche, rouge `#E73B2D` en bas à droite (truecolor), adoucies de 25 % de blanc pour un terminal. Sous-titre en gris (`#9AA4B5`).
 - Pas de couleur si `NO_COLOR` est défini ou si la sortie n'est pas un terminal.
 - Pas de bannière en mode non interactif.
 - Le parcours est en anglais (décision du 2026-11-11). `TWAKE_AI_LANGUAGE=fr` le passe en français. La langue des serveurs MCP (`USER_LANGUAGE`) suit toujours celle du système.
@@ -256,7 +256,7 @@ Environnement construit par service. `TOKEN_CMD` désigne `"<node>" "<cli.js>" t
 | Service | Variables |
 |---|---|
 | `mail` | `JMAP_SESSION_URL`, `JMAP_AUTH_METHOD=command`, `JMAP_TOKEN_COMMAND` |
-| `dav` | `DAV_URL`, `DAV_AUTH_METHOD=command`, `DAV_TOKEN_COMMAND`, `DAV_ORGANIZER_EMAIL=<email>`, `DAV_HREF_PREFIX` si le serveur en a besoin |
+| `dav` | `DAV_URL`, `DAV_AUTH_METHOD=command`, `DAV_TOKEN_COMMAND`, `DAV_ORGANIZER_EMAIL=<email>`, `DAV_HREF_PREFIX=/dav` avec le side service de Twake Calendar |
 | `drive` | `TWAKE_DRIVE_URL=https://<workplaceFqdn>`, `TWAKE_DRIVE_TOKEN_COMMAND` |
 | `chat` | `MATRIX_USER_ID`, `MATRIX_TOKEN_COMMAND`, `MATRIX_HOMESERVER_URL`, `TOM_URL`, `MATRIX_E2EE_RECOVERY=tom`, `MATRIX_STORE_DIR=<data>/chat/<agent>` |
 | `space` | `TWAKE_SPACE_URL`, `TWAKE_SPACE_TOKEN_COMMAND`, `TWAKE_SPACE_OIDC_ISSUER` |
@@ -393,7 +393,7 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 
 | Demande | Équipe | Bloquant ? |
 |---|---|---|
-| ~~Client OIDC « twake-ai-agents » (section 7.4)~~ : créé le 2026-11-11 sur sso.linagora.com (client public, PKCE, redirection loopback, scopes `openid profile email offline_access workplaceFqdn`). Audiences du jeton : `twake-ai-agents`, `twake-projects`, `twake-space`, `tmail`, `tcalendar`. userinfo donne `email`, `name`, `org_id`, `preferred_username`, `sid`, `sub`, `uuid`, `workplaceFqdn`. **À vérifier** : le README de mcp-twake-space annonce l'audience `twakespace`, l'IdP émet `twake-space` | IdP / exploitation SaaS | non (levé) |
+| ~~Client OIDC « twake-ai-agents » (section 7.4)~~ : créé le 2026-11-11 sur sso.linagora.com (client public, PKCE, redirection loopback, scopes `openid profile email offline_access workplaceFqdn`). Audiences du jeton : `twake-ai-agents`, `twake-projects`, `twake-space`, `tmail`, `tcalendar`. userinfo donne `email`, `name`, `org_id`, `preferred_username`, `sid`, `sub`, `uuid`, `workplaceFqdn`. Vérifié le 2026-11-11 avec un vrai compte : JMAP, Space, Project et le side service de Twake Calendar acceptent ce jeton (`twake-space` est la bonne audience Space ; le README de mcp-twake-space est corrigé dans sa PR #10) | IdP / exploitation SaaS | non (levé) |
 | ~~Les six MCP lancent `*_TOKEN_COMMAND` avec `execFile('/bin/sh', ['-c', …])`~~ : corrigé le 2026-11-11 (mail#22, dav#25, drive#12, chat#10, space#8, project#9). Ils passent par `exec`, donc par `cmd.exe /d /s /c` sous Windows, et un job `windows-latest` le vérifie. Versions 4.1.1, 4.2.1, 0.4.1, 0.6.1, 0.2.2 et 0.2.2 | dépôts MCP | **oui pour Windows**, jusqu'à leur publication sur npm |
 | Ajouter les URL de Space et Project dans `.well-known/matrix/client` (par exemple sous une clé `app.twake.ai`) | exploitation SaaS | non : la convention `<service>.<domaine>` sert de repli |
 | Activer `allow_oauth_token` sur les contextes cozy du SaaS, avec `userinfo_url` vers l'IdP | exploitation cozy | non : sert à Drive sans redirection ni navigateur |
@@ -405,7 +405,7 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 
 1. Prise en charge de l'élicitation par Claude Desktop et Cursor.
 2. ~~Comment chaque MCP exécute `*_TOKEN_COMMAND`~~ : vérifié le 2026-11-10, les six passaient par `/bin/sh -c`. Depuis le 2026-11-11, ils passent par le shell du système (section 14). Sous Linux et macOS, `TOKEN_CMD` met chaque chemin entre apostrophes POSIX. Sous Windows, il le met entre guillemets doubles pour `cmd.exe`, et refuse un chemin contenant `"`, `%`, `!` ou un saut de ligne, que `cmd.exe` modifierait.
-3. Les audiences acceptées par `jmap.linagora.com` et `dav.linagora.com` avec un jeton OIDC. (`dav.linagora.com` sert DAV à la racine : `/.well-known/caldav` redirige vers `/calendars`, donc pas de `DAV_HREF_PREFIX`. `jmap.linagora.com/.well-known/jmap` redirige vers `/jmap/session`.)
+3. ~~Les audiences acceptées par `jmap.linagora.com` et `dav.linagora.com` avec un jeton OIDC.~~ Vérifié le 2026-11-11 avec un vrai compte : `jmap.linagora.com` accepte le jeton (audience `tmail`). `dav.linagora.com` le refuse : il n'annonce que `Basic realm="ESN"`. Le side service de Twake Calendar, `twcalendar.linagora.com/dav/`, l'accepte (audience `tcalendar`), avec `DAV_HREF_PREFIX=/dav`. Le wizard choisit donc le serveur après la connexion (section 6, étape 4). Le SRV `_caldavs._tcp` gagnerait à pointer vers le side service.
 4. Si LemonLDAP fait tourner les refresh tokens, et quelle est la durée de la session hors ligne.
 5. Si Synapse renvoie un refresh token avec `refresh_token: true`, et si `login/get_token` est activé.
 6. L'URL de la session JMAP à partir de la cible SRV (`/.well-known/jmap`).

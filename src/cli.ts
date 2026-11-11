@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { getToken, isServiceId, SERVICE_IDS, type ServiceId } from './broker.js';
 import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig, saveConfig, type TwakeAiConfig } from './config.js';
-import { discover, type DiscoveryDeps } from './discovery.js';
+import { chooseDav, discover, type DiscoveryDeps } from './discovery.js';
 import { TwakeAiError } from './errors.js';
 import { describeError } from './describe.js';
 import { journal } from './journal.js';
@@ -22,7 +22,7 @@ import { createInterface } from 'node:readline/promises';
 import { checkAgentId, OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
 import { revokeToken } from './oidc.js';
 import { deleteCachedToken } from './token-cache.js';
-import { rm } from 'node:fs/promises';
+import { rm, stat } from 'node:fs/promises';
 import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
@@ -159,7 +159,8 @@ export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()
   }
   // token and run are called all day long by the servers: only their failures are worth a line
   // a finished uninstall has removed the journal: it must not come back
-  const uninstalled = command === 'uninstall' && code === 0 && args.includes('--yes');
+  // whatever its exit code (a revocation may have failed), once config.json is gone uninstall has removed its files
+  const uninstalled = command === 'uninstall' && args.includes('--yes') && !(await stat(deps.paths.configFile).then(() => true, () => false));
   if (!uninstalled && (code !== 0 || (command !== 'token' && command !== 'run'))) {
     await journal(deps.paths, `${[command, ...args].join(' ')} → ${code}${failure ? `: ${failure.split('\n')[0]}` : ''}`);
   }
@@ -243,6 +244,7 @@ async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number>
       http: { fetch: d.fetch, now: d.now, sleep: d.sleep },
       openUrl: d.openUrl,
       print: (line) => io.stdout(`${line}\n`),
+      findDav: (env, accessToken) => chooseDav(env, accessToken, { fetch: d.fetch }),
     },
   );
   const drive = config.environment.cozy.instance;
@@ -378,11 +380,12 @@ const PLAN_LINE: Record<ActionKind, [string, string]> = {
   'remove-modified': ['!', 'removes an entry changed by hand since mcp-twake-ai wrote it'],
 };
 
-function printPlan(io: Io, adapter: AgentAdapter, actions: EntryAction[], consent: (action: EntryAction) => boolean): void {
+/** hints: whether to suggest --force (not in the guided setup, which asks entry by entry). */
+function printPlan(io: Io, adapter: AgentAdapter, actions: EntryAction[], consent: (action: EntryAction) => boolean, hints = true): void {
   io.stdout(`${adapter.label} (${adapter.target})\n`);
   for (const action of actions) {
     const [symbol, words] = PLAN_LINE[action.kind];
-    io.stdout(`  ${symbol} ${action.name.padEnd(14)} ${words}${needsConsent(action) && !consent(action) ? ': add --force to do it' : ''}\n`);
+    io.stdout(`  ${symbol} ${action.name.padEnd(14)} ${words}${hints && needsConsent(action) && !consent(action) ? ': add --force to do it' : ''}\n`);
   }
   if (!adapter.capabilities.elicitation) io.stdout(`  ${adapter.label} cannot show approval requests: reads work, and every write is refused.\n`);
 }
@@ -476,12 +479,14 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
     // one agent's problem (unreadable file, broken entry) never stops the others
     try {
       if (!(await adapter.detect())) {
-        io.stdout(`${adapter.label}: not found on this computer (${adapter.target}), left out.\n`);
+        // an agent asked for and not set up: the setup is not complete
+        failed = true;
+        io.stdout(adapter.id === 'claude-code' ? 'Claude Code: the claude command is not in PATH, left out.\n' : `${adapter.label}: not found on this computer (${adapter.target}), left out.\n`);
         continue;
       }
       const actions = planEntries(await adapter.read(), wantedEntries(adapter, chosen, ctx, env), owned);
       plans.push({ adapter, owned, actions });
-      printPlan(io, adapter, actions, (action) => request.consent(adapter.id, action));
+      printPlan(io, adapter, actions, (action) => request.consent(adapter.id, action), !request.quiet);
     } catch (error) {
       failed = true;
       io.stdout(`${adapter.label}: ${describeError(error)}\n`);
@@ -495,7 +500,7 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
   const written: AgentId[] = [];
   const result = (code: number) => ({ code, conflicts, written });
   if (!request.apply) {
-    if (!request.quiet) io.stdout('Nothing was changed: run the same command with --yes to apply it.\n');
+    if (!request.quiet && plans.length > 0) io.stdout('Nothing was changed: run the same command with --yes to apply it.\n');
     return result(failed ? 1 : 0);
   }
   if (plans.length === 0) return result(failed ? 1 : 0);
@@ -520,7 +525,11 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
     written.push(adapter.id);
     if (result.status === 'unchanged') io.stdout(`${adapter.label}: already up to date.\n`);
     else io.stdout(`${adapter.label}: done${result.backup ? ` (previous file kept as ${result.backup})` : ''}. ${adapter.capabilities.reload}\n`);
-    if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);
+    if (result.skipped.length > 0) {
+      // in the guided setup an entry left alone is the user's own answer, not a failure
+      if (!request.quiet) failed = true;
+      io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')}${request.quiet ? '' : ' (add --force to change them)'}\n`);
+    }
   }
   if (fromNpx && written.length > 0) {
     // a convenience: its failure never fails the setup
@@ -652,6 +661,7 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   }
   // the entries an agent still has (skipped, or its write failed) stay recorded
   const left: Record<string, { entries: Record<string, string> }> = {};
+  let revocationFailed = false;
   for (const { adapter, owned, actions } of plans) {
     const result = await applyAgent(adapter, actions, owned, () => force);
     if (result.status === 'failed') {
@@ -667,8 +677,10 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   }
   if (config) {
     const vault = await openVault(config.vault, d.paths);
-    const { failed: notRevoked } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    const { done: revoked, failed: notRevoked } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    for (const line of revoked) io.stdout(`✓ ${line}\n`);
     for (const line of notRevoked) io.stdout(`✗ ${line}\n`);
+    revocationFailed = notRevoked.length > 0;
   }
   if (unreadable) await forgetSecrets(d.paths);
   const keepConfig = Object.keys(left).length > 0;
@@ -682,8 +694,11 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     io.stdout(`Some entries are still in place and recorded in ${d.paths.configFile}: run uninstall --yes --force to remove them, or remove them by hand.\n`);
     return 1;
   }
-  io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`} Remove the command itself with: npm uninstall -g mcp-twake-ai\n`);
-  return 0;
+  // run from npx's cache, there is no global install to remove
+  const command = isNpxCache(d.cliPath) ? '' : ' Remove the command itself with: npm uninstall -g mcp-twake-ai';
+  io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`}${command}\n`);
+  // the files are gone, but an authorization may still be alive at the server: say so with the exit code
+  return revocationFailed ? 1 : 0;
 }
 
 const SERVICE_LABELS: Record<ServiceId, string> = { mail: 'Mail', dav: 'Calendar & contacts', drive: 'Drive', chat: 'Chat', space: 'Space', project: 'Project' };
@@ -757,11 +772,18 @@ function wizardKit(io: Io, d: CliDeps, options: { noBrowser?: boolean } = {}): W
       const out = capture();
       const planned = await runSetup({ agents, services, apply: false, consent: () => false, quiet: true }, out, d);
       const adapters = await adaptersOf();
-      const conflicts = planned.conflicts.map(({ agent, action }) => ({ agent, label: adapters[agent].label, name: action.name, key: `${agent}/${action.name}` }));
+      const conflicts = planned.conflicts.map(({ agent, action }) => ({
+        agent,
+        label: adapters[agent].label,
+        name: action.name,
+        key: `${agent}/${action.name}`,
+        removal: action.kind === 'remove-modified',
+      }));
       return { text: out.text.trimEnd(), conflicts };
     },
     apply: async (agents, services, accepted) => {
-      const applied = await runSetup({ agents, services, apply: true, consent: (agent, action) => accepted.has(`${agent}/${action.name}`), noBrowser: options.noBrowser }, io, d);
+      const consent = (agent: AgentId, action: EntryAction) => accepted.has(`${agent}/${action.name}`);
+      const applied = await runSetup({ agents, services, apply: true, consent, noBrowser: options.noBrowser, quiet: true }, io, d);
       const adapters = await adaptersOf();
       return { code: applied.code, reload: applied.written.map((agent) => `${adapters[agent].label}: ${adapters[agent].capabilities.reload}`) };
     },

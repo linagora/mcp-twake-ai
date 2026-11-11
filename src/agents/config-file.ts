@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { copyFile, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, stat } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 
 /** An agent's configuration file, or undefined when there is none yet. */
 export async function readText(path: string): Promise<string | undefined> {
@@ -18,6 +18,12 @@ async function target(path: string): Promise<string> {
   try {
     return await realpath(path);
   } catch {
+    // a link whose file does not exist yet (dotfiles checked out later): write where it points
+    try {
+      if ((await lstat(path)).isSymbolicLink()) return resolve(dirname(path), await readlink(path));
+    } catch {
+      // nothing at that path
+    }
     return path;
   }
 }
@@ -58,9 +64,12 @@ export async function writeFileAtomic(path: string, text: string): Promise<void>
     await handle.chmod(mode);
     await handle.writeFile(text, 'utf8');
     await handle.sync();
-  } finally {
+  } catch (error) {
     await handle.close();
+    await rm(tmp, { force: true });
+    throw error;
   }
+  await handle.close();
   try {
     await rename(tmp, file);
   } catch (error) {

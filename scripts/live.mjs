@@ -2,7 +2,7 @@
 // Live test against a real Twake.ai account (spec §13.5): LIVE_EMAIL=jane.doe@company.com node scripts/live.mjs
 // Runs the built CLI (npm run build first) in a temporary TWAKE_AI_HOME, so the account already set up here is untouched.
 // LIVE_NO_BROWSER=1 signs in with a code instead of the browser.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,7 +57,7 @@ async function backend(service, url, accessToken) {
   const base = url.replace(/\/+$/, '');
   const request =
     service === 'mail' ? fetch(url, { headers: { ...auth, accept: 'application/json' } })
-    : service === 'dav' ? fetch(url, { method: 'PROPFIND', headers: { ...auth, depth: '0' } })
+    : service === 'dav' ? fetch(new URL('calendars/', url), { method: 'PROPFIND', headers: { ...auth, depth: '0' } })
     : fetch(`${base}/api/${service === 'space' ? 'spaces' : 'projects'}`, { headers: { ...auth, accept: 'application/json' } });
   try {
     const answer = await request;
@@ -67,7 +67,49 @@ async function backend(service, url, accessToken) {
   }
 }
 
-step('sign in', ['login', '--email', email, ...(process.env.LIVE_NO_BROWSER === '1' ? ['--no-browser'] : [])], undefined, { live: true });
+/** Starts mcp-twake-dav over stdio and calls its read-only list_calendars tool: does the calendar answer through it? */
+function listCalendars(davEnv, version) {
+  return new Promise((resolve) => {
+    const child = spawn('npx', ['-y', `mcp-twake-dav@${version}`], { env: { ...env, ...davEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const done = (ok, status) => {
+      clearTimeout(timer);
+      child.kill();
+      resolve({ service: 'dav MCP', ok, status });
+    };
+    const timer = setTimeout(() => done(false, 'no answer within 120 s'), 120_000);
+    let buffer = '';
+    let stderr = '';
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.on('close', (code) => done(false, `exited with ${code}: ${stderr.trim().split('\n').at(-1) ?? ''}`));
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk;
+      let newline;
+      while ((newline = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        let message;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (message.id === 1) {
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_calendars', arguments: {} } })}\n`);
+        } else if (message.id === 2) {
+          const text = message.result?.content?.map((part) => part.text ?? '').join(' ') ?? JSON.stringify(message.error);
+          // how much came back, not what: calendar names stay off the terminal
+          done(!message.error && !message.result?.isError, message.error || message.result?.isError ? `list_calendars failed: ${text.slice(0, 300)}` : `list_calendars answered (${text.length} characters)`);
+        }
+      }
+    });
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mcp-twake-ai-live', version: '1' } } })}\n`,
+    );
+  });
+}
+
+step('sign in', ['login','--email', email, ...(process.env.LIVE_NO_BROWSER === '1' ? ['--no-browser'] : [])], undefined, { live: true });
 const services = JSON.parse(readFileSync(join(home, 'config', 'config.json'), 'utf8')).environment.services;
 const backends = [];
 for (const service of ['mail', 'dav', 'space', 'project']) {
@@ -75,7 +117,36 @@ for (const service of ['mail', 'dav', 'space', 'project']) {
   if (services[service]?.url) backends.push(await backend(service, services[service].url, JSON.parse(out).access_token));
 }
 for (const check of backends) console.log(`${check.ok ? '✓' : '✗'} ${check.service} backend: HTTP ${check.status}${check.ok ? ', token accepted' : ', token refused (audience or rights?)'}`);
-step('status', ['status', '--no-start'], (out) => (out.includes('✓ Twake session') ? undefined : 'the session is not ✓'));
+// where else the calendar may take the token: the Twake Calendar side service, which publishes DAV under /dav/
+// (LIVE_DAV_CANDIDATES=url,url to try others)
+if (backends.some((check) => check.service === 'dav' && !check.ok)) {
+  const domain = email.slice(email.lastIndexOf('@') + 1).toLowerCase();
+  const candidates = (process.env.LIVE_DAV_CANDIDATES ?? `https://twcalendar.${domain}/dav/`).split(',').filter(Boolean);
+  const accessToken = JSON.parse(step('token dav (candidates)', ['token', 'dav'], token, { quiet: true })).access_token;
+  for (const candidate of candidates) {
+    const base = candidate.replace(/\/+$/, '');
+    const probes = [
+      ['PROPFIND', `${base}/calendars/`],
+      ['GET', `${new URL(base).origin}/api/user`],
+    ];
+    for (const [method, url] of probes) {
+      const answer = await fetch(url, { method, headers: { authorization: `Bearer ${accessToken}`, depth: '0', accept: 'application/json' } }).catch((error) => ({ status: String(error.cause?.code ?? error.message) }));
+      void answer.body?.cancel?.();
+      console.log(`  ${typeof answer.status === 'number' && answer.status < 300 ? '✓' : '✗'} candidate ${method} ${url}: HTTP ${answer.status}`);
+    }
+  }
+}
+// the calendar end to end: the DAV MCP itself, with the environment the agents get, lists the calendars (read only).
+// LIVE_DAV_VERSION picks the published mcp-twake-dav (4.2.1 is the catalog's pin once published)
+const davEnv = Object.fromEntries(
+  step('dav environment', ['status', '--env', 'dav'])
+    .trim()
+    .split('\n')
+    .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+);
+backends.push(await listCalendars(davEnv, process.env.LIVE_DAV_VERSION ?? '4.2.0'));
+console.log(`${backends.at(-1).ok ? '✓' : '✗'} dav MCP: ${backends.at(-1).status}`);
+step('status', ['status', '--no-start'],(out) => (out.includes('✓ Twake session') ? undefined : 'the session is not ✓'));
 // the refresh token before logout, to check afterwards that the identity provider itself refuses it (spec §13.5)
 const config = JSON.parse(readFileSync(join(home, 'config', 'config.json'), 'utf8'));
 const refresh = JSON.parse(readFileSync(join(home, 'config', 'secrets.json'), 'utf8'))['oidc.refresh_token'];
