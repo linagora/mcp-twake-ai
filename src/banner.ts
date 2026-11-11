@@ -35,6 +35,6 @@ export function renderBanner(o: { version: string; columns: number; color: boole
   const width = Math.max(...ART.map((line) => [...line].length));
   const grey = (text: string) => (o.color ? `${GREY}${text}${RESET}` : text);
   const art = ART.map((line) => `  ${o.color ? gradient(line, width) : line}`).join('\n');
-  const services = 'Mail · Agenda · Drive · Chat · Space · Project';
-  return `\n${art}\n\n  ${grey('Votre Digital Workplace souveraine, connectée à votre agent IA')}\n  ${grey(`${services}${' '.repeat(8)}v${o.version}`)}\n\n`;
+  const services = 'Mail · Calendar · Drive · Chat · Space · Project';
+  return `\n${art}\n\n  ${grey('Your sovereign Digital Workplace, connected to your AI agent')}\n  ${grey(`${services}${' '.repeat(8)}v${o.version}`)}\n\n`;
 }

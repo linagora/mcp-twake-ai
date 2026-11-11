@@ -150,6 +150,17 @@ describe('the mcp-twake-ai process', () => {
 });
 
 describe('main: second sign-in and failures', () => {
+  it('guides in English, even on a French system', async () => {
+    const deps = await testDeps();
+    deps.interactive = true;
+    deps.env = { LANG: 'fr_FR.UTF-8' };
+    deps.prompter = scriptedPrompter(['alice@example.com', []]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(0);
+    const prompter = deps.prompter as ReturnType<typeof scriptedPrompter>;
+    expect(prompter.asked).toEqual(['Your Twake.ai email address', 'Which agents should get the Twake.ai servers?']);
+    expect(prompter.shown.join('\n')).toContain('Your sovereign Digital Workplace');
+  });
+
   it('runs the guided setup on a terminal when no agent is named', async () => {
     const deps = await testDeps();
     deps.interactive = true;

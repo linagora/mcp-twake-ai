@@ -8,7 +8,7 @@ describe('the banner', () => {
     const banner = renderBanner({ version: '1.0.0', columns: 100, color: true });
     expect(banner).toContain(`${ESC}38;2;47;107;255m█`);
     expect(banner).toContain(`${ESC}38;2;0;209;193m`);
-    expect(banner).toContain(`${ESC}38;2;154;164;181mMail · Agenda · Drive · Chat · Space · Project`);
+    expect(banner).toContain(`${ESC}38;2;154;164;181mMail · Calendar · Drive · Chat · Space · Project`);
     expect(banner).toContain('v1.0.0');
   });
 
@@ -16,7 +16,7 @@ describe('the banner', () => {
     const banner = renderBanner({ version: '1.0.0', columns: 100, color: false });
     expect(banner).not.toContain('\x1b');
     expect(banner).toContain('████████╗██╗    ██╗');
-    expect(banner).toContain('Votre Digital Workplace souveraine, connectée à votre agent IA');
+    expect(banner).toContain('Your sovereign Digital Workplace, connected to your AI agent');
   });
 
   it('is one line under 60 columns', () => {

@@ -18,7 +18,7 @@
 npx mcp-twake-ai setup
 ```
 
-In a terminal, `setup` guides you: your email, the sign-in in your browser, the agents found on this computer and the services of your account, the plan, one confirmation, then a check that every server starts. It speaks French or English, after your system's language. Pressing Escape at any question leaves everything as it was and revokes the sign-in it made.
+In a terminal, `setup` guides you: your email, the sign-in in your browser, the agents found on this computer and the services of your account, the plan, one confirmation, then a check that every server starts. It speaks English (`TWAKE_AI_LANGUAGE=fr` switches it to French). Pressing Escape at any question leaves everything as it was and revokes the sign-in it made.
 
 Under `npx`, mcp-twake-ai installs itself into its private folder, so that the agents never depend on npx's cache, and puts a `mcp-twake-ai` command in `~/.local/bin` (`%LOCALAPPDATA%\twake-ai\bin` on Windows).
 

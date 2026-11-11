@@ -675,7 +675,8 @@ function wizardKit(io: Io, d: CliDeps): WizardKit {
     return captured;
   };
   return {
-    lang: detectLanguage(d.env),
+    // setup speaks English; French only when asked for (the servers still follow the system's language)
+    lang: d.env.TWAKE_AI_LANGUAGE === 'fr' ? 'fr' : 'en',
     banner: () => renderBanner({ version: packageVersion(), columns: process.stdout.columns ?? 80, color: wantsColor(d.env, Boolean(process.stdout.isTTY)) }),
     session: async () => {
       const config = await loadConfig(d.paths).catch(() => undefined);

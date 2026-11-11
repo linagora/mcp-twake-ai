@@ -72,7 +72,8 @@ export async function runWizard(kit: WizardKit, prompter: Prompter, nodeVersion:
     if (!(await prompter.confirm({ message: say('confirmApply'), initialValue: true }))) throw new SetupCancelled();
     const applied = await kit.apply(chosenAgents, chosenServices, accepted);
     prompter.note((await kit.check(chosenAgents)).map((check) => check.line).join('\n'), say('checking'));
-    const examples = [say('example1'), say('example2'), say('example3')].map((example) => `  « ${example} »`).join('\n');
+    const quote = (example: string) => (kit.lang === 'fr' ? `  « ${example} »` : `  “${example}”`);
+    const examples = [say('example1'), say('example2'), say('example3')].map(quote).join('\n');
     prompter.note(applied.reload.join('\n'), say('reload'));
     prompter.outro(`${say('tryAsking')}:\n${examples}`);
     return applied.code;
