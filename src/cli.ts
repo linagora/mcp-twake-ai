@@ -9,6 +9,9 @@ import { TwakeAiError } from './errors.js';
 import { describeError } from './describe.js';
 import { journal } from './journal.js';
 import { logout } from './logout.js';
+import { renderBanner, wantsColor } from './banner.js';
+import { clackPrompter, type Prompter } from './prompter.js';
+import { runWizard, type WizardKit } from './wizard.js';
 import { forgetSecrets, removeFiles, uninstallPlan } from './uninstall.js';
 import { checkChat, checkDrive, checkSession, entryStates, handshake, type Check, type EntryState } from './status.js';
 import { chooseLoginMode, loginOidc } from './login.js';
@@ -60,6 +63,10 @@ export interface CliDeps {
   readLine(question: string): Promise<string>;
   /** npm, replaceable in tests */
   runInstall?: Runner;
+  /** the questions of the guided setup; undefined: clack on the terminal */
+  prompter?: Prompter;
+  /** stdin and stdout are a terminal: setup without --agents guides the user */
+  interactive: boolean;
   /** absolute paths of node and of mcp-twake-ai's command, written into agent configurations and token commands */
   nodePath: string;
   cliPath: string;
@@ -70,6 +77,7 @@ export function defaultDeps(): CliDeps {
   return {
     paths: appPaths(),
     home: homedir(),
+    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     env: process.env,
     platform: process.platform,
     fetch: globalThis.fetch,
@@ -403,6 +411,7 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     if (code !== 0) return code;
   }
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  if (values.agents === undefined && !values.yes && d.interactive) return runWizard(wizardKit(io, d), d.prompter ?? clackPrompter(), process.versions.node);
   const detected = await detectAgents(adapters);
   if (values.agents === undefined) {
     throw new TwakeAiError('usage', `setup needs --agents: ${AGENT_IDS.join(', ')}, or "detected" (found here: ${detected.join(', ') || 'none'}).\n\n${USAGE}`);
@@ -636,4 +645,85 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   }
   io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`} Remove the command itself with: npm uninstall -g mcp-twake-ai\n`);
   return 0;
+}
+
+const SERVICE_LABELS: Record<ServiceId, string> = { mail: 'Mail', dav: 'Calendar & contacts', drive: 'Drive', chat: 'Chat', space: 'Space', project: 'Project' };
+
+/** What the guided setup uses: signing in, planning and writing go through the very code of the commands. */
+function wizardKit(io: Io, d: CliDeps): WizardKit {
+  const adaptersOf = () => createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  const capture = (): Io & { text: string } => {
+    const captured = {
+      text: '',
+      stdout: (text: string) => {
+        captured.text += text;
+      },
+      stderr: (text: string) => {
+        captured.text += text;
+      },
+    };
+    return captured;
+  };
+  return {
+    lang: detectLanguage(d.env),
+    banner: () => renderBanner({ version: packageVersion(), columns: process.stdout.columns ?? 80, color: wantsColor(d.env, Boolean(process.stdout.isTTY)) }),
+    session: async () => {
+      const config = await loadConfig(d.paths).catch(() => undefined);
+      return config ? { email: config.email } : undefined;
+    },
+    signIn: async (email) => {
+      const code = await loginCommand(['--email', email], io, d);
+      const config = await loadConfig(d.paths);
+      if (code !== 0 || !config) throw new TwakeAiError('login_cancelled', `The sign-in of ${email} did not complete.`);
+      return { email: config.email };
+    },
+    agents: async () => {
+      const adapters = await adaptersOf();
+      const detected = new Set(await detectAgents(adapters));
+      return AGENT_IDS.map((id) => ({ id, label: adapters[id].label, detected: detected.has(id), elicitation: adapters[id].capabilities.elicitation }));
+    },
+    services: async () => {
+      const config = await loadConfig(d.paths);
+      const preselected = new Set<ServiceId>(config ? defaultServices(config) : []);
+      if (config?.environment.cozy.instance) preselected.add('drive');
+      return SERVICE_IDS.map((id) => ({ id, label: SERVICE_LABELS[id], preselected: preselected.has(id) }));
+    },
+    plan: async (agents, services) => {
+      const out = capture();
+      const planned = await runSetup({ agents, services, apply: false, consent: () => false, quiet: true }, out, d);
+      const adapters = await adaptersOf();
+      const conflicts = planned.conflicts.map(({ agent, action }) => ({ agent, label: adapters[agent].label, name: action.name, key: `${agent}/${action.name}` }));
+      return { text: out.text.trimEnd(), conflicts };
+    },
+    apply: async (agents, services, accepted) => {
+      const applied = await runSetup({ agents, services, apply: true, consent: (agent, action) => accepted.has(`${agent}/${action.name}`) }, io, d);
+      const adapters = await adaptersOf();
+      return { code: applied.code, reload: applied.written.map((agent) => `${adapters[agent].label}: ${adapters[agent].capabilities.reload}`) };
+    },
+    check: async (agents) => {
+      const config = await loadConfig(d.paths);
+      const adapters = await adaptersOf();
+      const lines: { ok: boolean; line: string }[] = [];
+      for (const agent of agents) {
+        const adapter = adapters[agent];
+        let states: EntryState[];
+        try {
+          states = await entryStates(adapter, config?.agents?.[agent]?.entries ?? {});
+        } catch (error) {
+          lines.push({ ok: false, line: `✗ ${adapter.label}: ${describeError(error)}` });
+          continue;
+        }
+        for (const state of states.filter((candidate) => candidate.state === 'ok')) {
+          const started = await handshake(state.entry as { command: string; args: string[]; env?: Record<string, string> }, d.env);
+          lines.push({ ok: started.ok, line: `${started.ok ? '✓' : '✗'} ${adapter.label} · ${state.name} ${started.ok ? `starts, ${started.detail}` : started.detail}` });
+        }
+      }
+      return lines;
+    },
+    revoke: async () => {
+      const config = await loadConfig(d.paths);
+      if (!config) return;
+      await logout({ paths: d.paths, config, vault: await openVault(config.vault, d.paths), http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    },
+  };
 }

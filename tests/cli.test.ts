@@ -18,6 +18,7 @@ import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readText } from '../src/agents/config-file.js';
 import { journalFile } from '../src/journal.js';
+import { scriptedPrompter } from './helpers/scripted-prompter.js';
 import { cursorConfig, vscodeConfig } from '../src/agents/locations.js';
 
 const run = promisify(execFile);
@@ -53,6 +54,7 @@ async function testDeps(): Promise<CliDeps & { clock: { t: number } }> {
     clock,
     paths,
     home: join(root, 'home'),
+    interactive: false,
     env: {},
     platform: 'darwin',
     fetch: (async (input: string | URL | Request, init?: RequestInit) => {
@@ -147,6 +149,16 @@ describe('the mcp-twake-ai process', () => {
 });
 
 describe('main: second sign-in and failures', () => {
+  it('runs the guided setup on a terminal when no agent is named', async () => {
+    const deps = await testDeps();
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter(['alice@example.com', [], ['mail']]);
+    const io = captureIo();
+    expect(await main(['setup'], io, deps)).toBe(0);
+    expect((deps.prompter as ReturnType<typeof scriptedPrompter>).shown.join('\n')).toContain('No agent chosen: nothing to do.');
+    expect(idp.revoked).toHaveLength(1);
+  });
+
   it('keeps a journal of commands and errors, without tokens', async () => {
     const deps = await testDeps();
     expect(await main(['login', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
