@@ -106,3 +106,18 @@ export async function logoutMatrix(homeserver: string, accessToken: string, http
     http,
   );
 }
+
+/** Signs one device out, renewing its access token first if it has expired; throws when the device stays signed in. */
+export async function logoutDevice(homeserver: string, agent: string, tokens: { accessToken?: string; refreshToken?: string }, http: OidcHttp = {}): Promise<void> {
+  if (tokens.accessToken) {
+    try {
+      await logoutMatrix(homeserver, tokens.accessToken, http);
+      return;
+    } catch (error) {
+      if (!tokens.refreshToken) throw error;
+    }
+  }
+  if (!tokens.refreshToken) throw new TwakeAiError('login_required', `No Twake Chat session is kept for ${agent}.`);
+  const renewed = await refreshMatrix(homeserver, tokens.refreshToken, agent, http);
+  await logoutMatrix(homeserver, renewed.accessToken, http);
+}

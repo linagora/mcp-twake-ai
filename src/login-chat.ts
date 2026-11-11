@@ -2,7 +2,7 @@ import { saveConfig, type TwakeAiConfig } from './config.js';
 import { checkAgentId, matrixGrant, matrixKey, NEVER_EXPIRES } from './grants.js';
 import { withLock } from './lock.js';
 import { LOOPBACK_PORTS, obtainCallback, type CallbackDeps, type CallbackMode } from './loopback.js';
-import { loginWithToken, logoutMatrix, refreshMatrix, ssoProvider, ssoRedirectUrl } from './matrix.js';
+import { loginWithToken, logoutDevice, ssoProvider, ssoRedirectUrl } from './matrix.js';
 import { randomState, type OidcHttp } from './oidc.js';
 import type { AppPaths } from './paths.js';
 import { readCachedToken, writeCachedToken } from './token-cache.js';
@@ -58,30 +58,8 @@ export async function loginChat(
   // the new device id right after its token: an MCP server must not get the new token with the old device
   const updated: TwakeAiConfig = { ...config, chat: { ...config.chat, [agent]: { userId: session.userId, deviceId: session.deviceId } } };
   await saveConfig(deps.paths, updated);
-  if (old) await logoutPreviousDevice(homeserver, agent, old, deps.http);
+  // best effort: a device left behind can still be removed from Twake Chat
+  if (old) await logoutDevice(homeserver, agent, old, deps.http).catch(() => undefined);
   return updated;
 }
 
-/** Best effort: a device left behind clutters the session list and keeps receiving encryption keys. */
-async function logoutPreviousDevice(
-  homeserver: string,
-  agent: string,
-  old: { accessToken?: string; refreshToken?: string },
-  http: OidcHttp,
-): Promise<void> {
-  if (old.accessToken) {
-    try {
-      await logoutMatrix(homeserver, old.accessToken, http);
-      return;
-    } catch {
-      // expired (refreshable tokens last minutes): renew it below
-    }
-  }
-  if (!old.refreshToken) return;
-  try {
-    const renewed = await refreshMatrix(homeserver, old.refreshToken, agent, http);
-    await logoutMatrix(homeserver, renewed.accessToken, http);
-  } catch {
-    // the device stays listed: the user can remove it from Twake Chat
-  }
-}

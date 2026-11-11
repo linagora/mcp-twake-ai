@@ -9,7 +9,8 @@ La spec est découpée en quatre plans. Chacun livre un logiciel qui fonctionne 
 | **1. Socle et broker OIDC** (`2026-11-10-twake-ai-plan-1-socle-broker-oidc.md`) | `mcp-twake-ai login`, `mcp-twake-ai token <mail\|dav\|space\|project>` : le `my-token-broker` des README, utilisable tout de suite à la main | 5.2 (discovery, auth OIDC, vault), 5.3, 6, 7.1 (OIDC), 7.2, 7.4 | — |
 | **2. Drive et Chat** (`2026-11-10-twake-ai-plan-2-drive-chat.md`) | `token drive`, `token chat --agent X`, `login --agent X`, mode sans navigateur par URL collée | 6 (étape 7, apps activées), 7.1 (cozy, Matrix), 7.2 | plan 1 |
 | **3a. Catalogue, lanceur, export** (`2026-11-10-twake-ai-plan-3a-catalog-launcher-export.md`), puis **3b. Adaptateurs d'agents** (`2026-11-11-twake-ai-plan-3b-agent-adapters.md`, avec `setup` non interactif) | installation des MCP en versions figées dans le préfixe privé, `mcp-twake-ai run`, les cinq adaptateurs d'agents, `mcp-twake-ai export` | 5.3 (préfixe), 9, 10, 11 | plans 1 et 2 |
-| **4. Parcours complet et exploitation** | `mcp-twake-ai setup` interactif (bannière, i18n fr/en, `--email`), le non interactif étant livré au 3b, `status`, `logout`, `uninstall`, journal, CI sur 3 OS, test réel | 8, 12, 13.4, 13.5 | plans 1 à 3 |
+| **4a. Exploitation** (`2026-11-11-twake-ai-plan-4a-status-logout-uninstall.md`) | `status` (poignée de main MCP), `logout`, `uninstall`, journal masqué | 7.3, 12 | plans 1 à 3b |
+| **4b. Parcours guidé** | `mcp-twake-ai setup` interactif (bannière, i18n fr/en, `--email`, révocation sur abandon), auto-installation par `npx` et raccourci, `scripts/live.mjs` (la CI sur 3 OS est en place depuis le 2026-11-11) | 5.3, 8, 13.5 | plans 1 à 4a |
 
 ## Plan 2 : Drive et Chat (périmètre)
 

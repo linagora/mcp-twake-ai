@@ -73,6 +73,20 @@ mcp-twake-ai setup --agents cursor --services mail,dav --yes
 - An agent whose write fails is put back as it was; the others are still written.
 - Running it again changes nothing. With fewer `--services`, it removes the entries you left out.
 
+## Check, sign out, uninstall
+
+```sh
+mcp-twake-ai status                        # session, Drive, every entry, and each server started once
+mcp-twake-ai status --no-start             # the same without starting the servers
+mcp-twake-ai status --env mail --agent cursor   # the environment run builds for a server
+mcp-twake-ai logout                        # revokes every authorization and forgets the secrets
+mcp-twake-ai uninstall                     # shows what it would remove; add --yes to do it
+```
+
+- `status` checks the Twake session (userinfo), Twake Drive (`/settings/instance`), each agent's Chat device (`/account/whoami`), that every entry is the one mcp-twake-ai wrote, and that each server answers `initialize` and `tools/list` through its entry. It exits with 1 when something is wrong, and says what.
+- `logout` revokes the session at the identity provider, removes "Twake AI" from the Drive connected devices, signs every Chat device out, then deletes the secrets and the cached tokens. Each step is tried even when another one fails.
+- `uninstall --yes` removes the entries it wrote (`--force` for those changed by hand), signs out, and deletes the servers, the configuration, the cache and the journal. The Twake Chat stores hold the local index of your messages: they are kept unless you add `--delete-chat-stores`.
+
 ## Any agent: `mcp-twake-ai export`
 
 ```bash
@@ -90,6 +104,7 @@ mcp-twake-ai export --agent zed --raw                   # the servers and their 
 | Configuration (no secret) | `~/.config/twake-ai/config.json` |
 | Refresh token | the OS keychain, service `twake-ai`; otherwise `~/.config/twake-ai/secrets.json` (`0600`) |
 | Cached access tokens | `~/.cache/twake-ai/tokens/` (`0600`) |
+| Journal (steps and errors, secrets masked) | `~/.local/state/twake-ai/twake-ai.log` |
 
 On Windows: `%APPDATA%\twake-ai` and `%LOCALAPPDATA%\twake-ai`. `TWAKE_AI_HOME` groups everything under one directory.
 

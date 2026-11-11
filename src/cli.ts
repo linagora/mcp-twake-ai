@@ -3,10 +3,14 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { getToken, isServiceId, SERVICE_IDS, type ServiceId } from './broker.js';
-import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig, type TwakeAiConfig } from './config.js';
+import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig, saveConfig, type TwakeAiConfig } from './config.js';
 import { discover, type DiscoveryDeps } from './discovery.js';
 import { TwakeAiError } from './errors.js';
-import { hostOf, HttpError } from './http.js';
+import { describeError } from './describe.js';
+import { journal } from './journal.js';
+import { logout } from './logout.js';
+import { forgetSecrets, removeFiles, uninstallPlan } from './uninstall.js';
+import { checkChat, checkDrive, checkSession, entryStates, handshake, type Check, type EntryState } from './status.js';
 import { chooseLoginMode, loginOidc } from './login.js';
 import { appPaths, type AppPaths } from './paths.js';
 import { chooseVault, openVault, type Vault } from './vault.js';
@@ -22,8 +26,8 @@ import { applyAgent, createAdapters, detectAgents, recordOwned } from './agents/
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
 import { runService } from './launcher.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
-import { ensureInstalled, type Runner } from './installer.js';
-import { resolve as resolvePath } from 'node:path';
+import { ensureInstalled, prefixDir, type Runner } from './installer.js';
+import { join, resolve as resolvePath } from 'node:path';
 
 export interface Io {
   stdout(text: string): void;
@@ -115,6 +119,10 @@ const USAGE = `usage:
   mcp-twake-ai token <${SERVICE_IDS.join('|')}> [--agent <id>]
   mcp-twake-ai run <${SERVICE_IDS.join('|')}> --agent <id>
   mcp-twake-ai export --agent <id> [--services <list>] [--raw] [--out <dir>] [--no-browser]
+  mcp-twake-ai status [--agents <ids>] [--no-start]
+  mcp-twake-ai status --env <service> [--agent <id>]
+  mcp-twake-ai logout
+  mcp-twake-ai uninstall [--yes] [--force] [--delete-chat-stores]
   mcp-twake-ai --version
 `;
 
@@ -128,39 +136,50 @@ function usageErrors<T>(parse: () => T): T {
 
 export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()): Promise<number> {
   const [command, ...args] = argv;
+  let code: number;
+  let failure: string | undefined;
   try {
-    switch (command) {
-      case '--version':
-      case '-v':
-        io.stdout(`${packageVersion()}\n`);
-        return 0;
-      case 'setup':
-        return await setupCommand(args, io, deps);
-      case 'login':
-        return await loginCommand(args, io, deps);
-      case 'token':
-        return await tokenCommand(args, io, deps);
-      case 'export':
-        return await exportCommand(args, io, deps);
-      case 'run':
-        return await runCommand(args, deps);
-      default:
-        io.stderr(USAGE);
-        return 2;
-    }
+    code = await dispatch(command, args, io, deps);
   } catch (error) {
-    io.stderr(`mcp-twake-ai: ${describeError(error)}\n`);
-    return error instanceof TwakeAiError && error.code === 'usage' ? 2 : 1;
+    failure = describeError(error);
+    io.stderr(`mcp-twake-ai: ${failure}\n`);
+    code = error instanceof TwakeAiError && error.code === 'usage' ? 2 : 1;
   }
+  // token and run are called all day long by the servers: only their failures are worth a line
+  // a finished uninstall has removed the journal: it must not come back
+  const uninstalled = command === 'uninstall' && code === 0 && args.includes('--yes');
+  if (!uninstalled && (code !== 0 || (command !== 'token' && command !== 'run'))) {
+    await journal(deps.paths, `${[command, ...args].join(' ')} → ${code}${failure ? `: ${failure.split('\n')[0]}` : ''}`);
+  }
+  return code;
 }
 
-/** One line for the user (an MCP server shows only the last line of stderr). Usage errors keep the usage text. */
-function describeError(error: unknown): string {
-  if (error instanceof TwakeAiError) return error.message;
-  if (error instanceof HttpError) {
-    return `${hostOf(error.url)} refused the request (HTTP ${error.status}${error.oauthError ? `, ${error.oauthError}` : ''}).`;
+async function dispatch(command: string | undefined, args: string[], io: Io, deps: CliDeps): Promise<number> {
+  switch (command) {
+    case '--version':
+    case '-v':
+      io.stdout(`${packageVersion()}\n`);
+      return 0;
+    case 'setup':
+      return await setupCommand(args, io, deps);
+    case 'status':
+      return await statusCommand(args, io, deps);
+    case 'logout':
+      return await logoutCommand(io, deps);
+    case 'uninstall':
+      return await uninstallCommand(args, io, deps);
+    case 'login':
+      return await loginCommand(args, io, deps);
+    case 'token':
+      return await tokenCommand(args, io, deps);
+    case 'export':
+      return await exportCommand(args, io, deps);
+    case 'run':
+      return await runCommand(args, deps);
+    default:
+      io.stderr(USAGE);
+      return 2;
   }
-  return `unexpected error: ${String((error as Error)?.message ?? error).split('\n')[0]}`;
 }
 
 async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
@@ -431,4 +450,154 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);
   }
   return failed ? 1 : 0;
+}
+
+const STATE_LINE: Record<EntryState['state'], [string, string]> = {
+  ok: ['✓', 'in place'],
+  missing: ['✗', 'missing: run setup again'],
+  modified: ['!', 'changed by hand since mcp-twake-ai wrote it'],
+  foreign: ['!', 'configured outside mcp-twake-ai'],
+  'no-node': ['✗', 'its node is gone (updated with nvm?): run setup again'],
+};
+
+const mark = (check: Check) => (check.ok ? '✓' : '✗');
+
+/** status: the session, Drive, each agent's entries and Chat device, and a handshake with each server (spec §12.2). */
+async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
+  const { values } = usageErrors(() =>
+    parseArgs({ args, options: { agents: { type: 'string' }, 'no-start': { type: 'boolean' }, env: { type: 'string' }, agent: { type: 'string' } }, strict: true }),
+  );
+  const config = await loadConfig(d.paths);
+  if (!config) throw new TwakeAiError('login_required', 'mcp-twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
+  if (values.env !== undefined) {
+    if (!isServiceId(values.env)) throw new TwakeAiError('usage', `"${values.env}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
+    const env = serviceEnv(values.env, checkAgentId(values.agent ?? 'agent'), catalogContext(config, d));
+    for (const [key, value] of Object.entries(env)) io.stdout(`${key}=${value}\n`);
+    return 0;
+  }
+  const vault = await openVault(config.vault, d.paths);
+  const broker = { paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep }, now: d.now };
+  let healthy = true;
+  const report = (check: Check, label: string) => {
+    healthy &&= check.ok;
+    io.stdout(`${mark(check)} ${label}: ${check.detail}\n`);
+  };
+  report(await checkSession(broker), 'Twake session');
+  if (config.drive) report(await checkDrive(broker), 'Twake Drive');
+  const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  const wanted = values.agents === undefined ? (Object.keys(config.agents ?? {}).filter(isAgentId) as AgentId[]) : values.agents.split(',').map((name) => name.trim());
+  for (const name of wanted) {
+    if (!isAgentId(name)) throw new TwakeAiError('usage', `"${name}" is not an agent mcp-twake-ai configures (${AGENT_IDS.join(', ')}).\n\n${USAGE}`);
+    const adapter = adapters[name];
+    io.stdout(`${adapter.label} (${adapter.target})\n`);
+    if (!(await adapter.detect())) {
+      healthy = false;
+      io.stdout('  ✗ not found on this computer\n');
+      continue;
+    }
+    let states: EntryState[];
+    try {
+      states = await entryStates(adapter, config.agents?.[name]?.entries ?? {});
+    } catch (error) {
+      healthy = false;
+      io.stdout(`  ✗ ${describeError(error)}\n`);
+      continue;
+    }
+    if (states.length === 0) io.stdout('  no Twake.ai entry: run setup\n');
+    for (const state of states) {
+      let [symbol, words] = STATE_LINE[state.state];
+      if (state.state === 'ok' && !values['no-start']) {
+        const started = await handshake(state.entry as { command: string; args: string[]; env?: Record<string, string> }, d.env);
+        [symbol, words] = started.ok ? ['✓', `starts, ${started.detail}`] : ['✗', started.detail];
+      }
+      healthy &&= symbol === '✓';
+      io.stdout(`  ${symbol} ${state.name.padEnd(14)} ${words}\n`);
+    }
+    if (states.some((state) => state.service === 'chat')) {
+      const chat = await checkChat(broker, name);
+      healthy &&= chat.ok;
+      io.stdout(`  ${mark(chat)} Twake Chat (${name}): ${chat.detail}\n`);
+    }
+  }
+  return healthy ? 0 : 1;
+}
+
+/** logout: revokes every authorization and forgets the secrets (spec §7.3). */
+async function logoutCommand(io: Io, d: CliDeps): Promise<number> {
+  const config = await loadConfig(d.paths);
+  if (!config) {
+    io.stdout('Nothing to sign out of: mcp-twake-ai is not set up on this computer.\n');
+    return 0;
+  }
+  const vault = await openVault(config.vault, d.paths);
+  const { done, failed } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+  for (const line of done) io.stdout(`✓ ${line}\n`);
+  for (const line of failed) io.stdout(`✗ ${line}\n`);
+  io.stdout(failed.length ? 'The secrets are forgotten here; what could not be revoked expires on its own, or can be removed from your Twake account.\n' : 'Signed out. Run mcp-twake-ai login to sign in again.\n');
+  return failed.length ? 1 : 0;
+}
+
+/** uninstall: removes the entries written, signs out, deletes what mcp-twake-ai installed (spec §12.3). */
+async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
+  const { values } = usageErrors(() =>
+    parseArgs({ args, options: { yes: { type: 'boolean' }, force: { type: 'boolean' }, 'delete-chat-stores': { type: 'boolean' } }, strict: true }),
+  );
+  const force = values.force ?? false;
+  let config: TwakeAiConfig | undefined;
+  let unreadable = false;
+  try {
+    config = await loadConfig(d.paths);
+  } catch (error) {
+    // without it, nothing tells which entries and authorizations are mcp-twake-ai's
+    if (!force) {
+      throw new TwakeAiError(
+        'damaged_file',
+        `${d.paths.configFile} cannot be read (${describeError(error)}): fix it, or run uninstall --yes --force to remove mcp-twake-ai's files anyway (the agents keep their entries).`,
+      );
+    }
+    unreadable = true;
+  }
+  const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  const plans = config ? await uninstallPlan(config, adapters) : [];
+  for (const { adapter, actions } of plans) printPlan(io, adapter, actions, force);
+  const chat = join(d.paths.dataDir, 'chat');
+  io.stdout(`${config ? 'Sign out of Twake.ai, then remove' : 'Remove'} ${prefixDir(d.paths)}, the configuration, the cache and the journal.\n`);
+  io.stdout(values['delete-chat-stores'] ? `Delete the Twake Chat stores in ${chat}.\n` : `Twake Chat stores kept in ${chat} (add --delete-chat-stores to delete them).\n`);
+  if (!values.yes) {
+    io.stdout('Nothing was changed: run the same command with --yes to do it.\n');
+    return 0;
+  }
+  // the entries an agent still has (skipped, or its write failed) stay recorded
+  const left: Record<string, { entries: Record<string, string> }> = {};
+  for (const { adapter, owned, actions } of plans) {
+    const result = await applyAgent(adapter, actions, owned, () => force);
+    if (result.status === 'failed') {
+      left[adapter.id] = { entries: owned };
+      io.stdout(`${adapter.label}: not changed, ${result.error}\n`);
+      continue;
+    }
+    io.stdout(`${adapter.label}: ${result.status === 'written' ? 'entries removed' : 'nothing to remove'}.\n`);
+    if (result.skipped.length > 0) {
+      left[adapter.id] = { entries: result.owned };
+      io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to remove them)\n`);
+    }
+  }
+  if (config) {
+    const vault = await openVault(config.vault, d.paths);
+    const { failed: notRevoked } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    for (const line of notRevoked) io.stdout(`✗ ${line}\n`);
+  }
+  if (unreadable) await forgetSecrets(d.paths);
+  const keepConfig = Object.keys(left).length > 0;
+  if (keepConfig) {
+    const remaining = await loadConfig(d.paths);
+    if (remaining) await saveConfig(d.paths, { ...remaining, agents: left });
+  }
+  await removeFiles(d.paths, values['delete-chat-stores'] ?? false, keepConfig);
+  if (keepConfig) {
+    io.stdout(`Some entries are still in place and recorded in ${d.paths.configFile}: run uninstall --yes --force to remove them, or remove them by hand.\n`);
+    return 1;
+  }
+  io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`} Remove the command itself with: npm uninstall -g mcp-twake-ai\n`);
+  return 0;
 }

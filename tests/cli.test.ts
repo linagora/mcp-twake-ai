@@ -13,9 +13,11 @@ import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { fakeNpm } from './helpers/fake-mcp.js';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { prefixDir } from '../src/installer.js';
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readText } from '../src/agents/config-file.js';
+import { journalFile } from '../src/journal.js';
 import { cursorConfig, vscodeConfig } from '../src/agents/locations.js';
 
 const run = promisify(execFile);
@@ -145,6 +147,18 @@ describe('the mcp-twake-ai process', () => {
 });
 
 describe('main: second sign-in and failures', () => {
+  it('keeps a journal of commands and errors, without tokens', async () => {
+    const deps = await testDeps();
+    expect(await main(['login', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
+    expect(await main(['token', 'mail'], captureIo(), deps)).toBe(0);
+    expect(await main(['token', 'chat'], captureIo(), deps)).toBe(2);
+    const text = await readFile(journalFile(deps.paths), 'utf8');
+    expect(text).toContain('login --email alice@example.com → 0');
+    expect(text).not.toContain('token mail');
+    expect(text).toContain('token chat → 2: A Twake Chat token belongs to an agent');
+    expect(text).not.toMatch(/access_token|eyJ/);
+  });
+
   it('signs in again with the client and scope used the first time', async () => {
     const deps = await testDeps();
     expect(await main(['login', '--email', 'alice@example.com', '--client-id', 'my-test-client', '--scope', 'openid offline_access'], captureIo(), deps)).toBe(0);
@@ -455,6 +469,136 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toContain(`VS Code: ${vscode} is not valid JSON`);
     expect(JSON.parse((await readText(cursor))!).mcpServers).toHaveProperty('twake-mail');
     expect(await readText(vscode)).toBe('{"servers": {');
+  });
+
+  it('shows the health of the session, Drive, Chat and every entry', async () => {
+    const { deps } = await readyForSetup();
+    // an entry is only in place when its node exists: the real one, wherever this machine keeps it
+    deps.nodePath = process.execPath;
+    expect(await main(['login', '--drive'], captureIo(), deps)).toBe(0);
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
+    const io = captureIo();
+    expect(await main(['status', '--no-start'], io, deps)).toBe(0);
+    expect(io.out).toContain('✓ Twake session: alice@example.com');
+    expect(io.out).toContain(`✓ Twake Drive: ${cozy.url}`);
+    expect(io.out).toContain('Cursor');
+    expect(io.out).toMatch(/✓ twake-mail\s+in place/);
+    expect(io.out).toMatch(/✓ Twake Chat \(cursor\): @alice:example.com/);
+  });
+
+  it('says what is wrong, and exits with 1', async () => {
+    const { deps, cursor } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
+    const servers = JSON.parse((await readText(cursor))!);
+    servers.mcpServers['twake-mail'].args.push('--debug');
+    await writeFile(cursor, JSON.stringify(servers));
+    // no cached token: the session check asks the IdP, which refuses
+    await rm(deps.paths.tokensDir, { recursive: true, force: true });
+    idp.tokenFailureStatus = 400;
+    const io = captureIo();
+    expect(await main(['status', '--no-start'], io, deps)).toBe(1);
+    expect(io.out).toMatch(/✗ Twake session: /);
+    expect(io.out).toMatch(/! twake-mail\s+changed by hand/);
+  });
+
+  it('starts each server through its entry', async () => {
+    const { deps } = await readyForSetup();
+    deps.nodePath = process.execPath;
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
+    const io = captureIo();
+    expect(await main(['status', '--agents', 'cursor'], io, deps)).toBe(1);
+    // the entry starts /opt/twake-ai/build/bin.js, which does not exist here: the handshake says so
+    expect(io.out).toMatch(/✗ twake-mail\s+.*(Cannot find module|MODULE_NOT_FOUND|stopped)/);
+  });
+
+  it('says when an agent is not installed or has no Twake.ai entry, and exits with 1', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['status', '--agents', 'claude-desktop,cursor', '--no-start'], io, deps)).toBe(1);
+    expect(io.out).toMatch(/Claude Desktop .*\n  ✗ not found on this computer/);
+    expect(io.out).toMatch(/Cursor .*\n  no Twake.ai entry: run setup/);
+  });
+
+  it('logs out with exit code 1 when a revocation fails, naming it', async () => {
+    const { deps } = await readyForSetup();
+    idp.close();
+    const io = captureIo();
+    expect(await main(['logout'], io, deps)).toBe(1);
+    expect(io.out).toMatch(/✗ Twake session: /);
+  });
+
+  it('prints the environment run would build', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['status', '--env', 'mail', '--agent', 'cursor'], io, deps)).toBe(0);
+    expect(io.out).toContain('JMAP_SESSION_URL=https://jmap.example.com/jmap/session\n');
+    expect(io.out).toContain("JMAP_TOKEN_COMMAND='/usr/bin/node' '/opt/twake-ai/build/bin.js' 'token' 'mail'\n");
+  });
+
+  it('logs out of everything, then token asks to sign in again', async () => {
+    const deps = await signedIn();
+    expect(await main(['login', '--drive'], captureIo(), deps)).toBe(0);
+    expect(await main(['login', '--chat', '--agent', 'hermes'], captureIo(), deps)).toBe(0);
+    const io = captureIo();
+    expect(await main(['logout'], io, deps)).toBe(0);
+    expect(io.out).toContain('✓ Twake session revoked');
+    expect(io.out).toContain('✓ Twake Chat device of hermes signed out');
+    expect(cozy.deleted).toHaveLength(1);
+    const token = captureIo();
+    expect(await main(['token', 'mail'], token, deps)).toBe(1);
+    expect(token.err).toContain('mcp-twake-ai login');
+  });
+
+  it('shows what uninstall removes, then removes it with --yes', async () => {
+    const { deps, cursor } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor,vscode', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
+    await mkdir(join(deps.paths.dataDir, 'chat', 'cursor', 'DEVICE1'), { recursive: true });
+    const plan = captureIo();
+    expect(await main(['uninstall'], plan, deps)).toBe(0);
+    expect(plan.out).toMatch(/- twake-mail\s+remove/);
+    expect(plan.out).toContain('Nothing was changed');
+    expect(JSON.parse((await readText(cursor))!).mcpServers).toHaveProperty('twake-mail');
+    const io = captureIo();
+    expect(await main(['uninstall', '--yes'], io, deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers).toEqual({});
+    expect(await loadConfig(deps.paths)).toBeUndefined();
+    expect(await readText(join(prefixDir(deps.paths), 'mcp-twake-mail', 'package.json'))).toBeUndefined();
+    expect(io.out).toContain(`Twake Chat stores kept in ${join(deps.paths.dataDir, 'chat')}`);
+    expect(synapse.loggedOut).toHaveLength(2);
+    // the journal goes with the rest, and the uninstall itself does not bring it back
+    expect(await stat(journalFile(deps.paths)).then(() => true, () => false)).toBe(false);
+  });
+
+  it('keeps an entry changed by hand unless --force, and the Chat stores unless asked', async () => {
+    const { deps, cursor } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
+    const servers = JSON.parse((await readText(cursor))!);
+    servers.mcpServers['twake-mail'].env = { DEBUG: '1' };
+    await writeFile(cursor, JSON.stringify(servers));
+    await mkdir(join(deps.paths.dataDir, 'chat', 'cursor'), { recursive: true });
+    const io = captureIo();
+    expect(await main(['uninstall', '--yes', '--delete-chat-stores'], io, deps)).toBe(1);
+    expect(io.out).toContain('left as they are: twake-mail');
+    expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail'].env).toEqual({ DEBUG: '1' });
+    expect(await stat(join(deps.paths.dataDir, 'chat')).then(() => true, () => false)).toBe(false);
+    // what is left stays recorded, so that --force can still remove it
+    expect((await loadConfig(deps.paths))?.agents?.cursor?.entries).toHaveProperty('twake-mail');
+    expect(await main(['uninstall', '--yes', '--force'], captureIo(), deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers).toEqual({});
+    expect(await loadConfig(deps.paths)).toBeUndefined();
+  });
+
+  it('refuses to uninstall over a configuration it cannot read, unless --force', async () => {
+    const { deps } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
+    await writeFile(deps.paths.configFile, '{ damaged');
+    const io = captureIo();
+    expect(await main(['uninstall', '--yes'], io, deps)).toBe(1);
+    expect(io.err).toContain('--force');
+    expect(await stat(prefixDir(deps.paths)).then(() => true, () => false)).toBe(true);
+    expect(await main(['uninstall', '--yes', '--force'], captureIo(), deps)).toBe(0);
+    expect(await stat(prefixDir(deps.paths)).then(() => true, () => false)).toBe(false);
+    expect(await stat(deps.paths.configFile).then(() => true, () => false)).toBe(false);
   });
 });
 

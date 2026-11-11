@@ -1,13 +1,20 @@
-import { execFileSync, spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { execFile, execFileSync, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { findExecutable } from '../../src/agents/claude-code.js';
-import { saveConfig } from '../../src/config.js';
+import { loadConfig, saveConfig } from '../../src/config.js';
+import { prefixDir } from '../../src/installer.js';
+import { journalFile } from '../../src/journal.js';
+import { OIDC_REFRESH_KEY } from '../../src/grants.js';
+import { fetchOidcMetadata } from '../../src/oidc.js';
+import { openVault } from '../../src/vault.js';
 import { appPaths } from '../../src/paths.js';
 import { installFakeClaude, withPath } from '../helpers/fake-claude.js';
+import { startFakeIdp } from '../helpers/fake-idp.js';
 import { installFakeMcp } from '../helpers/fake-mcp.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { tempDir } from '../helpers/tmp.js';
@@ -91,6 +98,50 @@ describe('mcp-twake-ai setup, end to end', () => {
     const code = JSON.parse(await readFile(join(claude.configDir, '.claude.json'), 'utf8')).mcpServers['twake-mail'];
     expect(await toolsOf(code, env)).toEqual(['hello_Europe_Paris']);
     expect(setup(env, '--agents', 'cursor,hermes,claude-code', '--services', 'mail', '--yes')).toContain('Cursor: already up to date.');
+  });
+
+  it('lives through status, logout and uninstall', { timeout: 90_000 }, async () => {
+    const idp = await startFakeIdp();
+    try {
+      const { home, env } = await computer();
+      const paths = appPaths({ platform: process.platform, env: { TWAKE_AI_HOME: env.TWAKE_AI_HOME }, home });
+      const refresh = idp.issueRefreshToken();
+      await saveConfig(paths, { ...sampleConfig, email: 'alice@example.com', drive: undefined, chat: undefined, environment: { ...sampleConfig.environment, oidc: await fetchOidcMetadata(idp.url) } });
+      await (await openVault('file', paths)).set(OIDC_REFRESH_KEY, refresh);
+      setup(env, '--agents', 'cursor', '--services', 'mail', '--yes');
+      // asynchronous: the fake IdP answers from this very process, which execFileSync would block
+      const run = async (...args: string[]) => {
+        try {
+          const done = await promisify(execFile)(process.execPath, [cli, ...args], { env, encoding: 'utf8' });
+          return { code: 0, out: done.stdout, err: done.stderr };
+        } catch (error) {
+          const failed = error as { code: number; stdout: string; stderr: string };
+          return { code: failed.code, out: String(failed.stdout), err: String(failed.stderr) };
+        }
+      };
+      const status = await run('status');
+      expect(status.out).toContain('✓ Twake session: alice@example.com');
+      expect(status.out).toMatch(/✓ twake-mail\s+starts, 1 tools/);
+      expect(status.code).toBe(0);
+      // status refreshed the session, and the IdP rotates refresh tokens: logout revokes the current one
+      const current = await (await openVault('file', paths)).get(OIDC_REFRESH_KEY);
+      expect(current).not.toBe(refresh);
+      expect((await run('logout')).out).toContain('✓ Twake session revoked');
+      expect(idp.revoked).toEqual([current]);
+      // sign in again, so that uninstall itself signs out
+      const second = idp.issueRefreshToken();
+      await saveConfig(paths, { ...sampleConfig, email: 'alice@example.com', drive: undefined, chat: undefined, environment: { ...sampleConfig.environment, oidc: await fetchOidcMetadata(idp.url) }, agents: (await loadConfig(paths))?.agents });
+      await (await openVault('file', paths)).set(OIDC_REFRESH_KEY, second);
+      expect((await run('uninstall', '--yes')).code).toBe(0);
+      expect(idp.revoked).toContain(second);
+      expect(JSON.parse(await readFile(join(home, '.cursor', 'mcp.json'), 'utf8')).mcpServers).toEqual({});
+      for (const gone of [prefixDir(paths), paths.configFile, paths.vaultFile, paths.cacheDir, journalFile(paths)]) {
+        expect(await stat(gone).then(() => gone, () => undefined)).toBeUndefined();
+      }
+      expect((await run('status')).err).toContain('mcp-twake-ai login --email');
+    } finally {
+      idp.close();
+    }
   });
 
   it.runIf(process.env.MCP_TWAKE_AI_E2E === '1')('is accepted by the real Claude Code, which connects to the server', { timeout: 120_000 }, async () => {
