@@ -70,7 +70,8 @@ describe('mcp-twake-ai run', () => {
     expect(result.env).toMatchObject({
       JMAP_SESSION_URL: 'https://jmap.linagora.com/jmap/session',
       JMAP_AUTH_METHOD: 'command',
-      JMAP_TOKEN_COMMAND: expect.stringContaining("'token' 'mail'"),
+      // quoted for the shell the server runs it through: cmd.exe on Windows, /bin/sh elsewhere
+      JMAP_TOKEN_COMMAND: expect.stringContaining(process.platform === 'win32' ? '"token" "mail"' : "'token' 'mail'"),
       USER_LANGUAGE: 'en',
     });
     mcp.close();
