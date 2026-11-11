@@ -446,6 +446,12 @@ describe('main: Twake Drive and Twake Chat', () => {
     // a later run without --env keeps them
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
     expect((await loadConfig(deps.paths))!.env).toEqual({ mail: { JMAP_DEFAULT_FROM: 'jdoe@example.com' } });
+
+    // an empty value forgets the variable
+    const forget = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--env', 'mail.JMAP_DEFAULT_FROM='], forget, deps)).toBe(0);
+    expect(forget.out).toContain('forgotten');
+    expect((await loadConfig(deps.paths))!.env).toBeUndefined();
   });
 
   it('refuses --env options that name an unknown service or carry a secret', async () => {

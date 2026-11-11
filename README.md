@@ -128,7 +128,9 @@ mcp-twake-ai setup --agents claude-code --yes --env dav.DAV_DEFAULT_CALENDAR=XG
 
 With `--email`, `setup` first signs in to that account if it is not the current one. With `--yes`, it connects Twake Drive and gives each agent its own Twake Chat device when those services are chosen, installs the pinned servers, then writes the agents.
 
-`--env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment (`--env` can be repeated). It is kept in `config.json` — never in an agent's file — and every entry, `run`, `status --env` and `export` builds it from there. Services are `mail`, `dav`, `drive`, `chat`, `space` and `project`; a variable carrying a secret (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`) is refused, since the token broker already handles those.
+`--env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment (`--env` can be repeated). It is kept in `config.json` — never in an agent's file — and every entry, `run`, `status --env` and `export` builds it from there. An empty value (`--env dav.DAV_DEFAULT_CALENDAR=`) forgets the variable. Services are `mail`, `dav`, `drive`, `chat`, `space` and `project`.
+
+Two kinds of names are refused, on the command line and in a `config.json` edited by hand: the ones naming a server or how to sign in to it (`*_URL`, `*_AUTH_METHOD`, `*_OIDC_ISSUER`, `*_CLIENT_ID`…), which come from your account, and the ones that may carry a secret (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*_API_KEY`…), which the keychain and the token broker already handle. When a server is started through `run`, the environment the agent already sets for it still wins over the one written here.
 
 | Agent (`--agents`)                | Where                                                                                                   | Approval of writes                            |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------- |

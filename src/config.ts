@@ -20,7 +20,7 @@ export const ConfigSchema = z.object({
   chat: z.record(z.string(), z.object({ userId: z.string(), deviceId: z.string() })).optional(),
   /** what mcp-twake-ai wrote into each agent: entry name → fingerprint (spec §10.1, it only touches its own entries) */
   agents: z.record(z.string(), z.object({ entries: z.record(z.string(), z.string()) })).optional(),
-  /** variables the user adds to a server's environment, by service (see `setup --env`): never a secret, they land in the agents' files */
+  /** variables the user adds to a server's environment, by service (see `setup --env`): never a secret, they are built into the server's process, not written into the agents' files */
   env: z.record(z.string(), z.record(z.string(), z.string())).optional(),
 });
 export type TwakeAiConfig = z.infer<typeof ConfigSchema>;

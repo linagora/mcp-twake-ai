@@ -460,25 +460,32 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
 }
 
 /**
- * setup --env <service>.<VARIABLE>=<value>: keep the user's variables in config.json, so that every entry and every
- * `export` keeps building them, rather than writing them by hand into the agents' files.
+ * setup --env <service>.<VARIABLE>=<value>: keep the user's variables in config.json, so that every entry, `run`,
+ * `status --env` and `export` build them, rather than writing them by hand into the agents' files. An empty value
+ * forgets the variable.
  *
  * Nothing is stored without --yes: the setup changes nothing before the user confirms it.
  */
 async function storeExtraEnv(options: string[], apply: boolean, io: Io, d: CliDeps): Promise<void> {
-  const added = parseEnvOption(options);
-  const listed = Object.entries(added)
-    .flatMap(([service, variables]) => Object.entries(variables).map(([name, value]) => `${service}.${name}=${value}`))
-    .join(', ');
+  const change = parseEnvOption(options);
+  const listed = [
+    ...Object.entries(change.set).flatMap(([service, variables]) => Object.entries(variables).map(([name, value]) => `${service}.${name}=${value}`)),
+    ...Object.entries(change.unset).flatMap(([service, names]) => names.map((name) => `${service}.${name} (forgotten)`)),
+  ].join(', ');
   if (!apply) {
     io.stdout(`Environment: ${listed} would be set for the agents: add --yes to do it.\n`);
     return;
   }
   const config = await loadConfig(d.paths);
   if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `mcp-twake-ai login --email <address>`.');
-  const env = { ...(config.env ?? {}) };
-  for (const [service, variables] of Object.entries(added)) env[service] = { ...(env[service] ?? {}), ...variables };
-  await saveConfig(d.paths, { ...config, env });
+  const env: Record<string, Record<string, string>> = {};
+  for (const [service, variables] of Object.entries(config.env ?? {})) env[service] = { ...variables };
+  for (const [service, variables] of Object.entries(change.set)) env[service] = { ...(env[service] ?? {}), ...variables };
+  for (const [service, names] of Object.entries(change.unset)) {
+    for (const name of names) delete env[service]?.[name];
+    if (env[service] && Object.keys(env[service]).length === 0) delete env[service];
+  }
+  await saveConfig(d.paths, { ...config, env: Object.keys(env).length > 0 ? env : undefined });
   io.stdout(`Environment: ${listed} set for the agents in ${d.paths.configFile}.\n`);
 }
 

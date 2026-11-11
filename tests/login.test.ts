@@ -157,6 +157,16 @@ describe('signing in again', () => {
     expect((await loginOidc({ email: 'bob@example.com', environment, client, mode: 'browser', ports: [0] }, d)).agents).toEqual(agents);
   });
 
+  it('keeps the variables the user set with setup --env', async () => {
+    const d = await deps();
+    const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    const env = { dav: { DAV_DEFAULT_CALENDAR: 'XG' } };
+    await saveConfig(d.paths, { ...first, env });
+    // a later sign-in, same account or not, must not forget them silently
+    expect((await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d)).env).toEqual(env);
+    expect((await loginOidc({ email: 'bob@example.com', environment, client, mode: 'browser', ports: [0] }, d)).env).toEqual(env);
+  });
+
   it('drops them when signing in to another domain', async () => {
     const d = await deps();
     const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);

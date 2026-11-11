@@ -196,30 +196,45 @@ describe('serviceEnv: the user\'s own variables', () => {
     const override = { ...ctx, config: { ...config, env: { dav: { USER_TIMEZONE: 'America/New_York' } } } };
     expect(serviceEnv('dav', 'cursor', override).USER_TIMEZONE).toBe('America/New_York');
   });
+
+  it('refuses a config.json edited by hand that names a server or a secret', () => {
+    for (const variables of [{ DAV_URL: 'https://evil.example/' }, { DAV_TOKEN_COMMAND: 'echo x' }, { DAV_AUTH_METHOD: 'bearer' }]) {
+      const hostile = { ...ctx, config: { ...config, env: { dav: variables } } };
+      expect(() => serviceEnv('dav', 'cursor', hostile), JSON.stringify(variables)).toThrow(/Remove it from/);
+    }
+  });
 });
 
 describe('parseEnvOption', () => {
   it('reads one option per variable', () => {
     expect(parseEnvOption(['dav.DAV_DEFAULT_CALENDAR=XG', 'mail.JMAP_DEFAULT_FROM=jdoe@linagora.com', 'dav.DAV_RECURRING_WRITES=false'])).toEqual({
-      dav: { DAV_DEFAULT_CALENDAR: 'XG', DAV_RECURRING_WRITES: 'false' },
-      mail: { JMAP_DEFAULT_FROM: 'jdoe@linagora.com' },
+      set: { dav: { DAV_DEFAULT_CALENDAR: 'XG', DAV_RECURRING_WRITES: 'false' }, mail: { JMAP_DEFAULT_FROM: 'jdoe@linagora.com' } },
+      unset: {},
     });
   });
 
   it('keeps the value, equal signs included', () => {
-    expect(parseEnvOption(['dav.DAV_SOMETHING=a=b'])).toEqual({ dav: { DAV_SOMETHING: 'a=b' } });
+    expect(parseEnvOption(['dav.DAV_SOMETHING=a=b']).set).toEqual({ dav: { DAV_SOMETHING: 'a=b' } });
   });
 
-  it('refuses an unknown service, a lower-case name or a missing value', () => {
-    expect(() => parseEnvOption(['calendar.FOO=1'])).toThrow(/is not a Twake.ai service|--env takes/);
+  it('reads an empty value as a variable to forget', () => {
+    expect(parseEnvOption(['dav.DAV_DEFAULT_CALENDAR='])).toEqual({ set: {}, unset: { dav: ['DAV_DEFAULT_CALENDAR'] } });
+  });
+
+  it('refuses an unknown service, a lower-case name or a missing equal sign', () => {
+    expect(() => parseEnvOption(['calendar.FOO=1'])).toThrow(/--env takes/);
     expect(() => parseEnvOption(['dav.lower=1'])).toThrow(/--env takes/);
     expect(() => parseEnvOption(['dav.NO_EQUALS'])).toThrow(/--env takes/);
-    expect(() => parseEnvOption(['dav.EMPTY='])).toThrow(/needs a value/);
+    expect(() => parseEnvOption(['dav.WITH_BREAK=a\nb'])).toThrow(/line break/);
   });
 
-  it('refuses the variables that carry a secret or replace the token broker', () => {
-    expect(() => parseEnvOption(['dav.DAV_TOKEN_COMMAND=x'])).toThrow(/token broker/);
-    expect(() => parseEnvOption(['mail.JMAP_PASSWORD=x'])).toThrow(/secret/);
-    expect(() => parseEnvOption(['space.TWAKE_SPACE_CLIENT_SECRET=x'])).toThrow(/secret/);
+  it('refuses the variables that name a server or carry a secret', () => {
+    for (const option of ['dav.DAV_URL=https://evil.example/', 'dav.DAV_TOKEN_COMMAND=x', 'mail.JMAP_PASSWORD=x', 'space.TWAKE_SPACE_CLIENT_SECRET=x', 'space.TWAKE_SPACE_API_KEY=x', 'dav.DAV_AUTH_METHOD=bearer']) {
+      expect(() => parseEnvOption([option]), option).toThrow(/--env /);
+    }
+  });
+
+  it('accepts the settings the servers document', () => {
+    expect(parseEnvOption(['dav.DAV_DEFAULT_CALENDAR=XG', 'mail.JMAP_DEFAULT_FROM=jdoe@linagora.com', 'dav.USER_TIMEZONE=America/New_York']).unset).toEqual({});
   });
 });

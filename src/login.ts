@@ -98,6 +98,8 @@ export async function loginOidc(request: LoginRequest, deps: LoginDeps): Promise
     chat,
     // the entries written into the agents start the launcher, whatever the account: they stay ours
     agents: previous?.agents,
+    // the variables the user set with `setup --env` are preferences, not account data: a new sign-in keeps them
+    env: previous?.env,
   };
   await saveConfig(deps.paths, config);
   return config;

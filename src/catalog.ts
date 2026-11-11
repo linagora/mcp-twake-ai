@@ -84,7 +84,15 @@ export function systemTimezone(): string {
  */
 export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContext): Record<string, string> {
   checkAgentId(agent);
-  return { ...builtinServiceEnv(service, agent, ctx), ...(ctx.config.env?.[service] ?? {}) };
+  const extra = ctx.config.env?.[service] ?? {};
+  // a config.json edited by hand must not send a token to another server
+  for (const name of Object.keys(extra)) {
+    const refusal = envNameRefusal(name);
+    if (refusal) {
+      throw new TwakeAiError('unsupported', `${ctx.paths.configFile} sets ${name} for ${service}: ${refusal}. Remove it from ${ctx.paths.configFile}.`);
+    }
+  }
+  return { ...builtinServiceEnv(service, agent, ctx), ...extra };
 }
 
 /** The environment mcp-twake-ai builds itself, before the user's own variables */
@@ -152,18 +160,40 @@ function builtinServiceEnv(service: ServiceId, agent: string, ctx: CatalogContex
 /** An environment variable name a user may set: upper case, digits and underscores, as the servers document them */
 const EXTRA_ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
 
-/** Variables `--env` refuses: they carry a secret, or replace the token broker mcp-twake-ai maintains */
-const RESERVED_ENV_NAME = /TOKEN|SECRET|PASSWORD/i;
+/** A variable a user may not set: it names a server, or how to sign in to it, and comes from the account's discovery */
+const SERVER_ENV_NAME = /(^|_)(URL|URI|HOMESERVER|AUTH_METHOD|OIDC_ISSUER|CLIENT_ID)($|_)/;
+
+/** A variable a user may not set: it carries a secret, which mcp-twake-ai keeps in the keychain */
+const SECRET_ENV_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|(^|_)KEYS?($|_)/;
 
 /**
- * Read `--env <service>.<VARIABLE>=<value>` options.
+ * Why a variable name may not be set, if it may not
+ *
+ * @param name - the variable name, as it would be given to a server
+ * @returns the reason, or undefined when the name is free
+ */
+export function envNameRefusal(name: string): string | undefined {
+  if (SERVER_ENV_NAME.test(name)) return `${name} names a server or how to sign in to it: those come from the account, not from the user`;
+  if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
+  return undefined;
+}
+
+/** What `--env` asks for: variables to set, and variables to remove */
+export interface EnvOptionChange {
+  set: Record<string, Record<string, string>>;
+  /** service → variable names */
+  unset: Record<string, string[]>;
+}
+
+/**
+ * Read `--env <service>.<VARIABLE>=<value>` options. An empty value (`dav.DAV_DEFAULT_CALENDAR=`) forgets the variable.
  *
  * @param values - one option per variable, as given on the command line
- * @returns the variables per service, merged with what an earlier run set
- * @throws TwakeAiError('usage') when an option is malformed, names an unknown service, or would carry a secret
+ * @returns the variables to set and to remove, per service
+ * @throws TwakeAiError('usage') when an option is malformed, names an unknown service, or would set a reserved variable
  */
-export function parseEnvOption(values: string[]): Record<string, Record<string, string>> {
-  const result: Record<string, Record<string, string>> = {};
+export function parseEnvOption(values: string[]): EnvOptionChange {
+  const change: EnvOptionChange = { set: {}, unset: {} };
   for (const raw of values) {
     const equals = raw.indexOf('=');
     const target = equals < 0 ? '' : raw.slice(0, equals);
@@ -177,16 +207,15 @@ export function parseEnvOption(values: string[]): Record<string, Record<string, 
         `--env takes <service>.<VARIABLE>=<value>, with a service among ${SERVICE_IDS.join(', ')} and an upper-case variable name, not "${raw}".`,
       );
     }
-    if (value === '' || /[\r\n\0]/.test(value)) {
-      throw new TwakeAiError('usage', `--env ${service}.${name} needs a value, without a line break.`);
+    // an empty value removes the variable, which needs no check
+    if (value === '') {
+      change.unset[service] = [...(change.unset[service] ?? []), name];
+      continue;
     }
-    if (RESERVED_ENV_NAME.test(name)) {
-      throw new TwakeAiError(
-        'usage',
-        `--env ${service}.${name}: ${name} carries a secret or replaces the token broker. Secrets stay in the keychain, and mcp-twake-ai gives each server its own token command.`,
-      );
-    }
-    result[service] = { ...(result[service] ?? {}), [name]: value };
+    if (/[\r\n\0]/.test(value)) throw new TwakeAiError('usage', `--env ${service}.${name}: a value cannot hold a line break.`);
+    const refusal = envNameRefusal(name);
+    if (refusal) throw new TwakeAiError('usage', `--env ${service}.${name}: ${refusal}.`);
+    change.set[service] = { ...(change.set[service] ?? {}), [name]: value };
   }
-  return result;
+  return change;
 }
