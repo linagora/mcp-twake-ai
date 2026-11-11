@@ -1,7 +1,8 @@
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 
-/** The MCP SDK, imported by absolute path: the fake package lives in a temporary folder, with no node_modules of its own. */
-const sdkRoot = fileURLToPath(new URL('../../node_modules/@modelcontextprotocol/sdk/dist/esm/', import.meta.url));
+/** The MCP SDK, imported by absolute URL: the fake package lives in a temporary folder, with no node_modules of its own. */
+const sdk = (module: string) => pathToFileURL(join(fileURLToPath(new URL('../../node_modules/@modelcontextprotocol/sdk/dist/esm/', import.meta.url)), module)).href;
 
 /**
  * A streamable-HTTP MCP server standing in for mcp-twake-chat's shared mode: it reads MCP_HTTP_HOST, MCP_HTTP_PORT and
@@ -11,8 +12,8 @@ const sdkRoot = fileURLToPath(new URL('../../node_modules/@modelcontextprotocol/
 export const FAKE_HTTP_MCP = `import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { McpServer } from '${sdkRoot}server/mcp.js';
-import { StreamableHTTPServerTransport } from '${sdkRoot}server/streamableHttp.js';
+import { McpServer } from '${sdk('server/mcp.js')}';
+import { StreamableHTTPServerTransport } from '${sdk('server/streamableHttp.js')}';
 
 const token = readFileSync(process.env.MCP_HTTP_TOKEN_FILE, 'utf8').trim();
 const environment = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(MATRIX|USER)_/.test(key)));
