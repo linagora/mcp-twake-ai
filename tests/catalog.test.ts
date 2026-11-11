@@ -311,6 +311,8 @@ describe('parseEnvOption', () => {
     // a signature is read and appended to every mail: a wrong path would send that file to everyone
     expect(() => parseEnvOption(['mail.JMAP_SIGNATURE_PATH=~/.ssh/id_ed25519'])).toThrow(/appended to every message/);
     expect(() => parseEnvOption(['chat.MATRIX_USER_ID=@someone:linagora.com'])).toThrow(/identifies the account/);
+    // any other file the server would read is refused too
+    expect(() => parseEnvOption(['mail.JMAP_SOMETHING_FILE=/etc/shadow'])).toThrow(/names a file the server reads/);
     // the cache index is not a folder of files: it stays settable
     expect(parseEnvOption(['drive.TWAKE_DRIVE_CACHE_DIR=/tmp/cache']).set).toEqual({ drive: { TWAKE_DRIVE_CACHE_DIR: '/tmp/cache' } });
   });

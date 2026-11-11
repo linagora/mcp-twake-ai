@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Security
 
-- `--env` refuses `JMAP_SIGNATURE_PATH`: the mail server reads that file at start-up and appends it to every message, so a pasted path would send a private key to every correspondent. It also refuses `MATRIX_USER_ID`, which identifies the account and comes from the sign-in. The message for a folder no longer claims that the servers read or write nothing else.
+- `--env` refuses `JMAP_SIGNATURE_PATH`: the mail server reads that file at start-up and appends it to every message, so a pasted path would send a private key to every correspondent. It also refuses any `*_PATH` / `*_FILE` (a file the server would read) and `MATRIX_USER_ID`, which identifies the account and comes from the sign-in. The message for a folder no longer claims that the servers read or write nothing else.
 
 ### Fixed
 - When the sign-in code expires during the guided setup, it no longer says to run `mcp-twake-ai login`: it asks for the address again, and says so.

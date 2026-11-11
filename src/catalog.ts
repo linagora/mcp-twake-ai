@@ -193,6 +193,9 @@ const FILES_ENV_NAME = /_(DOWNLOAD|UPLOAD)_DIR$/;
 /** A file the mail server reads and appends to every message: a pasted path would mail a private key */
 const SIGNATURE_ENV_NAME = /^JMAP_SIGNATURE_PATH$/;
 
+/** Any other variable naming a file the server reads: the same reach, whatever the file */
+const FILE_ENV_NAME = /_(PATH|FILE)$/;
+
 /** A variable that identifies the account, which comes from the sign-in */
 const IDENTITY_ENV_NAME = /^MATRIX_USER_ID$/;
 
@@ -219,12 +222,15 @@ export function envNameRefusal(name: string, service: ServiceId): string | undef
     return `${name} is not a variable of ${CATALOG[service].name}: only ${prefix}…, USER_… and LOG_LEVEL may be set`;
   }
   if (MANAGED_ENV_NAME.test(name)) return `${name} is managed by mcp-twake-ai, which keeps one store per device`;
+  // JMAP_DEFAULT_FROM is taken on purpose: the send tools already accept a sender per message, and
+  // a user may send from one of their aliases. It is not an identity in the sense of MATRIX_USER_ID.
   if (FILES_ENV_NAME.test(name)) {
     return `${name} is managed by mcp-twake-ai: Mail, Drive and Chat share one folder for files, ${FILES_FOLDER}, and take and leave files there`;
   }
   if (SIGNATURE_ENV_NAME.test(name)) {
     return `${name} is read by the mail server and appended to every message it writes: a path given by mistake would send that file to every correspondent`;
   }
+  if (FILE_ENV_NAME.test(name)) return `${name} names a file the server reads: a pasted path would give it access to a file of this computer`;
   if (IDENTITY_ENV_NAME.test(name)) return `${name} identifies the account: it comes from the sign-in, not from the user`;
   if (SERVER_ENV_NAME.test(name)) return `${name} names a server or how to sign in to it: those come from the account, not from the user`;
   if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
