@@ -46,6 +46,7 @@ src/
   catalog.ts         # the six servers, their pinned versions and environments
   installer.ts       # installs the pinned servers into a private folder
   launcher.ts        # `run`: starts a server with its environment
+  shared.ts, proxy.ts # the services that cannot run twice (Chat): one loopback backend, bridged to each client's stdio
   agents/            # one adapter per agent: Claude Code, Hermes, Claude Desktop, Cursor, VS Code
   exporter.ts        # `export` for any other agent
   status.ts, logout.ts, uninstall.ts, journal.ts

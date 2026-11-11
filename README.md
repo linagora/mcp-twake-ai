@@ -185,6 +185,16 @@ mcp-twake-ai uninstall                                # shows what it would remo
 - `logout` revokes the session at the identity provider, removes "Twake AI" from the Drive connected devices, signs every Chat device out, then deletes the secrets and the cached tokens.
 - `uninstall --yes` removes the entries it wrote (`--force` for those changed by hand), signs out, and deletes the servers, the configuration, the cache and the journal. The Twake Chat stores hold the local index of your messages: they are kept unless you add `--delete-chat-stores`.
 
+### Twake Chat in several agents, or several windows, at once
+
+Twake Chat keeps one Matrix device per agent, with its end-to-end encryption store on disk, and one process owns that store at a time: two AI clients starting `twake-chat` — Claude Code and OpenCode, two folders of an IDE, a reload — would otherwise fight over it, and the second one would die with "the Matrix device store … is already used by process …".
+
+So `run chat --agent <id>` does not start the server itself. The first client starts one shared server for that agent, on loopback only (`127.0.0.1`, a bearer token kept in a `0600` file), and every client talks to it over HTTP, with one MCP session each: the tools are those of the single Matrix process, and an approval request for a write goes to the client that asked for it. The last client to leave stops the server, so nothing keeps syncing in the background. Nothing changes in your agents' entries, nothing secret is written in their files, and `status` shows the shared server while one runs.
+
+- The other services are stateless: they keep one process per agent, as before.
+- `logout` and `uninstall` stop the shared servers before revoking anything.
+- The environment an agent sets for `twake-chat` is not passed on: it belongs to a process now shared with other clients.
+
 ### Any other agent: `export`
 
 ```bash
@@ -218,6 +228,7 @@ claude mcp add twake-project --scope user \
 | Refresh token                              | the OS keychain, service `twake-ai`; otherwise `~/.config/twake-ai/secrets.json` (`0600`) |
 | Cached access tokens                       | `~/.cache/twake-ai/tokens/` (`0600`)                                                      |
 | Journal (steps and errors, secrets masked) | `~/.local/state/twake-ai/twake-ai.log`                                                    |
+| Shared Chat servers (state, `0600` token)  | `~/.local/share/twake-ai/shared/`                                                         |
 
 On Windows: `%APPDATA%\twake-ai` and `%LOCALAPPDATA%\twake-ai`. `TWAKE_AI_HOME` groups everything under one directory.
 

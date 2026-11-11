@@ -32,6 +32,7 @@ import { needsConsent, planEntries, wantedEntries, type ActionKind, type EntryAc
 import { applyAgent, createAdapters, detectAgents, recordOwned } from './agents/index.js';
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
 import { runService } from './launcher.js';
+import { runningBackends, stopShared } from './shared.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
 import { ensureInstalled, prefixDir, type Runner } from './installer.js';
 import { join, posix, resolve as resolvePath, win32 } from 'node:path';
@@ -639,6 +640,7 @@ async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number
   report(await checkSession(broker), 'Twake session');
   if (config.drive) report(await checkDrive(broker), 'Twake Drive');
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  const shared = await runningBackends(d.paths);
   const wanted = values.agents === undefined ? (Object.keys(config.agents ?? {}).filter(isAgentId) as AgentId[]) : values.agents.split(',').map((name) => name.trim());
   for (const name of wanted) {
     if (!isAgentId(name)) throw new TwakeAiError('usage', `"${name}" is not an agent mcp-twake-ai configures (${AGENT_IDS.join(', ')}).\n\n${USAGE}`);
@@ -671,6 +673,9 @@ async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number
       const chat = await checkChat(broker, name);
       healthy &&= chat.ok;
       io.stdout(`  ${mark(chat)} Twake Chat (${name}): ${chat.detail}\n`);
+      // the one Matrix process every client of this agent talks to, while at least one runs
+      const backend = shared.find((running) => running.service === 'chat' && running.agent === name);
+      if (backend) io.stdout(`  ✓ Twake Chat shared server (${name}): 127.0.0.1:${backend.backend.port}\n`);
     }
   }
   return healthy ? 0 : 1;
@@ -744,7 +749,11 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     for (const line of notRevoked) io.stdout(`✗ ${line}\n`);
     revocationFailed = notRevoked.length > 0;
   }
-  if (unreadable) await forgetSecrets(d.paths);
+  if (unreadable) {
+    // without config.json, nothing says which backends run: the state folder does
+    for (const { service, agent } of await runningBackends(d.paths)) await stopShared(d.paths, service, agent).catch(() => false);
+    await forgetSecrets(d.paths);
+  }
   const keepConfig = Object.keys(left).length > 0;
   if (keepConfig) {
     const remaining = await loadConfig(d.paths);
