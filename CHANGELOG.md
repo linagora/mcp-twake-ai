@@ -11,6 +11,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- `status --print-env <service>` shows the environment built for a server; `status --env` still works as a deprecated alias. `setup --env <service>.<VARIABLE>=<value>` sets one, so the two commands no longer share a flag name with two meanings.
+
 - The repository is now `linagora/mcp-twake-ai`, like the package.
 - Twake Drive registers mcp-twake-ai with the software id `github.com/linagora/mcp-twake-ai` (was `…/mcp-twake-wizard`). Clients registered before keep theirs, and are still removed by `logout` and `uninstall`.
 - The README shows the guided setup step by step and an example in Claude Code; CONTRIBUTING, SECURITY, a code of conduct and issue templates were added.

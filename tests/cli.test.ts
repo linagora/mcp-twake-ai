@@ -570,9 +570,16 @@ describe('main: Twake Drive and Twake Chat', () => {
   it('prints the environment run would build', async () => {
     const { deps } = await readyForSetup();
     const io = captureIo();
-    expect(await main(['status', '--env', 'mail', '--agent', 'cursor'], io, deps)).toBe(0);
+    expect(await main(['status', '--print-env', 'mail', '--agent', 'cursor'], io, deps)).toBe(0);
     expect(io.out).toContain('JMAP_SESSION_URL=https://jmap.example.com/jmap/session\n');
     expect(io.out).toContain("JMAP_TOKEN_COMMAND='/usr/bin/node' '/opt/twake-ai/build/bin.js' 'token' 'mail'\n");
+  });
+
+  it('still accepts the deprecated status --env', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['status', '--env', 'mail'], io, deps)).toBe(0);
+    expect(io.out).toContain('JMAP_SESSION_URL=https://jmap.example.com/jmap/session\n');
   });
 
   it('logs out of everything, then token asks to sign in again', async () => {
