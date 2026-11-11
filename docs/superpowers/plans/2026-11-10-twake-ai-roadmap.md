@@ -10,7 +10,7 @@ La spec est découpée en quatre plans. Chacun livre un logiciel qui fonctionne 
 | **2. Drive et Chat** (`2026-11-10-twake-ai-plan-2-drive-chat.md`) | `token drive`, `token chat --agent X`, `login --agent X`, mode sans navigateur par URL collée | 6 (étape 7, apps activées), 7.1 (cozy, Matrix), 7.2 | plan 1 |
 | **3a. Catalogue, lanceur, export** (`2026-11-10-twake-ai-plan-3a-catalog-launcher-export.md`), puis **3b. Adaptateurs d'agents** (`2026-11-11-twake-ai-plan-3b-agent-adapters.md`, avec `setup` non interactif) | installation des MCP en versions figées dans le préfixe privé, `mcp-twake-ai run`, les cinq adaptateurs d'agents, `mcp-twake-ai export` | 5.3 (préfixe), 9, 10, 11 | plans 1 et 2 |
 | **4a. Exploitation** (`2026-11-11-twake-ai-plan-4a-status-logout-uninstall.md`) | `status` (poignée de main MCP), `logout`, `uninstall`, journal masqué | 7.3, 12 | plans 1 à 3b |
-| **4b. Parcours guidé** | `mcp-twake-ai setup` interactif (bannière, i18n fr/en, `--email`, révocation sur abandon), auto-installation par `npx` et raccourci, `scripts/live.mjs` (la CI sur 3 OS est en place depuis le 2026-11-11) | 5.3, 8, 13.5 | plans 1 à 4a |
+| **4b. Parcours guidé** (`2026-11-11-twake-ai-plan-4b-guided-setup.md`, livré) | `mcp-twake-ai setup` interactif (bannière, i18n fr/en, `--email`, révocation sur abandon), auto-installation par `npx` et raccourci, `scripts/live.mjs` (la CI sur 3 OS est en place depuis le 2026-11-11) | 5.3, 8, 13.5 | plans 1 à 4a |
 
 ## Plan 2 : Drive et Chat (périmètre)
 
@@ -58,3 +58,10 @@ La spec est découpée en quatre plans. Chacun livre un logiciel qui fonctionne 
 | ~~Les six MCP lancent `*_TOKEN_COMMAND` avec `cmd.exe` sous Windows~~ : fusionné le 2026-11-11, reste la publication sur npm | Windows aux plans 3 et 4 | dépôts MCP |
 | Prise en charge de l'élicitation par Claude Desktop et Cursor | la table de capacités du plan 3 | à vérifier au début du plan 3 |
 | Synapse : refresh tokens et MSC3882 | les choix du plan 2 (sans eux, le plan 2 fonctionne quand même) | à vérifier au début du plan 2 |
+
+## Après le plan 4b
+
+Le code de la spec est en place. Ce qui reste dépend de l'extérieur :
+- le client OIDC `twake-ai-agents` sur le LemonLDAP du SaaS, puis `scripts/live.mjs` et `docs/manual-checklist.md` ;
+- la publication npm des six MCP corrigés pour Windows (4.1.1, 4.2.1, 0.4.1, 0.6.1, 0.2.2, 0.2.2), puis celle de `mcp-twake-ai` ;
+- dans les six README, `mcp-twake-ai` à la place de `my-token-broker`.

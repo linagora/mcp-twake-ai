@@ -4,13 +4,23 @@
 
 `mcp-twake-ai` is the token broker the six [Twake.ai MCP servers](https://github.com/linagora/mcp-twake-project#part-of-twakeai) refer to as `my-token-broker`. It signs you in once at your Twake.ai identity provider, keeps the refresh token in your operating system's keychain (macOS Keychain, Windows Credential Manager, Secret Service), and prints a fresh access token whenever an MCP server asks for one.
 
-> **Status: early.** This version serves the six Twake.ai services (Mail, Calendar and contacts, Drive, Chat, Space, Project), starts their MCP servers (`mcp-twake-ai run`) writes them into Claude Code, Hermes, Claude Desktop, Cursor and VS Code (`mcp-twake-ai setup`), and exports their configuration for any other agent (`mcp-twake-ai export`). The guided, interactive `setup` comes next.
+> **Status: early.** This version serves the six Twake.ai services (Mail, Calendar and contacts, Drive, Chat, Space, Project), writes them into Claude Code, Hermes, Claude Desktop, Cursor and VS Code with a guided `setup`, checks them (`status`), signs out (`logout`) and removes itself (`uninstall`). It also exports the configuration for any other agent (`export`).
 
 ## Requirements
 
 - **Node.js** >= 22.13
 - An account on the Twake.ai SaaS
 - The OIDC client `twake-ai-agents` on your identity provider (public client, PKCE, `offline_access`, loopback redirect URIs `http://127.0.0.1:8765/callback` to `:8767`, device flow, and the audiences of the Twake.ai backends). Another client can be used with `--client-id` or `TWAKE_AI_OIDC_CLIENT_ID`.
+
+## Start here
+
+```bash
+npx mcp-twake-ai setup
+```
+
+In a terminal, `setup` guides you: your email, the sign-in in your browser, the agents found on this computer and the services of your account, the plan, one confirmation, then a check that every server starts. It speaks French or English, after your system's language. Pressing Escape at any question leaves everything as it was and revokes the sign-in it made.
+
+Under `npx`, mcp-twake-ai installs itself into its private folder, so that the agents never depend on npx's cache, and puts a `mcp-twake-ai` command in `~/.local/bin` (`%LOCALAPPDATA%\twake-ai\bin` on Windows).
 
 ## Install and sign in
 
@@ -19,7 +29,7 @@ npm install -g mcp-twake-ai
 mcp-twake-ai login --email jane.doe@example.com
 ```
 
-The MCP servers call `mcp-twake-ai` on their own, long after you signed in: it has to stay installed (`npx` would not leave a `mcp-twake-ai` command behind).
+The MCP servers call `mcp-twake-ai` on their own, long after you signed in: it has to stay installed. A global install, or the copy `setup` makes under `npx`, does that.
 
 `mcp-twake-ai` finds your Twake.ai services from your address, opens your browser to sign in, and stores the session. Over SSH or without a display it shows a code to enter from another device instead (`--no-browser` forces it).
 
@@ -107,6 +117,10 @@ mcp-twake-ai export --agent zed --raw                   # the servers and their 
 | Journal (steps and errors, secrets masked) | `~/.local/state/twake-ai/twake-ai.log` |
 
 On Windows: `%APPDATA%\twake-ai` and `%LOCALAPPDATA%\twake-ai`. `TWAKE_AI_HOME` groups everything under one directory.
+
+## Live test
+
+`LIVE_EMAIL=jane.doe@company.com node scripts/live.mjs` signs in to a real account in a temporary folder, gets a token for each service, checks `status`, signs out and makes sure the tokens are gone. [`docs/manual-checklist.md`](docs/manual-checklist.md) is the checklist to run in each agent: a question that reads, a write approved through elicitation, and `status`.
 
 ## Development
 
