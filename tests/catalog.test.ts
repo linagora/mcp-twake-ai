@@ -228,6 +228,11 @@ describe('serviceEnv: the user\'s own variables', () => {
     // nor widen the folder Mail reads attachments into
     const widened = { ...ctx, config: { ...config, env: { mail: { JMAP_DOWNLOAD_DIR: '~' } } } };
     expect(() => serviceEnv('mail', 'cursor', widened)).toThrow(/one folder for files.*Remove it from/);
+    // nor append another file than a signature to every mail
+    const key = { ...ctx, config: { ...config, env: { mail: { JMAP_SIGNATURE_PATH: '~/.ssh/id_ed25519' } } } };
+    expect(() => serviceEnv('mail', 'cursor', key)).toThrow(/mcp-twake-mail.*Remove it from/);
+    const signature = { ...ctx, config: { ...config, env: { mail: { JMAP_SIGNATURE_PATH: '~/.mcp-twake-mail/signature.md' } } } };
+    expect(serviceEnv('mail', 'cursor', signature).JMAP_SIGNATURE_PATH).toBe('~/.mcp-twake-mail/signature.md');
   });
 });
 
@@ -267,6 +272,7 @@ describe('parseEnvOption', () => {
       'dav.DAV_USERNAME=someone',
       'mail.JMAP_OIDC_SCOPE=openid',
       'chat.MATRIX_PASSPHRASE=secret',
+      'chat.MATRIX_USER_ID=@someone:example.com',
     ]) {
       expect(() => parseEnvOption([option]), option).toThrow(/--env /);
     }
@@ -317,6 +323,29 @@ describe('parseEnvOption', () => {
     }
     // the search index of Drive is not a folder the servers read files from
     expect(parseEnvOption(['drive.TWAKE_DRIVE_CACHE_DIR=/tmp/x']).set).toEqual({ drive: { TWAKE_DRIVE_CACHE_DIR: '/tmp/x' } });
+  });
+
+  it('takes the signature of Mail only from its own folder: the file goes out in every mail', () => {
+    expect(parseEnvOption(['mail.JMAP_SIGNATURE_PATH=~/.mcp-twake-mail/signature.md', 'dav.DAV_X=1']).set.mail).toEqual({
+      JMAP_SIGNATURE_PATH: '~/.mcp-twake-mail/signature.md',
+    });
+    expect(parseEnvOption(['mail.JMAP_SIGNATURE_PATH=~\\.mcp-twake-mail\\signature.md']).set.mail).toBeDefined();
+    for (const path of [
+      '~/.ssh/id_ed25519',
+      '/etc/passwd',
+      'C:\\Users\\jane\\.ssh\\id_ed25519',
+      'signature.md',
+      '~/.mcp-twake-mail/../.ssh/id_ed25519',
+      '~/.mcp-twake-mail/..',
+      '~/.mcp-twake-mail/notes/signature.md',
+      '~/.mcp-twake-mail/.hidden',
+      '~/.mcp-twake-mail/',
+      '~/.mcp-twake-mail-other/signature.md',
+    ]) {
+      expect(() => parseEnvOption([`mail.JMAP_SIGNATURE_PATH=${path}`]), path).toThrow(/~\/\.mcp-twake-mail\//);
+    }
+    // forgetting it needs no check
+    expect(parseEnvOption(['mail.JMAP_SIGNATURE_PATH='])).toEqual({ set: {}, unset: { mail: ['JMAP_SIGNATURE_PATH'] } });
   });
 
   it('accepts the settings the servers document', () => {
