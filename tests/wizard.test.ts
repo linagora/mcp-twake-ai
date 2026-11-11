@@ -63,6 +63,17 @@ describe('the guided setup', () => {
     expect(calls.at(-1)).toBe('apply claude-code mail []');
   });
 
+  it('asks about an entry to remove as a removal', async () => {
+    const { kit } = fakeKit({ signedIn: true });
+    const removing: WizardKit = {
+      ...kit,
+      plan: async () => ({ text: '! twake-dav', conflicts: [{ agent: 'claude-code', label: 'Claude Code', name: 'twake-dav', key: 'claude-code/twake-dav', removal: true }] }),
+    };
+    const prompter = scriptedPrompter([true, ['claude-code'], ['mail'], false, true]);
+    expect(await runWizard(removing, prompter, '24.22.1')).toBe(0);
+    expect(prompter.asked).toContain('Claude Code: remove twake-dav, which was changed by hand since mcp-twake-ai wrote it?');
+  });
+
   it('revokes the sign-in made during setup when the user gives up', async () => {
     const { kit, calls } = fakeKit();
     const prompter = scriptedPrompter(['jdoe@linagora.com', CANCEL]);

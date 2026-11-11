@@ -378,11 +378,12 @@ const PLAN_LINE: Record<ActionKind, [string, string]> = {
   'remove-modified': ['!', 'removes an entry changed by hand since mcp-twake-ai wrote it'],
 };
 
-function printPlan(io: Io, adapter: AgentAdapter, actions: EntryAction[], consent: (action: EntryAction) => boolean): void {
+/** hints: whether to suggest --force (not in the guided setup, which asks entry by entry). */
+function printPlan(io: Io, adapter: AgentAdapter, actions: EntryAction[], consent: (action: EntryAction) => boolean, hints = true): void {
   io.stdout(`${adapter.label} (${adapter.target})\n`);
   for (const action of actions) {
     const [symbol, words] = PLAN_LINE[action.kind];
-    io.stdout(`  ${symbol} ${action.name.padEnd(14)} ${words}${needsConsent(action) && !consent(action) ? ': add --force to do it' : ''}\n`);
+    io.stdout(`  ${symbol} ${action.name.padEnd(14)} ${words}${hints && needsConsent(action) && !consent(action) ? ': add --force to do it' : ''}\n`);
   }
   if (!adapter.capabilities.elicitation) io.stdout(`  ${adapter.label} cannot show approval requests: reads work, and every write is refused.\n`);
 }
@@ -483,7 +484,7 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
       }
       const actions = planEntries(await adapter.read(), wantedEntries(adapter, chosen, ctx, env), owned);
       plans.push({ adapter, owned, actions });
-      printPlan(io, adapter, actions, (action) => request.consent(adapter.id, action));
+      printPlan(io, adapter, actions, (action) => request.consent(adapter.id, action), !request.quiet);
     } catch (error) {
       failed = true;
       io.stdout(`${adapter.label}: ${describeError(error)}\n`);
@@ -524,7 +525,7 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
     else io.stdout(`${adapter.label}: done${result.backup ? ` (previous file kept as ${result.backup})` : ''}. ${adapter.capabilities.reload}\n`);
     if (result.skipped.length > 0) {
       failed = true;
-      io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);
+      io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')}${request.quiet ? '' : ' (add --force to change them)'}\n`);
     }
   }
   if (fromNpx && written.length > 0) {
@@ -766,11 +767,18 @@ function wizardKit(io: Io, d: CliDeps, options: { noBrowser?: boolean } = {}): W
       const out = capture();
       const planned = await runSetup({ agents, services, apply: false, consent: () => false, quiet: true }, out, d);
       const adapters = await adaptersOf();
-      const conflicts = planned.conflicts.map(({ agent, action }) => ({ agent, label: adapters[agent].label, name: action.name, key: `${agent}/${action.name}` }));
+      const conflicts = planned.conflicts.map(({ agent, action }) => ({
+        agent,
+        label: adapters[agent].label,
+        name: action.name,
+        key: `${agent}/${action.name}`,
+        removal: action.kind === 'remove-modified',
+      }));
       return { text: out.text.trimEnd(), conflicts };
     },
     apply: async (agents, services, accepted) => {
-      const applied = await runSetup({ agents, services, apply: true, consent: (agent, action) => accepted.has(`${agent}/${action.name}`), noBrowser: options.noBrowser }, io, d);
+      const consent = (agent: AgentId, action: EntryAction) => accepted.has(`${agent}/${action.name}`);
+      const applied = await runSetup({ agents, services, apply: true, consent, noBrowser: options.noBrowser, quiet: true }, io, d);
       const adapters = await adaptersOf();
       return { code: applied.code, reload: applied.written.map((agent) => `${adapters[agent].label}: ${adapters[agent].capabilities.reload}`) };
     },

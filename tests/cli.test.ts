@@ -800,6 +800,17 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await main(['uninstall', '--yes'], io, deps)).toBe(0);
     expect(io.out).toContain('✓ Twake session revoked');
   });
+
+  it('shows the guided setup a plan without command-line hints', async () => {
+    const { deps, cursor } = await readyForSetup();
+    await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([true, ['cursor'], ['mail'], false, CANCEL]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(1);
+    const shown = (deps.prompter as ReturnType<typeof scriptedPrompter>).shown.join('\n');
+    expect(shown).toContain('twake-mail');
+    expect(shown).not.toContain('--force');
+  });
 });
 
 describe('main: run', () => {
