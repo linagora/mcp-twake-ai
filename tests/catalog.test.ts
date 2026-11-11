@@ -247,17 +247,25 @@ describe('parseEnvOption', () => {
     expect(parseEnvOption(['dav.DAV_X=', 'dav.DAV_X=1'])).toEqual({ set: { dav: { DAV_X: '1' } }, unset: {} });
   });
 
-  it('refuses the variables Node.js reads before the server', () => {
-    for (const option of ['dav.NODE_OPTIONS=--require=/tmp/x.js', 'mail.NODE_TLS_REJECT_UNAUTHORIZED=0', 'space.HTTPS_PROXY=http://127.0.0.1:1']) {
-      expect(() => parseEnvOption([option]), option).toThrow(/is not a variable of|Node\.js itself/);
-    }
-  });
-
-  it('accepts only the variables of the server itself, and the USER_ ones', () => {
-    for (const option of ['dav.LD_PRELOAD=/tmp/x.so', 'dav.DYLD_INSERT_LIBRARIES=/tmp/x.dylib', 'dav.COMSPEC=cmd.exe', 'dav.TWAKE_AI_HOME=/tmp/x', 'mail.DAV_DEFAULT_CALENDAR=XG']) {
+  it('accepts only the variables of the server itself, the USER_ ones and the logging ones', () => {
+    for (const option of [
+      'dav.LD_PRELOAD=/tmp/x.so',
+      'dav.DYLD_INSERT_LIBRARIES=/tmp/x.dylib',
+      'dav.COMSPEC=cmd.exe',
+      'dav.TWAKE_AI_HOME=/tmp/x',
+      'dav.NODE_OPTIONS=--require=/tmp/x.js',
+      'mail.NODE_TLS_REJECT_UNAUTHORIZED=0',
+      'space.HTTPS_PROXY=http://127.0.0.1:1',
+      'dav.HOME=/tmp/x',
+      'mail.DAV_DEFAULT_CALENDAR=XG',
+    ]) {
       expect(() => parseEnvOption([option]), option).toThrow(/is not a variable of/);
     }
-    expect(parseEnvOption(['dav.USER_LANGUAGE=en', 'space.USER_TIMEZONE=UTC']).set).toEqual({ dav: { USER_LANGUAGE: 'en' }, space: { USER_TIMEZONE: 'UTC' } });
+    expect(parseEnvOption(['dav.USER_LANGUAGE=en', 'space.USER_TIMEZONE=UTC', 'mail.LOG_LEVEL=debug']).set).toEqual({
+      dav: { USER_LANGUAGE: 'en' },
+      space: { USER_TIMEZONE: 'UTC' },
+      mail: { LOG_LEVEL: 'debug' },
+    });
   });
 
   it('refuses the store directory mcp-twake-ai keeps per device', () => {

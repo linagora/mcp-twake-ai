@@ -166,9 +166,6 @@ const SERVER_ENV_NAME = /(^|_)(URL|URI|HOMESERVER|AUTH_METHOD|OIDC_ISSUER|CLIENT
 /** A variable a user may not set: it carries a secret, which mcp-twake-ai keeps in the keychain */
 const SECRET_ENV_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|(^|_)KEYS?($|_)/;
 
-/** A variable a user may not set: Node.js reads it before the server, and it can run code or redirect its traffic */
-const RUNTIME_ENV_NAME = /^NODE_|(^|_)PROXY($|_)/;
-
 /** A variable mcp-twake-ai manages itself for the agent: one encryption store per device */
 const MANAGED_ENV_NAME = /^MATRIX_STORE_DIR$/;
 
@@ -180,9 +177,10 @@ export function serviceEnvPrefix(service: ServiceId): string {
 /**
  * Why a variable name may not be set, if it may not
  *
- * Only the variables of the server itself (`DAV_…` for Twake Calendar) and the `USER_…` ones are
- * accepted: listing the dangerous names of a process environment is a losing game (LD_PRELOAD,
- * DYLD_INSERT_LIBRARIES, COMSPEC, TWAKE_AI_HOME…), and a server has no business with NODE_OPTIONS.
+ * Only the variables of the server itself (`DAV_…` for Twake Calendar), the `USER_…` ones and the
+ * logging ones are accepted: listing the dangerous names of a process environment is a losing game
+ * (LD_PRELOAD, DYLD_INSERT_LIBRARIES, COMSPEC, TWAKE_AI_HOME, NODE_OPTIONS…), and no server has a
+ * business with any of them.
  *
  * @param name - the variable name, as it would be given to a server
  * @param service - the service whose environment receives it
@@ -190,11 +188,10 @@ export function serviceEnvPrefix(service: ServiceId): string {
  */
 export function envNameRefusal(name: string, service: ServiceId): string | undefined {
   const prefix = serviceEnvPrefix(service);
-  if (!name.startsWith(prefix) && !name.startsWith('USER_')) {
-    return `${name} is not a variable of ${CATALOG[service].name}: only ${prefix}… and USER_… may be set`;
+  if (!name.startsWith(prefix) && !name.startsWith('USER_') && !name.startsWith('LOG_')) {
+    return `${name} is not a variable of ${CATALOG[service].name}: only ${prefix}…, USER_… and LOG_… may be set`;
   }
   if (MANAGED_ENV_NAME.test(name)) return `${name} is managed by mcp-twake-ai, which keeps one store per device`;
-  if (RUNTIME_ENV_NAME.test(name)) return `${name} is read by Node.js itself, before the server: it could run code or redirect its traffic`;
   if (SERVER_ENV_NAME.test(name)) return `${name} names a server or how to sign in to it: those come from the account, not from the user`;
   if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
   return undefined;

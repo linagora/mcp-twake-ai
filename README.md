@@ -130,7 +130,15 @@ With `--email`, `setup` first signs in to that account if it is not the current 
 
 `--env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment (`--env` can be repeated). It is kept in `config.json` — never in an agent's file — and every entry, `run`, `status --env` and `export` builds it from there. An empty value (`--env dav.DAV_DEFAULT_CALENDAR=`) forgets the variable. Services are `mail`, `dav`, `drive`, `chat`, `space` and `project`.
 
-Two kinds of names are refused, on the command line and in a `config.json` edited by hand: the ones naming a server or how to sign in to it (`*_URL`, `*_AUTH_METHOD`, `*_OIDC_ISSUER`, `*_CLIENT_ID`…), which come from your account, and the ones that may carry a secret (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*_API_KEY`…), which the keychain and the token broker already handle. When a server is started through `run`, the environment the agent already sets for it still wins over the one written here.
+Only a few names are accepted, on the command line and in a `config.json` edited by hand:
+
+- the variables of the server itself — `JMAP_…` for Twake Mail, `DAV_…` for Twake Calendar, `TWAKE_DRIVE_…`, `MATRIX_…`, `TWAKE_SPACE_…`, `TWAKE_PROJECT_…` — for instance `DAV_DEFAULT_CALENDAR` or `JMAP_DEFAULT_FROM`;
+- the `USER_…` ones (`USER_LANGUAGE`, `USER_TIMEZONE`);
+- the logging ones (`LOG_LEVEL`, as the servers document it).
+
+Everything else is refused: `PATH`, `HOME`, `TWAKE_AI_HOME`, `LD_PRELOAD`, `NODE_OPTIONS`… have nothing to do with a server, and listing the dangerous names of a process environment one by one is a losing game. Within the accepted prefixes, the names that point at a server or say how to sign in to it (`*_URL`, `*_AUTH_METHOD`, `*_OIDC_ISSUER`, `*_CLIENT_ID`) are refused too, since they come from your account, and so are the ones that may carry a secret (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*_API_KEY`), which the keychain and the token broker already handle.
+
+Two things to know: a variable set here applies to the service in every agent that runs it (setting `DAV_APPROVAL` would change the approval of writes for all of them), and for Hermes a `*_APPROVAL_TIMEOUT_MS` you set replaces the value mcp-twake-ai chose for it. When a server is started through `run`, the environment the agent already sets for it still wins over the one written here.
 
 | Agent (`--agents`)                | Where                                                                                                   | Approval of writes                            |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
