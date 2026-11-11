@@ -435,7 +435,10 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
   const detected = await detectAgents(adapters);
   if (values.agents === undefined) {
-    throw new TwakeAiError('usage', `setup needs --agents: ${AGENT_IDS.join(', ')}, or "detected" (found here: ${detected.join(', ') || 'none'}).\n\n${USAGE}`);
+    throw new TwakeAiError(
+      'usage',
+      `setup needs --agents: ${AGENT_IDS.join(', ')}, or "detected" (found here: ${detected.join(', ') || 'none'}) — or run it in a terminal for the guided setup.\n\n${USAGE}`,
+    );
   }
   const names = values.agents === 'detected' ? detected : [...new Set(values.agents.split(',').map((name) => name.trim()))];
   for (const name of names) {

@@ -736,6 +736,13 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect((deps.prompter as ReturnType<typeof scriptedPrompter>).offered['Which services?']).toEqual(['drive', 'chat']);
   });
 
+  it('says that the guided setup needs a terminal when there is none', async () => {
+    const deps = await testDeps();
+    const io = captureIo();
+    expect(await main(['setup'], io, deps)).toBe(2);
+    expect(io.err).toContain('run it in a terminal for the guided setup');
+  });
+
   it('refuses --services or --force without --agents on a terminal', async () => {
     const deps = await testDeps();
     deps.interactive = true;
