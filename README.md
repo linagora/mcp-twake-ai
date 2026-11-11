@@ -123,7 +123,7 @@ mcp-twake-ai setup --email jane.doe@example.com --agents detected   # signs in, 
 mcp-twake-ai setup --agents detected                      # shows what would change, writes nothing
 mcp-twake-ai setup --agents claude-code,hermes --yes      # writes it
 mcp-twake-ai setup --agents cursor --services mail,dav --yes
-mcp-twake-ai setup --agents claude-code --yes --env dav.DAV_DEFAULT_CALENDAR=XG
+mcp-twake-ai setup --agents cursor --services mail,dav --yes --env 'dav.DAV_DEFAULT_CALENDAR=Jane Doe'
 ```
 
 With `--email`, `setup` first signs in to that account if it is not the current one. With `--yes`, it connects Twake Drive and gives each agent its own Twake Chat device when those services are chosen, installs the pinned servers, then writes the agents.
@@ -153,6 +153,21 @@ Two things to know: a variable set here applies to the service in every agent th
 - An agent whose write fails is put back as it was; the others are still written.
 - Running it again changes nothing. With fewer `--services`, it removes the entries you left out.
 - It exits with 1 when something you asked for was not done (an agent not installed, an entry left alone).
+
+### Your calendars, not every calendar shared with you
+
+Twake Calendar's server reads every calendar your account can see, the ones colleagues share with you included. A question such as "what's on my calendar today?" then lists their meetings too, sometimes the same meeting several times. Name the calendar it should use when the assistant does not name one:
+
+```sh
+mcp-twake-ai setup --agents claude-code --services mail,dav --yes --env 'dav.DAV_DEFAULT_CALENDAR=Jane Doe'
+mcp-twake-ai status --print-env dav   # DAV_DEFAULT_CALENDAR=Jane Doe is in the list
+```
+
+- The value is the calendar's name, as Twake Calendar shows it: ask your assistant to list your calendars to see them.
+- Give the `--agents` and `--services` you set up (`mcp-twake-ai status` lists the entries): without `--services`, `setup` takes every service of your account, Twake Chat included.
+- Start a new session of your agent: the server reads the variable when it starts.
+- The assistant can still name another calendar, or search them all with `calendar: "all"`.
+- Every agent that runs Twake Calendar gets it, a new sign-in to the same account keeps it, and `--env dav.DAV_DEFAULT_CALENDAR=` forgets it.
 
 ### Check, sign out, uninstall
 
