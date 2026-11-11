@@ -22,10 +22,15 @@ export interface ExportOptions {
   twakeAiHome?: string;
 }
 
+/** What an agent starts for one service through the launcher: node, mcp-twake-ai's command, `run <service> --agent <id>`. */
+export function launcherEntry(service: ServiceId, agent: string, ctx: CatalogContext, env: Record<string, string> = {}): ServerEntry {
+  return { command: ctx.nodePath, args: [ctx.cliPath, 'run', service, '--agent', agent], env };
+}
+
 /** What an agent starts for one service. The environment is built in both cases, so a missing connection fails here. */
 export async function serverEntry(service: ServiceId, agent: string, raw: boolean, ctx: CatalogContext, extra: Record<string, string> = {}): Promise<ServerEntry> {
   const env = serviceEnv(service, agent, ctx);
-  if (!raw) return { command: ctx.nodePath, args: [ctx.cliPath, 'run', service, '--agent', agent], env: extra };
+  if (!raw) return launcherEntry(service, agent, ctx, extra);
   return { command: ctx.nodePath, args: [await entryPoint(ctx.paths, service)], env: { ...env, ...extra } };
 }
 
