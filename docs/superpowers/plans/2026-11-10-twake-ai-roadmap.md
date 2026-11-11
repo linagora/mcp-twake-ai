@@ -8,8 +8,8 @@ La spec est découpée en quatre plans. Chacun livre un logiciel qui fonctionne 
 |---|---|---|---|
 | **1. Socle et broker OIDC** (`2026-11-10-twake-ai-plan-1-socle-broker-oidc.md`) | `mcp-twake-ai login`, `mcp-twake-ai token <mail\|dav\|space\|project>` : le `my-token-broker` des README, utilisable tout de suite à la main | 5.2 (discovery, auth OIDC, vault), 5.3, 6, 7.1 (OIDC), 7.2, 7.4 | — |
 | **2. Drive et Chat** (`2026-11-10-twake-ai-plan-2-drive-chat.md`) | `token drive`, `token chat --agent X`, `login --agent X`, mode sans navigateur par URL collée | 6 (étape 7, apps activées), 7.1 (cozy, Matrix), 7.2 | plan 1 |
-| **3a. Catalogue, lanceur, export** (`2026-11-10-twake-ai-plan-3a-catalog-launcher-export.md`), puis **3b. Adaptateurs d'agents** | installation des MCP en versions figées dans le préfixe privé, `mcp-twake-ai run`, les cinq adaptateurs d'agents, `mcp-twake-ai export` | 5.3 (préfixe), 9, 10, 11 | plans 1 et 2 |
-| **4. Parcours complet et exploitation** | `mcp-twake-ai setup` interactif et non interactif (bannière, i18n fr/en), `status`, `logout`, `uninstall`, journal, CI sur 3 OS, test réel | 8, 12, 13.4, 13.5 | plans 1 à 3 |
+| **3a. Catalogue, lanceur, export** (`2026-11-10-twake-ai-plan-3a-catalog-launcher-export.md`), puis **3b. Adaptateurs d'agents** (`2026-11-11-twake-ai-plan-3b-agent-adapters.md`, avec `setup` non interactif) | installation des MCP en versions figées dans le préfixe privé, `mcp-twake-ai run`, les cinq adaptateurs d'agents, `mcp-twake-ai export` | 5.3 (préfixe), 9, 10, 11 | plans 1 et 2 |
+| **4. Parcours complet et exploitation** | `mcp-twake-ai setup` interactif (bannière, i18n fr/en, `--email`), le non interactif étant livré au 3b, `status`, `logout`, `uninstall`, journal, CI sur 3 OS, test réel | 8, 12, 13.4, 13.5 | plans 1 à 3 |
 
 ## Plan 2 : Drive et Chat (périmètre)
 
@@ -32,7 +32,7 @@ La spec est découpée en quatre plans. Chacun livre un logiciel qui fonctionne 
 - **URL issues de SRV (DNS non authentifié) :** avant de leur confier le jeton aux quatre audiences, les contraindre (cible dans le domaine de l'email, ou dans une liste connue du SaaS) ou les faire confirmer pendant `setup`. Décision reportée depuis la revue finale du plan 1.
 - **`catalog`, sous forme de données :** paquet, version, construction de l'environnement par service et par agent. `TOKEN_CMD` met les chemins entre apostrophes POSIX, car les MCP passent par `/bin/sh -c`.
 - **`mcp-twake-ai run <service> --agent X` :** environnement, lancement, relais de stdio et des signaux, propagation du code de sortie. Test de bout en bout avec une élicitation qui traverse le lanceur.
-- **Cinq adaptateurs :** Claude Code (`claude mcp add-json` / `remove`), Hermes (`yaml` Document API, sauvegarde horodatée), Claude Desktop, Cursor, VS Code. Chacun avec `detect`, `capabilities`, `plan`, `apply`, `remove`, l'empreinte des entrées, l'écriture atomique et la restauration en cas d'échec.
+- **Cinq adaptateurs :** Claude Code (`claude mcp add … --` / `remove`), Hermes (`yaml` Document API, sauvegarde horodatée), Claude Desktop, Cursor, VS Code. Chacun avec `detect`, `capabilities`, `plan`, `apply`, `remove`, l'empreinte des entrées, l'écriture atomique et la restauration en cas d'échec.
 - **`mcp-twake-ai export` :** `mcpServers.json`, `vscode-mcp.json`, `hermes.yaml`, `codex.toml`, `claude-code.sh`, `<service>.env`, `commands.txt`, `README.md` ; options `--raw` et `--agent`.
 
 ## Plan 4 : parcours complet et exploitation (périmètre)

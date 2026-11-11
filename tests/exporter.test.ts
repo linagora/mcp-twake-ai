@@ -4,6 +4,8 @@ import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
+import { planEntries, wantedEntries } from '../src/agents/entries.js';
+import { hermesAgent } from '../src/agents/hermes.js';
 import { parse as parseYaml } from 'yaml';
 import { tokenCommand, type CatalogContext } from '../src/catalog.js';
 import type { TwakeAiConfig } from '../src/config.js';
@@ -53,6 +55,17 @@ describe('exportFiles', () => {
     expect(files['claude-code.sh']).toContain(`claude mcp add-json --scope user twake-mail '{"type":"stdio","command":"/usr/bin/node"`);
     expect(files['mail.env']).toContain(`JMAP_SESSION_URL='https://jmap.linagora.com/jmap/session'`);
     expect(files['README.md']).toContain('mcpServers.json');
+  });
+
+  it('writes for Hermes exactly the entries setup would, so that setup adopts them', async () => {
+    const files = await exportFiles({ agent: 'hermes', services: ['mail', 'project'], raw: false }, await context());
+    const exported = parseYaml(files['hermes.yaml']!).mcp_servers;
+    const hermes = hermesAgent('/nowhere', () => new Date());
+    const actions = planEntries(exported, wantedEntries(hermes, ['mail', 'project'], await context(), {}), {});
+    expect(actions.map((action) => [action.name, action.kind])).toEqual([
+      ['twake_mail', 'keep'],
+      ['twake_project', 'keep'],
+    ]);
   });
 
   it('writes commands.txt for cmd.exe on Windows', async () => {

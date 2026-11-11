@@ -13,8 +13,10 @@ import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { fakeNpm } from './helpers/fake-mcp.js';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { readText } from '../src/agents/config-file.js';
+import { cursorConfig, vscodeConfig } from '../src/agents/locations.js';
 
 const run = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -42,12 +44,13 @@ afterEach(() => idp.close());
 
 /** A desktop where example.com is a Twake.ai domain whose IdP is the fake one. */
 async function testDeps(): Promise<CliDeps & { clock: { t: number } }> {
-  const { paths } = await tempPaths();
+  const { root, paths } = await tempPaths();
   const clock = { t: 3_000_000 };
   const discovery = { 'm.homeserver': { base_url: 'https://matrix.example.com/' }, 'm.authentication': { issuer: idp.url } };
   return {
     clock,
     paths,
+    home: join(root, 'home'),
     env: {},
     platform: 'darwin',
     fetch: (async (input: string | URL | Request, init?: RequestInit) => {
@@ -328,6 +331,130 @@ describe('main: Twake Drive and Twake Chat', () => {
     const io = captureIo();
     expect(await main(['token', 'drive'], io, deps)).toBe(1);
     expect(io.err).toContain('mcp-twake-ai login --drive');
+  });
+
+  /** Signed in with Twake Mail found, Cursor and VS Code installed (macOS paths: testDeps uses platform darwin). */
+  async function readyForSetup() {
+    const deps = await signedIn();
+    const config = (await loadConfig(deps.paths))!;
+    await saveConfig(deps.paths, {
+      ...config,
+      environment: { ...config.environment, services: { mail: { url: 'https://jmap.example.com/jmap/session', source: 'discovered' } } },
+    });
+    deps.runInstall = fakeNpm(deps.paths);
+    const place = { platform: deps.platform, env: deps.env, home: deps.home };
+    const cursor = cursorConfig(place);
+    const vscode = vscodeConfig(place);
+    await mkdir(dirname(cursor), { recursive: true });
+    await mkdir(dirname(vscode), { recursive: true });
+    return { deps, cursor, vscode };
+  }
+
+  it('shows the plan of each agent and changes nothing without --yes', async () => {
+    const { deps, cursor } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail'], io, deps)).toBe(0);
+    expect(io.out).toContain(`Cursor (${cursor})`);
+    expect(io.out).toMatch(/\+ twake-mail\s+add/);
+    expect(io.out).toContain('--yes');
+    expect(await readText(cursor)).toBeUndefined();
+  });
+
+  it('writes the agents with --yes, then finds nothing to change', async () => {
+    const { deps, cursor, vscode } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor,vscode', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail']).toEqual({
+      type: 'stdio',
+      command: '/usr/bin/node',
+      args: ['/opt/twake-ai/build/bin.js', 'run', 'mail', '--agent', 'cursor'],
+    });
+    expect(JSON.parse((await readText(vscode))!).servers['twake-mail'].args).toEqual(['/opt/twake-ai/build/bin.js', 'run', 'mail', '--agent', 'vscode']);
+    expect(Object.keys((await loadConfig(deps.paths))!.agents!)).toEqual(['cursor', 'vscode']);
+    const again = captureIo();
+    expect(await main(['setup', '--agents', 'cursor,vscode', '--services', 'mail', '--yes'], again, deps)).toBe(0);
+    expect(again.out).toMatch(/= twake-mail\s+unchanged/);
+    expect(again.out).toContain('Cursor: already up to date.');
+  });
+
+  it('leaves an entry configured by hand unless --force', async () => {
+    const { deps, cursor } = await readyForSetup();
+    await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(io.out).toContain('replaces an entry configured outside mcp-twake-ai: add --force');
+    expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail']).toEqual({ command: 'my-mail' });
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--force'], captureIo(), deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail'].command).toBe('/usr/bin/node');
+  });
+
+  it('removes the entries of the services left out', async () => {
+    const { deps, cursor } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
+    expect(Object.keys(JSON.parse((await readText(cursor))!).mcpServers)).toEqual(['twake-chat', 'twake-mail']);
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(io.out).toMatch(/- twake-chat\s+remove/);
+    expect(Object.keys(JSON.parse((await readText(cursor))!).mcpServers)).toEqual(['twake-mail']);
+  });
+
+  it('creates the Chat device of each agent it configures', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'chat', '--yes'], io, deps)).toBe(0);
+    expect(io.out).toContain('Twake Chat gets a device for: cursor.');
+    expect(Object.values(synapse.deviceNames)).toEqual(['Twake AI · cursor']);
+  });
+
+  it('leaves out an agent that is not installed, and says which ones are', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'claude-desktop,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(io.out).toContain('Claude Desktop: not found on this computer');
+    const usage = captureIo();
+    expect(await main(['setup'], usage, deps)).toBe(2);
+    expect(usage.err).toContain('found here: cursor, vscode');
+  });
+
+  it('refuses an agent it does not configure, pointing to export', async () => {
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'zed'], io, (await readyForSetup()).deps)).toBe(2);
+    expect(io.err).toContain('use export');
+  });
+
+  it('goes on with the other agents when one has an entry emptied by hand', async () => {
+    const { deps, cursor } = await readyForSetup();
+    await mkdir(join(deps.home, '.hermes'), { recursive: true });
+    await writeFile(join(deps.home, '.hermes', 'config.yaml'), 'mcp_servers:\n  twake_mail:\n');
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'hermes,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(io.out).toMatch(/! twake_mail\s+replaces an entry configured outside mcp-twake-ai/);
+    expect(JSON.parse((await readText(cursor))!).mcpServers).toHaveProperty('twake-mail');
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('goes on with the other agents when a file cannot be read, naming it', async () => {
+    const { deps, cursor, vscode } = await readyForSetup();
+    await writeFile(cursor, '{}');
+    await chmod(cursor, 0o000);
+    try {
+      const io = captureIo();
+      expect(await main(['setup', '--agents', 'cursor,vscode', '--services', 'mail', '--yes'], io, deps)).toBe(1);
+      expect(io.out).toContain(`Cursor: `);
+      expect(io.out).toContain(cursor);
+      expect(JSON.parse((await readText(vscode))!).servers).toHaveProperty('twake-mail');
+    } finally {
+      await chmod(cursor, 0o600);
+    }
+  });
+
+  it('reports a damaged agent file and still writes the others', async () => {
+    const { deps, cursor, vscode } = await readyForSetup();
+    await writeFile(vscode, '{"servers": {');
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor,vscode', '--services', 'mail', '--yes'], io, deps)).toBe(1);
+    expect(io.out).toContain(`VS Code: ${vscode} is not valid JSON`);
+    expect(JSON.parse((await readText(cursor))!).mcpServers).toHaveProperty('twake-mail');
+    expect(await readText(vscode)).toBe('{"servers": {');
   });
 });
 

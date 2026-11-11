@@ -22,10 +22,15 @@ export interface ExportOptions {
   twakeAiHome?: string;
 }
 
+/** What an agent starts for one service through the launcher: node, mcp-twake-ai's command, `run <service> --agent <id>`. */
+export function launcherEntry(service: ServiceId, agent: string, ctx: CatalogContext, env: Record<string, string> = {}): ServerEntry {
+  return { command: ctx.nodePath, args: [ctx.cliPath, 'run', service, '--agent', agent], env };
+}
+
 /** What an agent starts for one service. The environment is built in both cases, so a missing connection fails here. */
 export async function serverEntry(service: ServiceId, agent: string, raw: boolean, ctx: CatalogContext, extra: Record<string, string> = {}): Promise<ServerEntry> {
   const env = serviceEnv(service, agent, ctx);
-  if (!raw) return { command: ctx.nodePath, args: [ctx.cliPath, 'run', service, '--agent', agent], env: extra };
+  if (!raw) return launcherEntry(service, agent, ctx, extra);
   return { command: ctx.nodePath, args: [await entryPoint(ctx.paths, service)], env: { ...env, ...extra } };
 }
 
@@ -63,7 +68,8 @@ export async function exportFiles(options: ExportOptions, ctx: CatalogContext): 
     'vscode-mcp.json': json({ servers: byName(entryName, (entry) => ({ type: 'stdio', ...withEnv(entry) })) }),
     'hermes.yaml': stringifyYaml({
       mcp_servers: byName(hermesEntryName, (entry, service) => ({
-        ...withEnv(entry, { ...entry.env, [`${CATALOG[service].approval}_APPROVAL_TIMEOUT_MS`]: HERMES_APPROVAL_TIMEOUT_MS }),
+        // for the agent id hermes the environment already waits longer for approvals (catalog): the entry stays the one setup writes
+        ...(options.agent === 'hermes' ? withEnv(entry) : withEnv(entry, { ...entry.env, [`${CATALOG[service].approval}_APPROVAL_TIMEOUT_MS`]: HERMES_APPROVAL_TIMEOUT_MS })),
         timeout: 420,
         elicitation: { enabled: true, timeout: 300 },
       })),

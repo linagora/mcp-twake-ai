@@ -1,10 +1,10 @@
-import { exec, execFile, type ExecException } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ServiceId } from './broker.js';
-import { CATALOG, commandLine, type McpPackage } from './catalog.js';
+import { CATALOG, type McpPackage } from './catalog.js';
 import { TwakeAiError } from './errors.js';
 import type { AppPaths } from './paths.js';
+import { runFile } from './run-file.js';
 
 export type Runner = (command: string, args: string[]) => Promise<void>;
 
@@ -68,17 +68,14 @@ async function allowSqliteBuild(dir: string): Promise<void> {
   await writeFile(file, `${JSON.stringify({ name: 'twake-ai-servers', ...manifest, private: true, allowScripts }, null, 2)}\n`);
 }
 
-export const npmRunner: Runner = (command, args) =>
-  new Promise((resolve, reject) => {
-    const done = (error: ExecException | null, _stdout: string, stderr: string) => {
-      if (!error) return resolve();
-      reject(new TwakeAiError('unavailable', `npm could not install the Twake.ai MCP servers: ${npmFailure(String(stderr)) || error.message}`));
-    };
-    const options = { maxBuffer: 16 * 1024 * 1024, windowsHide: true };
-    // npm is npm.cmd on Windows, which only starts through cmd.exe: one command line, each argument quoted
-    if (process.platform === 'win32') exec(commandLine([command, ...args], 'win32'), options, done);
-    else execFile(command, args, options, done);
-  });
+export const npmRunner: Runner = async (command, args) => {
+  try {
+    await runFile(command, args);
+  } catch (error) {
+    const stderr = (error as { stderr?: string }).stderr ?? '';
+    throw new TwakeAiError('unavailable', `npm could not install the Twake.ai MCP servers: ${npmFailure(stderr) || (error as Error).message}`);
+  }
+};
 
 /** Installs the pinned servers that are missing or at another version, and says what it installed. */
 export async function ensureInstalled(paths: AppPaths, services: ServiceId[], deps: { run?: Runner; print(line: string): void }): Promise<string[]> {

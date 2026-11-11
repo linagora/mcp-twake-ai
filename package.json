@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "test:e2e": "MCP_TWAKE_AI_E2E=1 vitest run tests/e2e",
     "typecheck": "tsc --noEmit"
   },
   "repository": {
@@ -26,6 +27,7 @@
   "license": "AGPL-3.0-only",
   "dependencies": {
     "@napi-rs/keyring": "^2.1.2",
+    "jsonc-parser": "^3.3.1",
     "open": "^11.0.4",
     "proper-lockfile": "^4.1.2",
     "smol-toml": "^1.9.1",
