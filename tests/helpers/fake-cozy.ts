@@ -7,6 +7,8 @@ export interface FakeCozy {
   url: string;
   refreshCount: number;
   registrations: number;
+  /** the bodies POST /auth/register received */
+  registered: Record<string, unknown>[];
   deleted: string[];
   apps: string[];
   /** allow_oauth_token: POST /oidc/access_token exchanges an IdP token */
@@ -45,6 +47,7 @@ export async function startFakeCozy(): Promise<FakeCozy> {
     url: '',
     refreshCount: 0,
     registrations: 0,
+    registered: [],
     deleted: [],
     apps: ['mail', 'chat', 'space', 'project'],
     async registerClient() {
@@ -90,6 +93,7 @@ export async function startFakeCozy(): Promise<FakeCozy> {
 
     if (req.method === 'POST' && url.pathname === '/auth/register') {
       const body = JSON.parse(raw) as { redirect_uris?: string[] };
+      cozy.registered.push(body);
       const clientId = id('client');
       const entry = { secret: id('secret'), registration: id('registration') };
       clients.set(clientId, entry);

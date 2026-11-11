@@ -47,6 +47,12 @@ describe('registration and authorization', () => {
     });
   });
 
+  it('shows up as "Twake AI", a desktop client, with the software id of its repository', () => {
+    expect(cozy.registered).toEqual([
+      { redirect_uris: ['http://127.0.0.1:8765/callback'], client_name: 'Twake AI', software_id: 'github.com/linagora/mcp-twake-ai', client_kind: 'desktop' },
+    ]);
+  });
+
   it('builds the authorization URL with PKCE and the Drive scope', () => {
     const url = new URL(cozyAuthorizeUrl(cozy.url, { clientId: 'c', redirectUri: 'http://127.0.0.1:8765/callback', state: 's', challenge: 'ch' }));
     expect(url.pathname).toBe('/auth/authorize');

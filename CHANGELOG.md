@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file. The format foll
 ### Changed
 
 - The repository is now `linagora/mcp-twake-ai`, like the package.
+- Twake Drive registers mcp-twake-ai with the software id `github.com/linagora/mcp-twake-ai` (was `…/mcp-twake-wizard`). Clients registered before keep theirs, and are still removed by `logout` and `uninstall`.
 - The README shows the guided setup step by step and an example in Claude Code; CONTRIBUTING, SECURITY, a code of conduct and issue templates were added.
 
 ## [0.1.0] - 2026-11-11
