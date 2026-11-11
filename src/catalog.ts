@@ -86,14 +86,14 @@ export const FILES_FOLDER = '~/Downloads/Twake';
 
 /**
  * The environment of one MCP server for one agent: URLs, token command, language, time zone, agent-specific settings,
- * then what the user added for this service (`setup --env dav.DAV_DEFAULT_CALENDAR=XG`), which has the last word.
+ * then what the user added for this service (`setup --env 'dav.DAV_DEFAULT_CALENDAR=Jane Doe'`), which has the last word.
  */
 export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContext): Record<string, string> {
   checkAgentId(agent);
   const extra = ctx.config.env?.[service] ?? {};
-  // a config.json edited by hand must not send a token to another server, nor run code in the server
-  for (const name of Object.keys(extra)) {
-    const refusal = EXTRA_ENV_NAME.test(name) ? envNameRefusal(name, service) : `${name} is not an upper-case variable name`;
+  // a config.json edited by hand must not send a token to another server, run code in the server, nor send a file out
+  for (const [name, value] of Object.entries(extra)) {
+    const refusal = EXTRA_ENV_NAME.test(name) ? (envNameRefusal(name, service) ?? envValueRefusal(name, value)) : `${name} is not an upper-case variable name`;
     if (refusal) {
       throw new TwakeAiError('unsupported', `${ctx.paths.configFile} sets ${name} for ${service}: ${refusal}. Remove it from ${ctx.paths.configFile}.`);
     }
@@ -175,8 +175,12 @@ function builtinServiceEnv(service: ServiceId, agent: string, ctx: CatalogContex
 /** An environment variable name a user may set: upper case, digits and underscores, as the servers document them */
 const EXTRA_ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
 
-/** A variable a user may not set: it names a server, how to sign in to it, or whose account it is — the account's discovery says so */
-const SERVER_ENV_NAME = /(^|_)(URL|URI|HOMESERVER|AUTH_METHOD|OIDC|HREF_PREFIX|ORGANIZER_EMAIL|USERNAME)($|_)/;
+/**
+ * A variable a user may not set: it names a server, how to sign in to it, or whose account it is — the account's discovery says so.
+ * JMAP_DEFAULT_FROM is accepted on purpose: the send tools already take a sender per message, and a user may send from one of
+ * their aliases. It does not identify the account as MATRIX_USER_ID does, from whose domain Chat also finds its ToM server.
+ */
+const SERVER_ENV_NAME = /(^|_)(URL|URI|HOMESERVER|AUTH_METHOD|OIDC|HREF_PREFIX|ORGANIZER_EMAIL|USERNAME|USER_ID)($|_)/;
 
 /** A variable a user may not set: it carries a secret, which mcp-twake-ai keeps in the keychain */
 const SECRET_ENV_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|(^|_)KEYS?($|_)/;
@@ -187,8 +191,17 @@ const LOGGING_ENV_NAME = /^LOG_LEVEL$/;
 /** A variable mcp-twake-ai manages itself for the agent: one encryption store per device */
 const MANAGED_ENV_NAME = /^MATRIX_STORE_DIR$/;
 
-/** A folder the servers write files into or read them from: FILES_FOLDER, shared by Mail, Drive and Chat, and the only one they may touch */
+/** A folder the servers write files into or read them from: FILES_FOLDER, shared by Mail, Drive and Chat */
 const FILES_ENV_NAME = /_(DOWNLOAD|UPLOAD)_DIR$/;
+
+/**
+ * The signature Mail appends to every mail it writes: a file directly in ~/.mcp-twake-mail/, the folder its README uses.
+ * The server only expands a leading `~`, so no sub-folder, no `..` and no hidden file can lead elsewhere.
+ */
+const SIGNATURE_PATH = /^~[\\/]\.mcp-twake-mail[\\/][^.\\/][^\\/]*$/;
+
+/** Any other variable naming a file the server reads: a pasted path would give it any file of this computer */
+const FILE_ENV_NAME = /_(PATH|FILE)$/;
 
 /** The prefix of a service's own variables: DAV_ for Twake Calendar, JMAP_ for Twake Mail… */
 export function serviceEnvPrefix(service: ServiceId): string {
@@ -213,11 +226,28 @@ export function envNameRefusal(name: string, service: ServiceId): string | undef
     return `${name} is not a variable of ${CATALOG[service].name}: only ${prefix}…, USER_… and LOG_LEVEL may be set`;
   }
   if (MANAGED_ENV_NAME.test(name)) return `${name} is managed by mcp-twake-ai, which keeps one store per device`;
-  if (FILES_ENV_NAME.test(name)) {
-    return `${name} is managed by mcp-twake-ai: Mail, Drive and Chat share one folder for files, ${FILES_FOLDER}, and read or write nowhere else`;
-  }
-  if (SERVER_ENV_NAME.test(name)) return `${name} names a server or how to sign in to it: those come from the account, not from the user`;
+  // the reason that matters most comes first: JMAP_TOKEN_PATH is a secret before being a file
   if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
+  if (FILES_ENV_NAME.test(name)) {
+    return `${name} is managed by mcp-twake-ai: Mail, Drive and Chat share one folder for files, ${FILES_FOLDER}`;
+  }
+  // the signature is the one file accepted, from its own folder: envValueRefusal() checks where
+  if (FILE_ENV_NAME.test(name) && name !== 'JMAP_SIGNATURE_PATH') return `${name} names a file the server reads: a pasted path would give it any file of this computer`;
+  if (SERVER_ENV_NAME.test(name)) return `${name} names a server, how to sign in to it, or whose account it is: those come from the account, not from the user`;
+  return undefined;
+}
+
+/**
+ * Why a value may not be set, if it may not: a variable that names a file the server reads and sends out
+ *
+ * @param name - a name envNameRefusal() accepts
+ * @param value - its value, not empty
+ * @returns the reason, or undefined when the value is free
+ */
+export function envValueRefusal(name: string, value: string): string | undefined {
+  if (name === 'JMAP_SIGNATURE_PATH' && !SIGNATURE_PATH.test(value)) {
+    return `${name} goes out in every mail: it must name a file directly in ~/.mcp-twake-mail/, such as ~/.mcp-twake-mail/signature.md`;
+  }
   return undefined;
 }
 
@@ -257,7 +287,7 @@ export function parseEnvOption(values: string[]): EnvOptionChange {
       continue;
     }
     if (/[\r\n\0]/.test(value)) throw new TwakeAiError('usage', `--env ${service}.${name}: a value cannot hold a line break.`);
-    const refusal = envNameRefusal(name, service);
+    const refusal = envNameRefusal(name, service) ?? envValueRefusal(name, value);
     if (refusal) throw new TwakeAiError('usage', `--env ${service}.${name}: ${refusal}.`);
     decisions.set(`${service}.${name}`, { service, name, value });
   }
