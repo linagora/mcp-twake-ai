@@ -102,6 +102,15 @@ describe('logout', () => {
     expect(synapse.loggedOut).toEqual([device.deviceId]);
   });
 
+  it('does not claim a revocation the identity provider cannot do', async () => {
+    const { paths, vault, config } = await signedIn();
+    const { revocation_endpoint: _none, ...oidc } = config.environment.oidc;
+    const result = await logout({ paths, config: { ...config, environment: { ...config.environment, oidc } }, vault, http: {} });
+    expect(result.done).not.toContain('Twake session revoked');
+    expect(result.failed[0]).toMatch(/^Twake session: .*no revocation/);
+    expect(await vault.get(OIDC_REFRESH_KEY)).toBeUndefined();
+  });
+
   it('signs out a device whose access token has expired, after a refresh', async () => {
     const { paths, vault, config, device } = await signedIn();
     synapse.expireIssuedAccessTokens();
