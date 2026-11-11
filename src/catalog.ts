@@ -17,7 +17,7 @@ export interface McpPackage {
  * These versions run *_TOKEN_COMMAND through the system shell, so they work on Windows too.
  */
 export const CATALOG: Record<ServiceId, McpPackage> = {
-  mail: { name: 'mcp-twake-mail', version: '4.1.1', approval: 'JMAP' },
+  mail: { name: 'mcp-twake-mail', version: '4.2.0', approval: 'JMAP' },
   dav: { name: 'mcp-twake-dav', version: '4.2.1', approval: 'DAV' },
   drive: { name: 'mcp-twake-drive', version: '0.4.1', approval: 'TWAKE_DRIVE' },
   chat: { name: 'mcp-twake-chat', version: '0.6.1', approval: 'MATRIX' },
@@ -78,6 +78,12 @@ export function systemTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
+/**
+ * The one folder where Mail saves attachments, and where Drive and Chat download files and take the ones they upload:
+ * an attachment kept by Mail can go to the Drive or a room without passing through the model. `~` is the home folder.
+ */
+export const FILES_FOLDER = '~/Downloads/Twake';
+
 /** The environment of one MCP server for one agent: URLs, token command, language, time zone, agent-specific settings. */
 export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContext): Record<string, string> {
   checkAgentId(agent);
@@ -90,7 +96,13 @@ export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContex
     case 'mail': {
       const url = env.services.mail?.url;
       if (!url) throw notFound('Twake Mail (JMAP) server');
-      return { JMAP_SESSION_URL: url, JMAP_AUTH_METHOD: 'command', JMAP_TOKEN_COMMAND: tokenCommand('mail', undefined, ctx), ...common };
+      return {
+        JMAP_SESSION_URL: url,
+        JMAP_AUTH_METHOD: 'command',
+        JMAP_TOKEN_COMMAND: tokenCommand('mail', undefined, ctx),
+        JMAP_DOWNLOAD_DIR: FILES_FOLDER,
+        ...common,
+      };
     }
     case 'dav': {
       const url = env.services.dav?.url;
@@ -109,7 +121,8 @@ export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContex
     case 'drive': {
       const instance = env.cozy.instance;
       if (!instance || !config.drive) throw new TwakeAiError('login_required', 'Twake Drive is not connected: run `mcp-twake-ai login --drive`.');
-      return { TWAKE_DRIVE_URL: instance, TWAKE_DRIVE_TOKEN_COMMAND: tokenCommand('drive', undefined, ctx), ...common };
+      // its upload folder defaults to its download folder
+      return { TWAKE_DRIVE_URL: instance, TWAKE_DRIVE_TOKEN_COMMAND: tokenCommand('drive', undefined, ctx), TWAKE_DRIVE_DOWNLOAD_DIR: FILES_FOLDER, ...common };
     }
     case 'chat': {
       const device = config.chat?.[agent];
@@ -121,6 +134,8 @@ export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContex
         MATRIX_USER_ID: device.userId,
         MATRIX_TOKEN_COMMAND: tokenCommand('chat', agent, ctx),
         MATRIX_HOMESERVER_URL: env.matrix.homeserver,
+        // its upload folder defaults to its download folder
+        MATRIX_DOWNLOAD_DIR: FILES_FOLDER,
         ...(env.matrix.tom ? { TOM_URL: env.matrix.tom } : {}),
         MATRIX_E2EE_RECOVERY: 'tom',
         // the end-to-end encryption store belongs to one device: a new device gets a new store
