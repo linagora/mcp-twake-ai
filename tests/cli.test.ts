@@ -421,7 +421,7 @@ describe('main: Twake Drive and Twake Chat', () => {
     const { deps, cursor } = await readyForSetup();
     await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
     const io = captureIo();
-    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
     expect(io.out).toContain('replaces an entry configured outside mcp-twake-ai: add --force');
     expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail']).toEqual({ command: 'my-mail' });
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--force'], captureIo(), deps)).toBe(0);
@@ -449,7 +449,8 @@ describe('main: Twake Drive and Twake Chat', () => {
   it('leaves out an agent that is not installed, and says which ones are', async () => {
     const { deps } = await readyForSetup();
     const io = captureIo();
-    expect(await main(['setup', '--agents', 'claude-desktop,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    // an agent asked for and not installed: the setup is not complete
+    expect(await main(['setup', '--agents', 'claude-desktop,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
     expect(io.out).toContain('Claude Desktop: not found on this computer');
     const usage = captureIo();
     expect(await main(['setup'], usage, deps)).toBe(2);
@@ -467,7 +468,8 @@ describe('main: Twake Drive and Twake Chat', () => {
     await mkdir(join(deps.home, '.hermes'), { recursive: true });
     await writeFile(join(deps.home, '.hermes', 'config.yaml'), 'mcp_servers:\n  twake_mail:\n');
     const io = captureIo();
-    expect(await main(['setup', '--agents', 'hermes,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    // the emptied entry is left alone without --force: exit 1, Cursor written all the same
+    expect(await main(['setup', '--agents', 'hermes,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
     expect(io.out).toMatch(/! twake_mail\s+replaces an entry configured outside mcp-twake-ai/);
     expect(JSON.parse((await readText(cursor))!).mcpServers).toHaveProperty('twake-mail');
   });
@@ -749,6 +751,28 @@ describe('main: Twake Drive and Twake Chat', () => {
     const io = captureIo();
     expect(await main(['setup', '--services', 'mail'], io, deps)).toBe(2);
     expect(io.err).toContain('--agents');
+  });
+
+  it('exits with 1 when an entry was left alone for lack of --force, naming it', async () => {
+    const { deps, cursor } = await readyForSetup();
+    await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
+    expect(io.out).toContain('left as they are: twake-mail');
+  });
+
+  it('exits with 1 when an agent named is not installed, and says why for Claude Code', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'claude-code,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(1);
+    expect(io.out).toContain('Claude Code: the claude command is not in PATH, left out.');
+  });
+
+  it('does not suggest --yes when no agent can be set up', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'claude-desktop', '--services', 'mail'], io, deps)).toBe(1);
+    expect(io.out).not.toContain('--yes');
   });
 });
 

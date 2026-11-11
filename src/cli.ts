@@ -476,7 +476,9 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
     // one agent's problem (unreadable file, broken entry) never stops the others
     try {
       if (!(await adapter.detect())) {
-        io.stdout(`${adapter.label}: not found on this computer (${adapter.target}), left out.\n`);
+        // an agent asked for and not set up: the setup is not complete
+        failed = true;
+        io.stdout(adapter.id === 'claude-code' ? 'Claude Code: the claude command is not in PATH, left out.\n' : `${adapter.label}: not found on this computer (${adapter.target}), left out.\n`);
         continue;
       }
       const actions = planEntries(await adapter.read(), wantedEntries(adapter, chosen, ctx, env), owned);
@@ -495,7 +497,7 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
   const written: AgentId[] = [];
   const result = (code: number) => ({ code, conflicts, written });
   if (!request.apply) {
-    if (!request.quiet) io.stdout('Nothing was changed: run the same command with --yes to apply it.\n');
+    if (!request.quiet && plans.length > 0) io.stdout('Nothing was changed: run the same command with --yes to apply it.\n');
     return result(failed ? 1 : 0);
   }
   if (plans.length === 0) return result(failed ? 1 : 0);
@@ -520,7 +522,10 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
     written.push(adapter.id);
     if (result.status === 'unchanged') io.stdout(`${adapter.label}: already up to date.\n`);
     else io.stdout(`${adapter.label}: done${result.backup ? ` (previous file kept as ${result.backup})` : ''}. ${adapter.capabilities.reload}\n`);
-    if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);
+    if (result.skipped.length > 0) {
+      failed = true;
+      io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);
+    }
   }
   if (fromNpx && written.length > 0) {
     // a convenience: its failure never fails the setup
