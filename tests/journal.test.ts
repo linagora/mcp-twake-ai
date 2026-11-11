@@ -19,7 +19,15 @@ describe('mask, beyond snake_case', () => {
     expect(mask('{"refreshToken":"r-1","accessToken":"a-1"}')).toBe('{"refreshToken":"***","accessToken":"***"}');
     expect(mask('body {\\"refresh_token\\":\\"r-2\\"}')).toBe('body {\\"refresh_token\\":\\"***\\"}');
     expect(mask('token syt_YWxpY2U_abcdef_123 and syr_YWxpY2U_xyz_456')).toBe('token *** and ***');
-    expect(mask('{"code":"M_UNKNOWN_TOKEN"}')).toBe('{"code":"M_UNKNOWN_TOKEN"}');
+    expect(mask('{"errcode":"M_UNKNOWN_TOKEN"}')).toBe('{"errcode":"M_UNKNOWN_TOKEN"}');
+    // an authorization code is masked whatever its case: an error code is never worth a leak
+    expect(mask('?code=ABCDEF_GHIJ&state=s')).toBe('?code=***&state=s');
+  });
+
+  it('hides the other secrets a request may carry', () => {
+    expect(mask('token=r-3&token_type_hint=refresh_token')).toBe('token=***&token_type_hint=refresh_token');
+    expect(mask('password=hunter2 client_assertion=eyX.y.z')).toBe('password=*** client_assertion=***');
+    expect(mask('Authorization: Basic dHdha2U6c2VjcmV0')).toBe('Authorization: Basic ***');
   });
 });
 
