@@ -51,6 +51,12 @@ export async function checkChat(d: BrokerDeps, agent: string): Promise<Check> {
   }
 }
 
+/** What a server that stopped said: its last error line, else its last line (the version banner of Node left out). */
+function lastUsefulLine(stderr: string): string {
+  const lines = stderr.split('\n').map((line) => line.trim()).filter((line) => line && !/^Node\.js v\d/.test(line));
+  return lines.filter((line) => /^\w*Error\b.*: /.test(line)).at(-1) ?? lines.at(-1) ?? '';
+}
+
 /** Starts an agent's entry as the agent would, asks initialize then tools/list, and stops it (spec §12.2, point 4). */
 export function handshake(entry: { command: string; args: string[]; env?: Record<string, string> }, env: NodeJS.ProcessEnv, timeoutMs = 30_000): Promise<Check> {
   return new Promise((resolve) => {
@@ -70,7 +76,7 @@ export function handshake(entry: { command: string; args: string[]; env?: Record
     });
     child.stdin.on('error', () => undefined);
     child.once('error', (error) => finish({ ok: false, detail: error.message }));
-    child.once('exit', (code) => finish({ ok: false, detail: stderr.trim().split('\n').at(-1) || `the server stopped (exit code ${code})` }));
+    child.once('exit', (code) => finish({ ok: false, detail: lastUsefulLine(stderr) || `the server stopped (exit code ${code})` }));
     const send = (message: object) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
     createInterface({ input: child.stdout }).on('line', (line) => {
       let message: { id?: unknown; error?: { message?: string }; result?: { tools?: unknown[] } };

@@ -13,7 +13,7 @@ import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { fakeNpm } from './helpers/fake-mcp.js';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readText } from '../src/agents/config-file.js';
 import { journalFile } from '../src/journal.js';
@@ -443,6 +443,52 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toContain(`VS Code: ${vscode} is not valid JSON`);
     expect(JSON.parse((await readText(cursor))!).mcpServers).toHaveProperty('twake-mail');
     expect(await readText(vscode)).toBe('{"servers": {');
+  });
+
+  it('shows the health of the session, Drive, Chat and every entry', async () => {
+    const { deps } = await readyForSetup();
+    expect(await main(['login', '--drive'], captureIo(), deps)).toBe(0);
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
+    const io = captureIo();
+    expect(await main(['status', '--no-start'], io, deps)).toBe(0);
+    expect(io.out).toContain('✓ Twake session: alice@example.com');
+    expect(io.out).toContain(`✓ Twake Drive: ${cozy.url}`);
+    expect(io.out).toContain('Cursor');
+    expect(io.out).toMatch(/✓ twake-mail\s+in place/);
+    expect(io.out).toMatch(/✓ Twake Chat \(cursor\): @alice:example.com/);
+  });
+
+  it('says what is wrong, and exits with 1', async () => {
+    const { deps, cursor } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
+    const servers = JSON.parse((await readText(cursor))!);
+    servers.mcpServers['twake-mail'].args.push('--debug');
+    await writeFile(cursor, JSON.stringify(servers));
+    // no cached token: the session check asks the IdP, which refuses
+    await rm(deps.paths.tokensDir, { recursive: true, force: true });
+    idp.tokenFailureStatus = 400;
+    const io = captureIo();
+    expect(await main(['status', '--no-start'], io, deps)).toBe(1);
+    expect(io.out).toMatch(/✗ Twake session: /);
+    expect(io.out).toMatch(/! twake-mail\s+changed by hand/);
+  });
+
+  it('starts each server through its entry', async () => {
+    const { deps } = await readyForSetup();
+    deps.nodePath = process.execPath;
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
+    const io = captureIo();
+    expect(await main(['status', '--agents', 'cursor'], io, deps)).toBe(1);
+    // the entry starts /opt/twake-ai/build/bin.js, which does not exist here: the handshake says so
+    expect(io.out).toMatch(/✗ twake-mail\s+.*(Cannot find module|MODULE_NOT_FOUND|stopped)/);
+  });
+
+  it('prints the environment run would build', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['status', '--env', 'mail', '--agent', 'cursor'], io, deps)).toBe(0);
+    expect(io.out).toContain('JMAP_SESSION_URL=https://jmap.example.com/jmap/session\n');
+    expect(io.out).toContain("JMAP_TOKEN_COMMAND='/usr/bin/node' '/opt/twake-ai/build/bin.js' 'token' 'mail'\n");
   });
 });
 

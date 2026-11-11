@@ -30,6 +30,11 @@ describe('handshake', () => {
     expect(await handshake({ command: process.execPath, args: [dying] }, process.env)).toEqual({ ok: false, detail: 'token command failed: No Twake session on this computer' });
   });
 
+  it('reports the error of a server that crashes, not the version banner of Node', async () => {
+    const crashing = await script("throw new Error('Cannot find module /opt/x/bin.js')");
+    expect(await handshake({ command: process.execPath, args: [crashing] }, process.env)).toEqual({ ok: false, detail: 'Error: Cannot find module /opt/x/bin.js' });
+  });
+
   it('gives up on a server that never answers', async () => {
     const mute = await script('setInterval(() => {}, 1000);');
     expect(await handshake({ command: process.execPath, args: [mute] }, process.env, 300)).toEqual({ ok: false, detail: 'no answer within 0.3 s' });

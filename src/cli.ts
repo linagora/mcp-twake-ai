@@ -8,6 +8,7 @@ import { discover, type DiscoveryDeps } from './discovery.js';
 import { TwakeAiError } from './errors.js';
 import { describeError } from './describe.js';
 import { journal } from './journal.js';
+import { checkChat, checkDrive, checkSession, entryStates, handshake, type Check, type EntryState } from './status.js';
 import { chooseLoginMode, loginOidc } from './login.js';
 import { appPaths, type AppPaths } from './paths.js';
 import { chooseVault, openVault, type Vault } from './vault.js';
@@ -116,6 +117,8 @@ const USAGE = `usage:
   mcp-twake-ai token <${SERVICE_IDS.join('|')}> [--agent <id>]
   mcp-twake-ai run <${SERVICE_IDS.join('|')}> --agent <id>
   mcp-twake-ai export --agent <id> [--services <list>] [--raw] [--out <dir>] [--no-browser]
+  mcp-twake-ai status [--agents <ids>] [--no-start]
+  mcp-twake-ai status --env <service> [--agent <id>]
   mcp-twake-ai --version
 `;
 
@@ -153,6 +156,8 @@ async function dispatch(command: string | undefined, args: string[], io: Io, dep
       return 0;
     case 'setup':
       return await setupCommand(args, io, deps);
+    case 'status':
+      return await statusCommand(args, io, deps);
     case 'login':
       return await loginCommand(args, io, deps);
     case 'token':
@@ -429,4 +434,74 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);
   }
   return failed ? 1 : 0;
+}
+
+const STATE_LINE: Record<EntryState['state'], [string, string]> = {
+  ok: ['✓', 'in place'],
+  missing: ['✗', 'missing: run setup again'],
+  modified: ['!', 'changed by hand since mcp-twake-ai wrote it'],
+  foreign: ['!', 'configured outside mcp-twake-ai'],
+  'no-node': ['✗', 'its node is gone (updated with nvm?): run setup again'],
+};
+
+const mark = (check: Check) => (check.ok ? '✓' : '✗');
+
+/** status: the session, Drive, each agent's entries and Chat device, and a handshake with each server (spec §12.2). */
+async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
+  const { values } = usageErrors(() =>
+    parseArgs({ args, options: { agents: { type: 'string' }, 'no-start': { type: 'boolean' }, env: { type: 'string' }, agent: { type: 'string' } }, strict: true }),
+  );
+  const config = await loadConfig(d.paths);
+  if (!config) throw new TwakeAiError('login_required', 'mcp-twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
+  if (values.env !== undefined) {
+    if (!isServiceId(values.env)) throw new TwakeAiError('usage', `"${values.env}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
+    const env = serviceEnv(values.env, checkAgentId(values.agent ?? 'agent'), catalogContext(config, d));
+    for (const [key, value] of Object.entries(env)) io.stdout(`${key}=${value}\n`);
+    return 0;
+  }
+  const vault = await openVault(config.vault, d.paths);
+  const broker = { paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep }, now: d.now };
+  let healthy = true;
+  const report = (check: Check, label: string) => {
+    healthy &&= check.ok;
+    io.stdout(`${mark(check)} ${label}: ${check.detail}\n`);
+  };
+  report(await checkSession(broker), 'Twake session');
+  if (config.drive) report(await checkDrive(broker), 'Twake Drive');
+  const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  const wanted = values.agents === undefined ? (Object.keys(config.agents ?? {}).filter(isAgentId) as AgentId[]) : values.agents.split(',').map((name) => name.trim());
+  for (const name of wanted) {
+    if (!isAgentId(name)) throw new TwakeAiError('usage', `"${name}" is not an agent mcp-twake-ai configures (${AGENT_IDS.join(', ')}).\n\n${USAGE}`);
+    const adapter = adapters[name];
+    io.stdout(`${adapter.label} (${adapter.target})\n`);
+    if (!(await adapter.detect())) {
+      healthy = false;
+      io.stdout('  ✗ not found on this computer\n');
+      continue;
+    }
+    let states: EntryState[];
+    try {
+      states = await entryStates(adapter, config.agents?.[name]?.entries ?? {});
+    } catch (error) {
+      healthy = false;
+      io.stdout(`  ✗ ${describeError(error)}\n`);
+      continue;
+    }
+    if (states.length === 0) io.stdout('  no Twake.ai entry: run setup\n');
+    for (const state of states) {
+      let [symbol, words] = STATE_LINE[state.state];
+      if (state.state === 'ok' && !values['no-start']) {
+        const started = await handshake(state.entry as { command: string; args: string[]; env?: Record<string, string> }, d.env);
+        [symbol, words] = started.ok ? ['✓', `starts, ${started.detail}`] : ['✗', started.detail];
+      }
+      healthy &&= symbol === '✓';
+      io.stdout(`  ${symbol} ${state.name.padEnd(14)} ${words}\n`);
+    }
+    if (states.some((state) => state.service === 'chat')) {
+      const chat = await checkChat(broker, name);
+      healthy &&= chat.ok;
+      io.stdout(`  ${mark(chat)} Twake Chat (${name}): ${chat.detail}\n`);
+    }
+  }
+  return healthy ? 0 : 1;
 }
