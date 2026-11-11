@@ -1,9 +1,9 @@
 import type { AgentId } from './agents/types.js';
 import type { ServiceId } from './broker.js';
 import { t, type Lang, type MessageKey } from './i18n.js';
+import { isSupportedNode, REQUIRED_NODE } from './node-version.js';
 import { SetupCancelled, type Prompter } from './prompter.js';
 
-export const REQUIRED_NODE = '22.13';
 
 /** What the guided setup needs from the rest of mcp-twake-ai: it never touches files or the network itself. */
 export interface WizardKit {
@@ -21,19 +21,13 @@ export interface WizardKit {
   describe(error: unknown): string;
 }
 
-const atLeast = (version: string, floor: string) => {
-  const [a = 0, b = 0] = version.split('.').map(Number);
-  const [x = 0, y = 0] = floor.split('.').map(Number);
-  return a > x || (a === x && b >= y);
-};
-
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** The guided setup (spec §8). Returns the exit code. */
 export async function runWizard(kit: WizardKit, prompter: Prompter, nodeVersion: string, options: { email?: string } = {}): Promise<number> {
   const say = (key: MessageKey, vars?: Record<string, string | number>) => t(kit.lang, key, vars);
   prompter.intro(kit.banner());
-  if (!atLeast(nodeVersion, REQUIRED_NODE)) {
+  if (!isSupportedNode(nodeVersion)) {
     prompter.outro(say('nodeTooOld', { required: REQUIRED_NODE, current: nodeVersion }));
     return 1;
   }
