@@ -68,6 +68,17 @@ describe('exportFiles', () => {
     ]);
   });
 
+  it('keeps the approval timeout the user set in hermes.yaml, for another agent too', async () => {
+    const base = await context();
+    const withTimeout = { ...base, config: { ...base.config, env: { mail: { JMAP_APPROVAL_TIMEOUT_MS: '120000' } } } };
+
+    const mine = await exportFiles({ agent: 'zed', services: ['mail'], raw: false }, withTimeout);
+    expect(parseYaml(mine['hermes.yaml']!).mcp_servers.twake_mail.env.JMAP_APPROVAL_TIMEOUT_MS).toBe('120000');
+
+    const theirs = await exportFiles({ agent: 'zed', services: ['mail'], raw: false }, base);
+    expect(parseYaml(theirs['hermes.yaml']!).mcp_servers.twake_mail.env.JMAP_APPROVAL_TIMEOUT_MS).toBe('330000');
+  });
+
   it('writes commands.txt for cmd.exe on Windows', async () => {
     const ctx = { ...(await context()), platform: 'win32' as const, nodePath: 'C:\\Program Files\\nodejs\\node.exe', cliPath: 'C:\\npm\\bin.js' };
     const files = await exportFiles({ agent: 'zed', services: ['mail'], raw: false }, ctx);

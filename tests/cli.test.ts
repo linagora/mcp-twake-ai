@@ -429,6 +429,49 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(again.out).toContain('Cursor: already up to date.');
   });
 
+  it('keeps --env variables in config.json with --yes, and nothing without it', async () => {
+    const { deps } = await readyForSetup();
+    const option = 'mail.JMAP_DEFAULT_FROM=jdoe@example.com';
+
+    const dry = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--env', option], dry, deps)).toBe(0);
+    expect(dry.out).toContain(`would set ${option}`);
+    expect((await loadConfig(deps.paths))!.env).toBeUndefined();
+
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--env', option], io, deps)).toBe(0);
+    expect(io.out).toContain(`set ${option}`);
+    expect((await loadConfig(deps.paths))!.env).toEqual({ mail: { JMAP_DEFAULT_FROM: 'jdoe@example.com' } });
+
+    // a later run without --env keeps them
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
+    expect((await loadConfig(deps.paths))!.env).toEqual({ mail: { JMAP_DEFAULT_FROM: 'jdoe@example.com' } });
+
+    // an empty value forgets the variable
+    const forget = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--env', 'mail.JMAP_DEFAULT_FROM='], forget, deps)).toBe(0);
+    expect(forget.out).toContain('forgot');
+    expect(forget.out).not.toContain('would');
+    expect((await loadConfig(deps.paths))!.env).toBeUndefined();
+  });
+
+  it('refuses an invalid --env before signing in to the account given with --email', async () => {
+    const deps = await testDeps();
+    const io = captureIo();
+    expect(await main(['setup', '--email', 'alice@example.com', '--agents', 'cursor', '--env', 'dav.LD_PRELOAD=/tmp/x.so'], io, deps)).toBe(2);
+    // no sign-in happened, so no configuration was written
+    expect(await loadConfig(deps.paths)).toBeUndefined();
+  });
+
+  it('refuses --env options that name an unknown service or carry a secret', async () => {
+    const { deps } = await readyForSetup();
+    const base = ['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--env'];
+    expect(await main([...base, 'calendar.FOO=1'], captureIo(), deps)).toBe(2);
+    expect(await main([...base, 'mail.lower=1'], captureIo(), deps)).toBe(2);
+    expect(await main([...base, 'mail.JMAP_TOKEN=abc'], captureIo(), deps)).toBe(2);
+    expect((await loadConfig(deps.paths))!.env).toBeUndefined();
+  });
+
   it('leaves an entry configured by hand unless --force', async () => {
     const { deps, cursor } = await readyForSetup();
     await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
@@ -694,7 +737,7 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(JSON.parse(await readFile(join(out, 'mcpServers.json'), 'utf8')).mcpServers['twake-mail'].args[0]).toBe(join(installed, 'build', 'bin.js'));
     expect(await readText(join(installed, 'package.json'))).toBeDefined();
     const env = captureIo();
-    expect(await main(['status', '--env', 'mail'], env, deps)).toBe(0);
+    expect(await main(['status', '--print-env', 'mail'], env, deps)).toBe(0);
     expect(env.out).not.toContain('_npx');
   });
 

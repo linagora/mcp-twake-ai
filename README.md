@@ -123,9 +123,22 @@ mcp-twake-ai setup --email jane.doe@example.com --agents detected   # signs in, 
 mcp-twake-ai setup --agents detected                      # shows what would change, writes nothing
 mcp-twake-ai setup --agents claude-code,hermes --yes      # writes it
 mcp-twake-ai setup --agents cursor --services mail,dav --yes
+mcp-twake-ai setup --agents claude-code --yes --env dav.DAV_DEFAULT_CALENDAR=XG
 ```
 
 With `--email`, `setup` first signs in to that account if it is not the current one. With `--yes`, it connects Twake Drive and gives each agent its own Twake Chat device when those services are chosen, installs the pinned servers, then writes the agents.
+
+`--env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment (`--env` can be repeated). It is kept in `config.json` — never in an agent's file — and every entry, `run`, `status --print-env` and `export` builds it from there. A later sign-in to the same account keeps it; another account starts without it, since several of these variables name a calendar, an address or a prefix of one account. An empty value (`--env dav.DAV_DEFAULT_CALENDAR=`) forgets the variable. Services are `mail`, `dav`, `drive`, `chat`, `space` and `project`. `status --print-env dav` shows the environment a server gets, yours included.
+
+Only a few names are accepted, on the command line and in a `config.json` edited by hand:
+
+- the variables of the server itself — `JMAP_…` for Twake Mail, `DAV_…` for Twake Calendar, `TWAKE_DRIVE_…`, `MATRIX_…`, `TWAKE_SPACE_…`, `TWAKE_PROJECT_…` — for instance `DAV_DEFAULT_CALENDAR` or `JMAP_DEFAULT_FROM`;
+- the `USER_…` ones (`USER_LANGUAGE`, `USER_TIMEZONE`);
+- `LOG_LEVEL`, the one logging variable the servers document.
+
+Everything else is refused: `PATH`, `HOME`, `TWAKE_AI_HOME`, `LD_PRELOAD`, `NODE_OPTIONS`… have nothing to do with a server, and listing the dangerous names of a process environment one by one is a losing game. Within the accepted prefixes, the names that point at a server or say how to sign in to it (`*_URL`, `*_AUTH_METHOD`, `*_OIDC_ISSUER`, `*_CLIENT_ID`) are refused too, since they come from your account, and so are the ones that may carry a secret (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*_API_KEY`), which the keychain and the token broker already handle. The folders for files (`*_DOWNLOAD_DIR`, `*_UPLOAD_DIR`) are refused as well: Mail, Drive and Chat share `~/Downloads/Twake`, the only folder they write into and read from.
+
+Two things to know: a variable set here applies to the service in every agent that runs it (setting `DAV_APPROVAL` would change the approval of writes for all of them), and for Hermes a `*_APPROVAL_TIMEOUT_MS` you set replaces the value mcp-twake-ai chose for it. When a server is started through `run`, the environment the agent already sets for it still wins over the one written here.
 
 | Agent (`--agents`)                | Where                                                                                                   | Approval of writes                            |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
@@ -144,11 +157,11 @@ With `--email`, `setup` first signs in to that account if it is not the current 
 ### Check, sign out, uninstall
 
 ```sh
-mcp-twake-ai status                             # session, Drive, every entry, and each server started once
-mcp-twake-ai status --no-start                  # the same without starting the servers
+mcp-twake-ai status                                   # session, Drive, every entry, and each server started once
+mcp-twake-ai status --no-start                        # the same without starting the servers
 mcp-twake-ai status --print-env mail --agent cursor   # the environment run builds for a server
-mcp-twake-ai logout                             # revokes every authorization and forgets the secrets
-mcp-twake-ai uninstall                          # shows what it would remove; add --yes to do it
+mcp-twake-ai logout                                   # revokes every authorization and forgets the secrets
+mcp-twake-ai uninstall                                # shows what it would remove; add --yes to do it
 ```
 
 - `status` checks the Twake session, Twake Drive, each agent's Chat device, that every entry is the one mcp-twake-ai wrote, and that each server answers through its entry. It exits with 1 when something is wrong, and says what.

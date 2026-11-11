@@ -27,7 +27,7 @@ import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
 import { fileURLToPath } from 'node:url';
-import { detectLanguage, serviceEnv, systemTimezone, type CatalogContext } from './catalog.js';
+import { detectLanguage, parseEnvOption, serviceEnv, systemTimezone, type CatalogContext, type EnvOptionChange } from './catalog.js';
 import { needsConsent, planEntries, wantedEntries, type ActionKind, type EntryAction } from './agents/entries.js';
 import { applyAgent, createAdapters, detectAgents, recordOwned } from './agents/index.js';
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
@@ -124,7 +124,7 @@ export function packageVersion(): string {
 }
 
 const USAGE = `usage:
-  mcp-twake-ai setup [--email <address>] --agents <ids|detected> [--services <list>] [--yes] [--force] [--no-browser]
+  mcp-twake-ai setup [--email <address>] --agents <ids|detected> [--services <list>] [--yes] [--force] [--no-browser] [--env <service.VARIABLE=value>]
   mcp-twake-ai login [--email <address>] [--no-browser] [--client-id <id>] [--scope <scopes>]
   mcp-twake-ai login --drive [--no-browser]
   mcp-twake-ai login --chat --agent <id> [--no-browser]
@@ -415,13 +415,16 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
         force: { type: 'boolean' },
         'no-browser': { type: 'boolean' },
         email: { type: 'string' },
+        env: { type: 'string', multiple: true },
       },
       strict: true,
     }),
   );
+  // checked before anything else: a mistyped option must not sign in or write config.json first
+  const envChange = values.env === undefined ? undefined : parseEnvOption(values.env);
   const guided = values.agents === undefined && !values.yes && d.interactive;
-  if (guided && (values.services !== undefined || values.force)) {
-    throw new TwakeAiError('usage', `--services and --force go with --agents: without them, setup asks.\n\n${USAGE}`);
+  if (guided && (values.services !== undefined || values.force || values.env !== undefined)) {
+    throw new TwakeAiError('usage', `--services, --force and --env go with --agents: without them, setup asks.\n\n${USAGE}`);
   }
   if (guided) {
     const kit = wizardKit(io, d, { noBrowser: values['no-browser'] });
@@ -453,8 +456,53 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     if (!isServiceId(service)) throw new TwakeAiError('usage', `"${service}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
   }
   const force = values.force ?? false;
-  const request = { agents: names as AgentId[], services: services as ServiceId[] | undefined, apply: values.yes ?? false, consent: () => force, noBrowser: values['no-browser'] };
-  return (await runSetup(request, io, d)).code;
+  const apply = values.yes ?? false;
+  const envSaid = envChange ? await storeExtraEnv(envChange, apply, d) : undefined;
+  const request = { agents: names as AgentId[], services: services as ServiceId[] | undefined, apply, consent: () => force, noBrowser: values['no-browser'] };
+  // said last, so that a setup that stops half-way does not claim the variables are in place for the agents
+  const sayEnv = (code: number | undefined) => {
+    if (!envSaid) return;
+    const where = apply ? ` in ${d.paths.configFile}${code === 0 ? '' : ', but the setup itself did not complete'}` : ': add --yes to do it';
+    io.stdout(`Environment: ${envSaid}${where}.\n`);
+  };
+  let code: number;
+  try {
+    code = (await runSetup(request, io, d)).code;
+  } catch (error) {
+    sayEnv(undefined);
+    throw error;
+  }
+  sayEnv(code);
+  return code;
+}
+
+/**
+ * setup --env <service>.<VARIABLE>=<value>: keep the user's variables in config.json, so that every entry, `run`,
+ * `status --print-env` and `export` build them, rather than writing them by hand into the agents' files. An empty value
+ * forgets the variable.
+ *
+ * Nothing is stored without --yes: the setup changes nothing before the user confirms it.
+ */
+async function storeExtraEnv(change: EnvOptionChange, apply: boolean, d: CliDeps): Promise<string> {
+  const sets = Object.entries(change.set).flatMap(([service, variables]) => Object.entries(variables).map(([name, value]) => `${service}.${name}=${value}`));
+  const forgets = Object.entries(change.unset).flatMap(([service, names]) => names.map((name) => `${service}.${name}`));
+  const said = [
+    ...(sets.length > 0 ? [`${apply ? 'set' : 'would set'} ${sets.join(', ')}`] : []),
+    ...(forgets.length > 0 ? [`${apply ? 'forgot' : 'would forget'} ${forgets.join(', ')}`] : []),
+  ].join(' and ');
+  if (!apply) return said;
+
+  const config = await loadConfig(d.paths);
+  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `mcp-twake-ai login --email <address>`.');
+  const env: Record<string, Record<string, string>> = {};
+  for (const [service, variables] of Object.entries(config.env ?? {})) env[service] = { ...variables };
+  for (const [service, variables] of Object.entries(change.set)) env[service] = { ...(env[service] ?? {}), ...variables };
+  for (const [service, names] of Object.entries(change.unset)) {
+    for (const name of names) delete env[service]?.[name];
+    if (env[service] && Object.keys(env[service]).length === 0) delete env[service];
+  }
+  await saveConfig(d.paths, { ...config, env: Object.keys(env).length > 0 ? env : undefined });
+  return said;
 }
 
 /** Plans, and with apply connects, installs and writes, the agents of a setup; shared by both setups. */

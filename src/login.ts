@@ -78,10 +78,9 @@ export async function loginOidc(request: LoginRequest, deps: LoginDeps): Promise
   }
   let drive: TwakeAiConfig['drive'];
   let chat: TwakeAiConfig['chat'];
+  // Drive, Chat and the `setup --env` variables belong to the account, whose secrets are in the same vault, on the same servers
+  const sameAccount = !!previous && previous.email.trim().toLowerCase() === request.email.trim().toLowerCase() && previous.vault === vault && previous.environment.domain === environment.domain;
   if (previous) {
-    // Drive and Chat stay connected only for the same account, whose secrets are in the same vault, on the same servers
-    const sameAccount =
-      previous.email.trim().toLowerCase() === request.email.trim().toLowerCase() && previous.vault === vault && previous.environment.domain === environment.domain;
     drive = sameAccount && previous.environment.cozy.instance === environment.cozy.instance ? previous.drive : undefined;
     chat = sameAccount && previous.environment.matrix.homeserver === environment.matrix.homeserver ? previous.chat : undefined;
     // a dropped connection's cached tokens must not be served to the new account
@@ -98,7 +97,10 @@ export async function loginOidc(request: LoginRequest, deps: LoginDeps): Promise
     chat,
     // the entries written into the agents start the launcher, whatever the account: they stay ours
     agents: previous?.agents,
+    // several of them name a calendar, an address or a prefix of the previous account: another account starts without them
+    env: sameAccount ? previous?.env : undefined,
   };
+  if (previous?.env && !sameAccount) deps.print('The variables set with setup --env belonged to the previous sign-in: they are forgotten.');
   await saveConfig(deps.paths, config);
   return config;
 }

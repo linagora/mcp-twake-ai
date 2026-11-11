@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { CATALOG, detectLanguage, entryName, hermesEntryName, serviceEnv, shellQuote, tokenCommand, type CatalogContext } from '../src/catalog.js';
+import { CATALOG, detectLanguage, entryName, hermesEntryName, parseEnvOption, serviceEnv, shellQuote, tokenCommand, type CatalogContext } from '../src/catalog.js';
 import type { TwakeAiConfig } from '../src/config.js';
 import { appPaths } from '../src/paths.js';
 
@@ -189,5 +189,137 @@ describe('serviceEnv: Chat device ids', () => {
   it('refuses a device id that could name another folder', () => {
     const hostile = { ...ctx, config: { ...config, chat: { hermes: { userId: '@jdoe:linagora.com', deviceId: '../../x' } } } };
     expect(() => serviceEnv('chat', 'hermes', hostile)).toThrow(expect.objectContaining({ code: 'bad_response' }));
+  });
+});
+
+describe('serviceEnv: the user\'s own variables', () => {
+  const withEnv = { ...ctx, config: { ...config, env: { dav: { DAV_DEFAULT_CALENDAR: 'XG' }, mail: { JMAP_DEFAULT_FROM: 'jdoe@linagora.com' } } } };
+
+  it('adds the variables of this service, after the ones mcp-twake-ai builds', () => {
+    const env = serviceEnv('dav', 'cursor', withEnv);
+    expect(env.DAV_DEFAULT_CALENDAR).toBe('XG');
+    expect(env.DAV_URL).toBe('https://dav.linagora.com/');
+    expect(env.USER_TIMEZONE).toBe('Europe/Paris');
+  });
+
+  it('leaves the other services alone', () => {
+    expect(serviceEnv('space', 'cursor', withEnv)).not.toHaveProperty('DAV_DEFAULT_CALENDAR');
+    expect(serviceEnv('mail', 'cursor', withEnv).JMAP_DEFAULT_FROM).toBe('jdoe@linagora.com');
+  });
+
+  it('lets the user override a variable mcp-twake-ai sets', () => {
+    const override = { ...ctx, config: { ...config, env: { dav: { USER_TIMEZONE: 'America/New_York' } } } };
+    expect(serviceEnv('dav', 'cursor', override).USER_TIMEZONE).toBe('America/New_York');
+  });
+
+  it('refuses a config.json edited by hand that names a server, a secret, or another program', () => {
+    const hostileSets = [
+      { DAV_URL: 'https://evil.example/' },
+      { DAV_TOKEN_COMMAND: 'echo x' },
+      { DAV_AUTH_METHOD: 'bearer' },
+      { LD_PRELOAD: '/tmp/x.so' },
+      { NODE_OPTIONS: '--require=/tmp/x.js' },
+      { node_options: '--require=/tmp/x.js' },
+    ];
+    for (const variables of hostileSets) {
+      const hostile = { ...ctx, config: { ...config, env: { dav: variables } } };
+      expect(() => serviceEnv('dav', 'cursor', hostile), JSON.stringify(variables)).toThrow(/Remove it from/);
+    }
+    // nor widen the folder Mail reads attachments into
+    const widened = { ...ctx, config: { ...config, env: { mail: { JMAP_DOWNLOAD_DIR: '~' } } } };
+    expect(() => serviceEnv('mail', 'cursor', widened)).toThrow(/one folder for files.*Remove it from/);
+  });
+});
+
+describe('parseEnvOption', () => {
+  it('reads one option per variable', () => {
+    expect(parseEnvOption(['dav.DAV_DEFAULT_CALENDAR=XG', 'mail.JMAP_DEFAULT_FROM=jdoe@linagora.com', 'dav.DAV_RECURRING_WRITES=false'])).toEqual({
+      set: { dav: { DAV_DEFAULT_CALENDAR: 'XG', DAV_RECURRING_WRITES: 'false' }, mail: { JMAP_DEFAULT_FROM: 'jdoe@linagora.com' } },
+      unset: {},
+    });
+  });
+
+  it('keeps the value, equal signs included', () => {
+    expect(parseEnvOption(['dav.DAV_SOMETHING=a=b']).set).toEqual({ dav: { DAV_SOMETHING: 'a=b' } });
+  });
+
+  it('reads an empty value as a variable to forget', () => {
+    expect(parseEnvOption(['dav.DAV_DEFAULT_CALENDAR='])).toEqual({ set: {}, unset: { dav: ['DAV_DEFAULT_CALENDAR'] } });
+  });
+
+  it('refuses an unknown service, a lower-case name or a missing equal sign', () => {
+    expect(() => parseEnvOption(['calendar.FOO=1'])).toThrow(/--env takes/);
+    expect(() => parseEnvOption(['dav.lower=1'])).toThrow(/--env takes/);
+    expect(() => parseEnvOption(['dav.NO_EQUALS'])).toThrow(/--env takes/);
+    expect(() => parseEnvOption(['dav.WITH_BREAK=a\nb'])).toThrow(/line break/);
+  });
+
+  it('refuses the variables that name a server or carry a secret', () => {
+    for (const option of [
+      'dav.DAV_URL=https://evil.example/',
+      'dav.DAV_TOKEN_COMMAND=x',
+      'mail.JMAP_PASSWORD=x',
+      'space.TWAKE_SPACE_CLIENT_SECRET=x',
+      'space.TWAKE_SPACE_API_KEY=x',
+      'dav.DAV_AUTH_METHOD=bearer',
+      'dav.DAV_HREF_PREFIX=/dav',
+      'dav.DAV_ORGANIZER_EMAIL=someone@example.com',
+      'dav.DAV_USERNAME=someone',
+      'mail.JMAP_OIDC_SCOPE=openid',
+      'chat.MATRIX_PASSPHRASE=secret',
+    ]) {
+      expect(() => parseEnvOption([option]), option).toThrow(/--env /);
+    }
+  });
+
+  it('lets the last option given for a variable win', () => {
+    expect(parseEnvOption(['dav.DAV_X=1', 'dav.DAV_X='])).toEqual({ set: {}, unset: { dav: ['DAV_X'] } });
+    expect(parseEnvOption(['dav.DAV_X=', 'dav.DAV_X=1'])).toEqual({ set: { dav: { DAV_X: '1' } }, unset: {} });
+  });
+
+  it('accepts only the variables of the server itself, the USER_ ones and the logging ones', () => {
+    for (const option of [
+      'dav.LD_PRELOAD=/tmp/x.so',
+      'dav.DYLD_INSERT_LIBRARIES=/tmp/x.dylib',
+      'dav.COMSPEC=cmd.exe',
+      'dav.TWAKE_AI_HOME=/tmp/x',
+      'dav.NODE_OPTIONS=--require=/tmp/x.js',
+      'mail.NODE_TLS_REJECT_UNAUTHORIZED=0',
+      'space.HTTPS_PROXY=http://127.0.0.1:1',
+      'dav.HOME=/tmp/x',
+      'mail.DAV_DEFAULT_CALENDAR=XG',
+    ]) {
+      expect(() => parseEnvOption([option]), option).toThrow(/is not a variable of/);
+    }
+    for (const option of ['dav.LOG_FORMAT=json', 'dav.LOG_PATH=/tmp/x.log']) {
+      expect(() => parseEnvOption([option]), option).toThrow(/LOG_LEVEL/);
+    }
+    expect(parseEnvOption(['dav.USER_LANGUAGE=en', 'space.USER_TIMEZONE=UTC', 'mail.LOG_LEVEL=debug', 'dav.DAV_ORGANIZER_NAME=Jane Doe']).set).toEqual({
+      dav: { USER_LANGUAGE: 'en', DAV_ORGANIZER_NAME: 'Jane Doe' },
+      space: { USER_TIMEZONE: 'UTC' },
+      mail: { LOG_LEVEL: 'debug' },
+    });
+  });
+
+  it('refuses the store directory mcp-twake-ai keeps per device', () => {
+    expect(() => parseEnvOption(['chat.MATRIX_STORE_DIR=/tmp/x'])).toThrow(/managed by mcp-twake-ai/);
+  });
+
+  it('refuses the folders for files, which Mail, Drive and Chat share and never leave', () => {
+    for (const option of [
+      'mail.JMAP_DOWNLOAD_DIR=~',
+      'drive.TWAKE_DRIVE_DOWNLOAD_DIR=~',
+      'drive.TWAKE_DRIVE_UPLOAD_DIR=~',
+      'chat.MATRIX_DOWNLOAD_DIR=~',
+      'chat.MATRIX_UPLOAD_DIR=~',
+    ]) {
+      expect(() => parseEnvOption([option]), option).toThrow(/one folder for files/);
+    }
+    // the search index of Drive is not a folder the servers read files from
+    expect(parseEnvOption(['drive.TWAKE_DRIVE_CACHE_DIR=/tmp/x']).set).toEqual({ drive: { TWAKE_DRIVE_CACHE_DIR: '/tmp/x' } });
+  });
+
+  it('accepts the settings the servers document', () => {
+    expect(parseEnvOption(['dav.DAV_DEFAULT_CALENDAR=XG', 'mail.JMAP_DEFAULT_FROM=jdoe@linagora.com', 'dav.USER_TIMEZONE=America/New_York']).unset).toEqual({});
   });
 });

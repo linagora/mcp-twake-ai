@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { ServiceId } from './broker.js';
+import { isServiceId, SERVICE_IDS, type ServiceId } from './broker.js';
 import type { TwakeAiConfig } from './config.js';
 import { TwakeAiError } from './errors.js';
 import { checkAgentId, isSafeDeviceId } from './grants.js';
@@ -84,9 +84,25 @@ export function systemTimezone(): string {
  */
 export const FILES_FOLDER = '~/Downloads/Twake';
 
-/** The environment of one MCP server for one agent: URLs, token command, language, time zone, agent-specific settings. */
+/**
+ * The environment of one MCP server for one agent: URLs, token command, language, time zone, agent-specific settings,
+ * then what the user added for this service (`setup --env dav.DAV_DEFAULT_CALENDAR=XG`), which has the last word.
+ */
 export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContext): Record<string, string> {
   checkAgentId(agent);
+  const extra = ctx.config.env?.[service] ?? {};
+  // a config.json edited by hand must not send a token to another server, nor run code in the server
+  for (const name of Object.keys(extra)) {
+    const refusal = EXTRA_ENV_NAME.test(name) ? envNameRefusal(name, service) : `${name} is not an upper-case variable name`;
+    if (refusal) {
+      throw new TwakeAiError('unsupported', `${ctx.paths.configFile} sets ${name} for ${service}: ${refusal}. Remove it from ${ctx.paths.configFile}.`);
+    }
+  }
+  return { ...builtinServiceEnv(service, agent, ctx), ...extra };
+}
+
+/** The environment mcp-twake-ai builds itself, before the user's own variables */
+function builtinServiceEnv(service: ServiceId, agent: string, ctx: CatalogContext): Record<string, string> {
   const { config } = ctx;
   const env = config.environment;
   const common: Record<string, string> = { USER_LANGUAGE: ctx.language, USER_TIMEZONE: ctx.timezone };
@@ -154,4 +170,102 @@ export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContex
       return { TWAKE_PROJECT_URL: url, TWAKE_PROJECT_TOKEN_COMMAND: tokenCommand('project', undefined, ctx), TWAKE_PROJECT_OIDC_ISSUER: env.oidc.issuer, ...common };
     }
   }
+}
+
+/** An environment variable name a user may set: upper case, digits and underscores, as the servers document them */
+const EXTRA_ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
+
+/** A variable a user may not set: it names a server, how to sign in to it, or whose account it is — the account's discovery says so */
+const SERVER_ENV_NAME = /(^|_)(URL|URI|HOMESERVER|AUTH_METHOD|OIDC|HREF_PREFIX|ORGANIZER_EMAIL|USERNAME)($|_)/;
+
+/** A variable a user may not set: it carries a secret, which mcp-twake-ai keeps in the keychain */
+const SECRET_ENV_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|(^|_)KEYS?($|_)/;
+
+/** The only logging variable the servers read */
+const LOGGING_ENV_NAME = /^LOG_LEVEL$/;
+
+/** A variable mcp-twake-ai manages itself for the agent: one encryption store per device */
+const MANAGED_ENV_NAME = /^MATRIX_STORE_DIR$/;
+
+/** A folder the servers write files into or read them from: FILES_FOLDER, shared by Mail, Drive and Chat, and the only one they may touch */
+const FILES_ENV_NAME = /_(DOWNLOAD|UPLOAD)_DIR$/;
+
+/** The prefix of a service's own variables: DAV_ for Twake Calendar, JMAP_ for Twake Mail… */
+export function serviceEnvPrefix(service: ServiceId): string {
+  return `${CATALOG[service].approval}_`;
+}
+
+/**
+ * Why a variable name may not be set, if it may not
+ *
+ * Only the variables of the server itself (`DAV_…` for Twake Calendar), the `USER_…` ones and
+ * `LOG_LEVEL` are accepted: listing the dangerous names of a process environment is a losing game
+ * (LD_PRELOAD, DYLD_INSERT_LIBRARIES, COMSPEC, TWAKE_AI_HOME, NODE_OPTIONS…), and no server has a
+ * business with any of them.
+ *
+ * @param name - the variable name, as it would be given to a server
+ * @param service - the service whose environment receives it
+ * @returns the reason, or undefined when the name is free
+ */
+export function envNameRefusal(name: string, service: ServiceId): string | undefined {
+  const prefix = serviceEnvPrefix(service);
+  if (!name.startsWith(prefix) && !name.startsWith('USER_') && !LOGGING_ENV_NAME.test(name)) {
+    return `${name} is not a variable of ${CATALOG[service].name}: only ${prefix}…, USER_… and LOG_LEVEL may be set`;
+  }
+  if (MANAGED_ENV_NAME.test(name)) return `${name} is managed by mcp-twake-ai, which keeps one store per device`;
+  if (FILES_ENV_NAME.test(name)) {
+    return `${name} is managed by mcp-twake-ai: Mail, Drive and Chat share one folder for files, ${FILES_FOLDER}, and read or write nowhere else`;
+  }
+  if (SERVER_ENV_NAME.test(name)) return `${name} names a server or how to sign in to it: those come from the account, not from the user`;
+  if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
+  return undefined;
+}
+
+/** What `--env` asks for: variables to set, and variables to remove */
+export interface EnvOptionChange {
+  set: Record<string, Record<string, string>>;
+  /** service → variable names */
+  unset: Record<string, string[]>;
+}
+
+/**
+ * Read `--env <service>.<VARIABLE>=<value>` options. An empty value (`dav.DAV_DEFAULT_CALENDAR=`) forgets the variable.
+ *
+ * @param values - one option per variable, as given on the command line
+ * @returns the variables to set and to remove, per service
+ * @throws TwakeAiError('usage') when an option is malformed, names an unknown service, or would set a reserved variable
+ */
+export function parseEnvOption(values: string[]): EnvOptionChange {
+  // the last option given for a variable wins, as on a command line
+  const decisions = new Map<string, { service: string; name: string; value?: string }>();
+  for (const raw of values) {
+    const equals = raw.indexOf('=');
+    const target = equals < 0 ? '' : raw.slice(0, equals);
+    const value = equals < 0 ? '' : raw.slice(equals + 1);
+    const dot = target.indexOf('.');
+    const service = dot < 0 ? '' : target.slice(0, dot);
+    const name = dot < 0 ? '' : target.slice(dot + 1);
+    if (!isServiceId(service) || !EXTRA_ENV_NAME.test(name)) {
+      throw new TwakeAiError(
+        'usage',
+        `--env takes <service>.<VARIABLE>=<value>, with a service among ${SERVICE_IDS.join(', ')}, and an upper-case variable name, not "${raw}".`,
+      );
+    }
+    // an empty value forgets the variable, which needs no other check
+    if (value === '') {
+      decisions.set(`${service}.${name}`, { service, name });
+      continue;
+    }
+    if (/[\r\n\0]/.test(value)) throw new TwakeAiError('usage', `--env ${service}.${name}: a value cannot hold a line break.`);
+    const refusal = envNameRefusal(name, service);
+    if (refusal) throw new TwakeAiError('usage', `--env ${service}.${name}: ${refusal}.`);
+    decisions.set(`${service}.${name}`, { service, name, value });
+  }
+
+  const change: EnvOptionChange = { set: {}, unset: {} };
+  for (const { service, name, value } of decisions.values()) {
+    if (value === undefined) change.unset[service] = [...(change.unset[service] ?? []), name];
+    else change.set[service] = { ...(change.set[service] ?? {}), [name]: value };
+  }
+  return change;
 }
