@@ -224,8 +224,6 @@ export function envNameRefusal(name: string, service: ServiceId): string | undef
   if (MANAGED_ENV_NAME.test(name)) return `${name} is managed by mcp-twake-ai, which keeps one store per device`;
   // the reason that matters most comes first: JMAP_TOKEN_PATH is a secret before being a file
   if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
-  // JMAP_DEFAULT_FROM is taken on purpose: the send tools already accept a sender per message, and
-  // a user may send from one of their aliases. It is not an identity in the sense of MATRIX_USER_ID.
   if (FILES_ENV_NAME.test(name)) {
     return `${name} is managed by mcp-twake-ai: Mail, Drive and Chat share one folder for files, ${FILES_FOLDER}, and take and leave files there`;
   }
@@ -233,6 +231,8 @@ export function envNameRefusal(name: string, service: ServiceId): string | undef
     return `${name} is read by the mail server and appended to every message it writes: a path given by mistake would send that file to every correspondent`;
   }
   if (FILE_ENV_NAME.test(name)) return `${name} names a file the server reads: a pasted path would give it access to a file of this computer`;
+  // JMAP_DEFAULT_FROM is accepted on purpose: the send tools already take a sender per message, and a
+  // user may send from one of their aliases. It does not identify the account as MATRIX_USER_ID does.
   if (IDENTITY_ENV_NAME.test(name)) return `${name} identifies the account: it comes from the sign-in, not from the user`;
   if (SERVER_ENV_NAME.test(name)) return `${name} names a server or how to sign in to it: those come from the account, not from the user`;
   return undefined;

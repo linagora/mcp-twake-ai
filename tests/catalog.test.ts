@@ -225,10 +225,11 @@ describe('serviceEnv: the user\'s own variables', () => {
       const hostile = { ...ctx, config: { ...config, env: { dav: variables } } };
       expect(() => serviceEnv('dav', 'cursor', hostile), JSON.stringify(variables)).toThrow(/Remove it from/);
     }
-    // nor widen the folder Mail reads attachments into, nor point the signature at a private key
+    // nor widen the folder Mail reads attachments into, nor point it at a file, nor name another account
     for (const [service, variables] of [
       ['mail', { JMAP_DOWNLOAD_DIR: '~' }],
       ['mail', { JMAP_SIGNATURE_PATH: '~/.ssh/id_ed25519' }],
+      ['mail', { JMAP_ANYTHING_FILE: '/etc/shadow' }],
       ['chat', { MATRIX_USER_ID: '@someone:linagora.com' }],
     ] as const) {
       const widened = { ...ctx, config: { ...config, env: { [service]: variables } } };
