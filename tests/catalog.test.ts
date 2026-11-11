@@ -225,6 +225,9 @@ describe('serviceEnv: the user\'s own variables', () => {
       const hostile = { ...ctx, config: { ...config, env: { dav: variables } } };
       expect(() => serviceEnv('dav', 'cursor', hostile), JSON.stringify(variables)).toThrow(/Remove it from/);
     }
+    // nor widen the folder Mail reads attachments into
+    const widened = { ...ctx, config: { ...config, env: { mail: { JMAP_DOWNLOAD_DIR: '~' } } } };
+    expect(() => serviceEnv('mail', 'cursor', widened)).toThrow(/one folder for files.*Remove it from/);
   });
 });
 
@@ -300,6 +303,20 @@ describe('parseEnvOption', () => {
 
   it('refuses the store directory mcp-twake-ai keeps per device', () => {
     expect(() => parseEnvOption(['chat.MATRIX_STORE_DIR=/tmp/x'])).toThrow(/managed by mcp-twake-ai/);
+  });
+
+  it('refuses the folders for files, which Mail, Drive and Chat share and never leave', () => {
+    for (const option of [
+      'mail.JMAP_DOWNLOAD_DIR=~',
+      'drive.TWAKE_DRIVE_DOWNLOAD_DIR=~',
+      'drive.TWAKE_DRIVE_UPLOAD_DIR=~',
+      'chat.MATRIX_DOWNLOAD_DIR=~',
+      'chat.MATRIX_UPLOAD_DIR=~',
+    ]) {
+      expect(() => parseEnvOption([option]), option).toThrow(/one folder for files/);
+    }
+    // the search index of Drive is not a folder the servers read files from
+    expect(parseEnvOption(['drive.TWAKE_DRIVE_CACHE_DIR=/tmp/x']).set).toEqual({ drive: { TWAKE_DRIVE_CACHE_DIR: '/tmp/x' } });
   });
 
   it('accepts the settings the servers document', () => {

@@ -187,6 +187,9 @@ const LOGGING_ENV_NAME = /^LOG_LEVEL$/;
 /** A variable mcp-twake-ai manages itself for the agent: one encryption store per device */
 const MANAGED_ENV_NAME = /^MATRIX_STORE_DIR$/;
 
+/** A folder the servers write files into or read them from: FILES_FOLDER, shared by Mail, Drive and Chat, and the only one they may touch */
+const FILES_ENV_NAME = /_(DOWNLOAD|UPLOAD)_DIR$/;
+
 /** The prefix of a service's own variables: DAV_ for Twake Calendar, JMAP_ for Twake Mail… */
 export function serviceEnvPrefix(service: ServiceId): string {
   return `${CATALOG[service].approval}_`;
@@ -210,6 +213,9 @@ export function envNameRefusal(name: string, service: ServiceId): string | undef
     return `${name} is not a variable of ${CATALOG[service].name}: only ${prefix}…, USER_… and LOG_LEVEL may be set`;
   }
   if (MANAGED_ENV_NAME.test(name)) return `${name} is managed by mcp-twake-ai, which keeps one store per device`;
+  if (FILES_ENV_NAME.test(name)) {
+    return `${name} is managed by mcp-twake-ai: Mail, Drive and Chat share one folder for files, ${FILES_FOLDER}, and read or write nowhere else`;
+  }
   if (SERVER_ENV_NAME.test(name)) return `${name} names a server or how to sign in to it: those come from the account, not from the user`;
   if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
   return undefined;
