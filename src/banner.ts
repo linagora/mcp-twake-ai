@@ -43,6 +43,9 @@ export function logoColor(u: number, v: number): Rgb {
   return color.map(Math.round) as Rgb;
 }
 
+const WHITE: Rgb = [255, 255, 255];
+/** How much white softens the logo's colors in the banner. */
+const SOFTEN = 0.25;
 const GREY = '\x1b[38;2;154;164;181m';
 const RESET = '\x1b[0m';
 const INDENT = '  ';
@@ -61,7 +64,8 @@ export function renderBanner(o: { version: string; color: boolean }): string {
     [...row]
       .map((char, c) => {
         if (char === ' ') return char;
-        const [red, green, blue] = logoColor(c / (width - 1), r / (rows.length - 1));
+        // the logo's colors, a little lighter: softer in a terminal, on a dark background as on a light one
+        const [red, green, blue] = mix(logoColor(c / (width - 1), r / (rows.length - 1)), WHITE, SOFTEN).map(Math.round);
         return `\x1b[38;2;${red};${green};${blue}m${char}`;
       })
       .join('') + RESET;

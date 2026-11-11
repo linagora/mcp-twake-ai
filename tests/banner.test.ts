@@ -30,11 +30,11 @@ describe('the banner', () => {
 
   it('colors the letters like the logo, from its top-left corner to its bottom-right one, with a grey subtitle', () => {
     const banner = renderBanner({ version: '1.0.0', color: true });
-    // the first letter of MCP takes the green of the logo, the last one of TWAKE.AI its red
-    expect(banner).toContain(`  ${ESC}38;2;79;181;0m█`);
+    // the first letter of MCP takes the green of the logo, the last one of TWAKE.AI its red, both softened with 25 % white
+    expect(banner).toContain(`  ${ESC}38;2;123;200;64m█`);
     const plain = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, '');
     const lastArtLine = banner.split('\n').filter((line) => plain(line).includes('╚═╝')).at(-1)!;
-    expect(lastArtLine).toContain(`${ESC}38;2;231;59;45m╝`);
+    expect(lastArtLine).toContain(`${ESC}38;2;237;108;98m╝`);
     expect(banner).toContain(`${ESC}38;2;154;164;181m${SETS_UP}`);
   });
 
