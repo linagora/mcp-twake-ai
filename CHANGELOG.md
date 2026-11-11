@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
 ### Added
 - Mail, Drive and Chat share one folder for files, `~/Downloads/Twake`: an attachment Mail saves can go to the Drive or a Chat room without passing through the model. Requires mcp-twake-mail 4.2.0 (`download_attachment` with `save: true`), now the pinned version.
 
