@@ -435,12 +435,12 @@ describe('main: Twake Drive and Twake Chat', () => {
 
     const dry = captureIo();
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--env', option], dry, deps)).toBe(0);
-    expect(dry.out).toContain(`${option} would be set`);
+    expect(dry.out).toContain(`would set ${option}`);
     expect((await loadConfig(deps.paths))!.env).toBeUndefined();
 
     const io = captureIo();
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--env', option], io, deps)).toBe(0);
-    expect(io.out).toContain(`Environment: ${option} set`);
+    expect(io.out).toContain(`set ${option}`);
     expect((await loadConfig(deps.paths))!.env).toEqual({ mail: { JMAP_DEFAULT_FROM: 'jdoe@example.com' } });
 
     // a later run without --env keeps them
@@ -450,7 +450,8 @@ describe('main: Twake Drive and Twake Chat', () => {
     // an empty value forgets the variable
     const forget = captureIo();
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--env', 'mail.JMAP_DEFAULT_FROM='], forget, deps)).toBe(0);
-    expect(forget.out).toContain('forgotten');
+    expect(forget.out).toContain('forgot');
+    expect(forget.out).not.toContain('would');
     expect((await loadConfig(deps.paths))!.env).toBeUndefined();
   });
 

@@ -166,6 +166,9 @@ const SERVER_ENV_NAME = /(^|_)(URL|URI|HOMESERVER|AUTH_METHOD|OIDC_ISSUER|CLIENT
 /** A variable a user may not set: it carries a secret, which mcp-twake-ai keeps in the keychain */
 const SECRET_ENV_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|(^|_)KEYS?($|_)/;
 
+/** A variable a user may not set: Node.js reads it before the server, and it can run code or redirect its traffic */
+const RUNTIME_ENV_NAME = /^NODE_|(^|_)PROXY($|_)/;
+
 /**
  * Why a variable name may not be set, if it may not
  *
@@ -173,6 +176,7 @@ const SECRET_ENV_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|(^|_)KEYS?($|_)
  * @returns the reason, or undefined when the name is free
  */
 export function envNameRefusal(name: string): string | undefined {
+  if (RUNTIME_ENV_NAME.test(name)) return `${name} is read by Node.js itself, before the server: it could run code or redirect its traffic`;
   if (SERVER_ENV_NAME.test(name)) return `${name} names a server or how to sign in to it: those come from the account, not from the user`;
   if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
   return undefined;
@@ -193,7 +197,8 @@ export interface EnvOptionChange {
  * @throws TwakeAiError('usage') when an option is malformed, names an unknown service, or would set a reserved variable
  */
 export function parseEnvOption(values: string[]): EnvOptionChange {
-  const change: EnvOptionChange = { set: {}, unset: {} };
+  // the last option given for a variable wins, as on a command line
+  const decisions = new Map<string, { service: string; name: string; value?: string }>();
   for (const raw of values) {
     const equals = raw.indexOf('=');
     const target = equals < 0 ? '' : raw.slice(0, equals);
@@ -204,18 +209,24 @@ export function parseEnvOption(values: string[]): EnvOptionChange {
     if (!isServiceId(service) || !EXTRA_ENV_NAME.test(name)) {
       throw new TwakeAiError(
         'usage',
-        `--env takes <service>.<VARIABLE>=<value>, with a service among ${SERVICE_IDS.join(', ')} and an upper-case variable name, not "${raw}".`,
+        `--env takes <service>.<VARIABLE>=<value>, with a service among ${SERVICE_IDS.join(', ')}, and an upper-case variable name, not "${raw}".`,
       );
     }
-    // an empty value removes the variable, which needs no check
+    // an empty value forgets the variable, which needs no other check
     if (value === '') {
-      change.unset[service] = [...(change.unset[service] ?? []), name];
+      decisions.set(`${service}.${name}`, { service, name });
       continue;
     }
     if (/[\r\n\0]/.test(value)) throw new TwakeAiError('usage', `--env ${service}.${name}: a value cannot hold a line break.`);
     const refusal = envNameRefusal(name);
     if (refusal) throw new TwakeAiError('usage', `--env ${service}.${name}: ${refusal}.`);
-    change.set[service] = { ...(change.set[service] ?? {}), [name]: value };
+    decisions.set(`${service}.${name}`, { service, name, value });
+  }
+
+  const change: EnvOptionChange = { set: {}, unset: {} };
+  for (const { service, name, value } of decisions.values()) {
+    if (value === undefined) change.unset[service] = [...(change.unset[service] ?? []), name];
+    else change.set[service] = { ...(change.set[service] ?? {}), [name]: value };
   }
   return change;
 }

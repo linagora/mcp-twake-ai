@@ -27,7 +27,7 @@ import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
 import { fileURLToPath } from 'node:url';
-import { detectLanguage, parseEnvOption, serviceEnv, systemTimezone, type CatalogContext } from './catalog.js';
+import { detectLanguage, parseEnvOption, serviceEnv, systemTimezone, type CatalogContext, type EnvOptionChange } from './catalog.js';
 import { needsConsent, planEntries, wantedEntries, type ActionKind, type EntryAction } from './agents/entries.js';
 import { applyAgent, createAdapters, detectAgents, recordOwned } from './agents/index.js';
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
@@ -420,6 +420,8 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
       strict: true,
     }),
   );
+  // checked before anything else: a mistyped option must not sign in or write config.json first
+  const envChange = values.env === undefined ? undefined : parseEnvOption(values.env);
   const guided = values.agents === undefined && !values.yes && d.interactive;
   if (guided && (values.services !== undefined || values.force || values.env !== undefined)) {
     throw new TwakeAiError('usage', `--services, --force and --env go with --agents: without them, setup asks.\n\n${USAGE}`);
@@ -454,7 +456,7 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     if (!isServiceId(service)) throw new TwakeAiError('usage', `"${service}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
   }
   const force = values.force ?? false;
-  if (values.env !== undefined) await storeExtraEnv(values.env, values.yes ?? false, io, d);
+  if (envChange) await storeExtraEnv(envChange, values.yes ?? false, io, d);
   const request = { agents: names as AgentId[], services: services as ServiceId[] | undefined, apply: values.yes ?? false, consent: () => force, noBrowser: values['no-browser'] };
   return (await runSetup(request, io, d)).code;
 }
@@ -466,14 +468,16 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
  *
  * Nothing is stored without --yes: the setup changes nothing before the user confirms it.
  */
-async function storeExtraEnv(options: string[], apply: boolean, io: Io, d: CliDeps): Promise<void> {
-  const change = parseEnvOption(options);
-  const listed = [
-    ...Object.entries(change.set).flatMap(([service, variables]) => Object.entries(variables).map(([name, value]) => `${service}.${name}=${value}`)),
-    ...Object.entries(change.unset).flatMap(([service, names]) => names.map((name) => `${service}.${name} (forgotten)`)),
-  ].join(', ');
+async function storeExtraEnv(change: EnvOptionChange, apply: boolean, io: Io, d: CliDeps): Promise<void> {
+  const sets = Object.entries(change.set).flatMap(([service, variables]) => Object.entries(variables).map(([name, value]) => `${service}.${name}=${value}`));
+  const forgets = Object.entries(change.unset).flatMap(([service, names]) => names.map((name) => `${service}.${name}`));
+  const said = [
+    ...(sets.length > 0 ? [`${apply ? 'set' : 'would set'} ${sets.join(', ')}`] : []),
+    ...(forgets.length > 0 ? [`${apply ? 'forgot' : 'would forget'} ${forgets.join(', ')}`] : []),
+  ].join(' and ');
+  const where = apply ? ` for the agents in ${d.paths.configFile}` : ': add --yes to do it';
   if (!apply) {
-    io.stdout(`Environment: ${listed} would be set for the agents: add --yes to do it.\n`);
+    io.stdout(`Environment: ${said}${where}.\n`);
     return;
   }
   const config = await loadConfig(d.paths);
@@ -486,7 +490,7 @@ async function storeExtraEnv(options: string[], apply: boolean, io: Io, d: CliDe
     if (env[service] && Object.keys(env[service]).length === 0) delete env[service];
   }
   await saveConfig(d.paths, { ...config, env: Object.keys(env).length > 0 ? env : undefined });
-  io.stdout(`Environment: ${listed} set for the agents in ${d.paths.configFile}.\n`);
+  io.stdout(`Environment: ${said}${where}.\n`);
 }
 
 /** Plans, and with apply connects, installs and writes, the agents of a setup; shared by both setups. */

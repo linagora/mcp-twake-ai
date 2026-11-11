@@ -234,6 +234,17 @@ describe('parseEnvOption', () => {
     }
   });
 
+  it('lets the last option given for a variable win', () => {
+    expect(parseEnvOption(['dav.X=1', 'dav.X='])).toEqual({ set: {}, unset: { dav: ['X'] } });
+    expect(parseEnvOption(['dav.X=', 'dav.X=1'])).toEqual({ set: { dav: { X: '1' } }, unset: {} });
+  });
+
+  it('refuses the variables Node.js reads before the server', () => {
+    for (const option of ['dav.NODE_OPTIONS=--require=/tmp/x.js', 'mail.NODE_TLS_REJECT_UNAUTHORIZED=0', 'space.HTTPS_PROXY=http://127.0.0.1:1']) {
+      expect(() => parseEnvOption([option]), option).toThrow(/Node\.js itself/);
+    }
+  });
+
   it('accepts the settings the servers document', () => {
     expect(parseEnvOption(['dav.DAV_DEFAULT_CALENDAR=XG', 'mail.JMAP_DEFAULT_FROM=jdoe@linagora.com', 'dav.USER_TIMEZONE=America/New_York']).unset).toEqual({});
   });
