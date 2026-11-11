@@ -459,12 +459,20 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
   const apply = values.yes ?? false;
   const envSaid = envChange ? await storeExtraEnv(envChange, apply, d) : undefined;
   const request = { agents: names as AgentId[], services: services as ServiceId[] | undefined, apply, consent: () => force, noBrowser: values['no-browser'] };
-  const code = (await runSetup(request, io, d)).code;
   // said last, so that a setup that stops half-way does not claim the variables are in place for the agents
-  if (envSaid) {
+  const sayEnv = (code: number | undefined) => {
+    if (!envSaid) return;
     const where = apply ? ` in ${d.paths.configFile}${code === 0 ? '' : ', but the setup itself did not complete'}` : ': add --yes to do it';
     io.stdout(`Environment: ${envSaid}${where}.\n`);
+  };
+  let code: number;
+  try {
+    code = (await runSetup(request, io, d)).code;
+  } catch (error) {
+    sayEnv(undefined);
+    throw error;
   }
+  sayEnv(code);
   return code;
 }
 

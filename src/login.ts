@@ -100,7 +100,7 @@ export async function loginOidc(request: LoginRequest, deps: LoginDeps): Promise
     // several of them name a calendar, an address or a prefix of the previous account: another account starts without them
     env: sameAccount ? previous?.env : undefined,
   };
-  if (previous?.env && !sameAccount) deps.print('The variables set with setup --env belonged to the previous account: they are forgotten.');
+  if (previous?.env && !sameAccount) deps.print('The variables set with setup --env belonged to the previous sign-in: they are forgotten.');
   await saveConfig(deps.paths, config);
   return config;
 }

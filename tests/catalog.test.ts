@@ -246,7 +246,6 @@ describe('parseEnvOption', () => {
       'dav.DAV_AUTH_METHOD=bearer',
       'dav.DAV_HREF_PREFIX=/dav',
       'dav.DAV_ORGANIZER_EMAIL=someone@example.com',
-      'dav.DAV_ORGANIZER_NAME=Someone',
       'dav.DAV_USERNAME=someone',
       'mail.JMAP_OIDC_SCOPE=openid',
       'chat.MATRIX_PASSPHRASE=secret',
@@ -277,8 +276,8 @@ describe('parseEnvOption', () => {
     for (const option of ['dav.LOG_FORMAT=json', 'dav.LOG_PATH=/tmp/x.log']) {
       expect(() => parseEnvOption([option]), option).toThrow(/LOG_LEVEL/);
     }
-    expect(parseEnvOption(['dav.USER_LANGUAGE=en', 'space.USER_TIMEZONE=UTC', 'mail.LOG_LEVEL=debug']).set).toEqual({
-      dav: { USER_LANGUAGE: 'en' },
+    expect(parseEnvOption(['dav.USER_LANGUAGE=en', 'space.USER_TIMEZONE=UTC', 'mail.LOG_LEVEL=debug', 'dav.DAV_ORGANIZER_NAME=Jane Doe']).set).toEqual({
+      dav: { USER_LANGUAGE: 'en', DAV_ORGANIZER_NAME: 'Jane Doe' },
       space: { USER_TIMEZONE: 'UTC' },
       mail: { LOG_LEVEL: 'debug' },
     });

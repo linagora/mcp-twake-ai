@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
-- `setup --env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment, for settings the servers document but mcp-twake-ai does not know (for example `dav.DAV_DEFAULT_CALENDAR`, so that an assistant reads your calendars instead of every calendar shared with you). The variables are kept in `config.json`, a sign-in to the same account keeps them, and every entry, `run`, `status --env` and `export` builds them; an empty value forgets one. Only the variables of the server itself (`DAV_…`, `JMAP_…`…), the `USER_…` ones and the logging ones are accepted; names that point at a server, say how to sign in to it, or may carry a secret are refused.
+- `setup --env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment, for settings the servers document but mcp-twake-ai does not know (for example `dav.DAV_DEFAULT_CALENDAR`, so that an assistant reads your calendars instead of every calendar shared with you). The variables are kept in `config.json`, a sign-in to the same account keeps them, and every entry, `run`, `status --env` and `export` builds them; an empty value forgets one. Only the variables of the server itself (`DAV_…`, `JMAP_…`…), the `USER_…` ones and `LOG_LEVEL` are accepted; names that point at a server, say how to sign in to it, or may carry a secret are refused.
 
 ### Changed
 

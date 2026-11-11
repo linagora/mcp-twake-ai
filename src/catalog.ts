@@ -161,7 +161,7 @@ function builtinServiceEnv(service: ServiceId, agent: string, ctx: CatalogContex
 const EXTRA_ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
 
 /** A variable a user may not set: it names a server, how to sign in to it, or whose account it is — the account's discovery says so */
-const SERVER_ENV_NAME = /(^|_)(URL|URI|HOMESERVER|AUTH_METHOD|OIDC|HREF_PREFIX|ORGANIZER_(EMAIL|NAME)|USERNAME)($|_)/;
+const SERVER_ENV_NAME = /(^|_)(URL|URI|HOMESERVER|AUTH_METHOD|OIDC|HREF_PREFIX|ORGANIZER_EMAIL|USERNAME)($|_)/;
 
 /** A variable a user may not set: it carries a secret, which mcp-twake-ai keeps in the keychain */
 const SECRET_ENV_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|(^|_)KEYS?($|_)/;

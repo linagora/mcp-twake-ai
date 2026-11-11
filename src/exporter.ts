@@ -69,10 +69,14 @@ export async function exportFiles(options: ExportOptions, ctx: CatalogContext): 
     'hermes.yaml': stringifyYaml({
       mcp_servers: byName(hermesEntryName, (entry, service) => ({
         // for the agent id hermes the environment already waits longer for approvals (catalog): the entry stays the one setup writes
-        // the entry's own environment comes last: a timeout the user set with --env wins over the one Hermes needs
+        // the entry's own environment comes last, and a timeout the user set with --env wins over the one Hermes needs
         ...(options.agent === 'hermes'
           ? withEnv(entry)
-          : withEnv(entry, { [`${CATALOG[service].approval}_APPROVAL_TIMEOUT_MS`]: HERMES_APPROVAL_TIMEOUT_MS, ...entry.env })),
+          : withEnv(entry, {
+              [`${CATALOG[service].approval}_APPROVAL_TIMEOUT_MS`]:
+                ctx.config.env?.[service]?.[`${CATALOG[service].approval}_APPROVAL_TIMEOUT_MS`] ?? HERMES_APPROVAL_TIMEOUT_MS,
+              ...entry.env,
+            })),
         timeout: 420,
         elicitation: { enabled: true, timeout: 300 },
       })),
