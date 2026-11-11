@@ -61,7 +61,7 @@ export async function waitForCallback(options: LoopbackOptions): Promise<Callbac
   redirectUri = `http://127.0.0.1:${port}/callback`;
   const timer = setTimeout(() => {
     const minutes = Math.max(1, Math.round(options.timeoutMs / 60_000));
-    settle.reject(new TwakeAiError('login_cancelled', `No sign-in within ${minutes} minute(s): run twake-ai login again.`));
+    settle.reject(new TwakeAiError('login_cancelled', `No sign-in within ${minutes} minute(s): run mcp-twake-ai login again.`));
   }, options.timeoutMs);
   try {
     await options.onListening(redirectUri);
@@ -93,7 +93,7 @@ async function listenOnFirstFreePort(server: Server, ports: number[]): Promise<n
   }
   throw new TwakeAiError(
     'ports_busy',
-    `Ports ${ports.join(', ')} are all in use on 127.0.0.1: free one of them, or run twake-ai login --no-browser.`,
+    `Ports ${ports.join(', ')} are all in use on 127.0.0.1: free one of them, or run mcp-twake-ai login --no-browser.`,
   );
 }
 

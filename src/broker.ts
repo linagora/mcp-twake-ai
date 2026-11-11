@@ -22,7 +22,7 @@ export const EXPIRY_MARGIN_S = 60;
 /** An MCP server asks again at least every hour, so a long-lived token that was revoked is noticed. */
 export const MAX_ADVERTISED_TTL_S = 3600;
 
-/** What `twake-ai token` prints: the format every Twake.ai MCP server reads from *_TOKEN_COMMAND. */
+/** What `mcp-twake-ai token` prints: the format every Twake.ai MCP server reads from *_TOKEN_COMMAND. */
 export interface TokenOutput {
   access_token: string;
   expires_at: number;
@@ -43,10 +43,10 @@ export interface BrokerDeps {
 export async function getToken(service: ServiceId, deps: BrokerDeps, agent?: string): Promise<TokenOutput> {
   if (service === 'drive') return advertise(await cozyAccessToken(deps), deps);
   if (service === 'chat') {
-    if (agent === undefined) throw new TwakeAiError('usage', 'A Twake Chat token belongs to an agent: run `twake-ai token chat --agent <id>`.');
+    if (agent === undefined) throw new TwakeAiError('usage', 'A Twake Chat token belongs to an agent: run `mcp-twake-ai token chat --agent <id>`.');
     const grant = matrixGrant(agent);
     const device = deps.config.chat?.[agent];
-    if (!device) throw new TwakeAiError('login_required', `Twake Chat is not connected for ${agent}: run \`twake-ai login --chat --agent ${agent}\`.`);
+    if (!device) throw new TwakeAiError('login_required', `Twake Chat is not connected for ${agent}: run \`mcp-twake-ai login --chat --agent ${agent}\`.`);
     return { ...advertise(await matrixAccessToken(agent, grant, deps), deps), device_id: device.deviceId, user_id: device.userId };
   }
   return advertise(await oidcAccessToken(deps), deps);
@@ -75,7 +75,7 @@ async function cachedOrRenewed(d: BrokerDeps, grant: string, renew: () => Promis
 function oidcAccessToken(d: BrokerDeps): Promise<CachedToken> {
   return cachedOrRenewed(d, OIDC_GRANT, async () => {
     const refreshToken = await d.vault.get(OIDC_REFRESH_KEY);
-    if (!refreshToken) throw new TwakeAiError('login_required', 'No Twake session on this computer: run `twake-ai login`.');
+    if (!refreshToken) throw new TwakeAiError('login_required', 'No Twake session on this computer: run `mcp-twake-ai login`.');
     const tokens = await refreshTokens(d.config.environment.oidc, d.config.oidc, refreshToken, { ...d.http, now: d.now });
     // the new refresh token first: once the IdP has rotated it, the old one is spent
     if (tokens.refreshToken && tokens.refreshToken !== refreshToken) await d.vault.set(OIDC_REFRESH_KEY, tokens.refreshToken);
@@ -86,7 +86,7 @@ function oidcAccessToken(d: BrokerDeps): Promise<CachedToken> {
 function cozyAccessToken(d: BrokerDeps): Promise<CachedToken> {
   const instance = d.config.environment.cozy.instance;
   const drive = d.config.drive;
-  const notConnected = new TwakeAiError('login_required', 'Twake Drive is not connected on this computer: run `twake-ai login --drive`.');
+  const notConnected = new TwakeAiError('login_required', 'Twake Drive is not connected on this computer: run `mcp-twake-ai login --drive`.');
   if (!instance || !drive) return Promise.reject(notConnected);
   return cachedOrRenewed(d, COZY_GRANT, async () => {
     const [clientSecret, registrationToken, refreshToken] = await Promise.all([
@@ -111,7 +111,7 @@ function matrixAccessToken(agent: string, grant: string, d: BrokerDeps): Promise
       return { accessToken: renewed.accessToken, expiresAt: renewed.expiresAt ?? NEVER_EXPIRES };
     }
     const accessToken = await d.vault.get(matrixKey(agent, 'access_token'));
-    if (!accessToken) throw new TwakeAiError('login_required', `Twake Chat is not connected for ${agent}: run \`twake-ai login --chat --agent ${agent}\`.`);
+    if (!accessToken) throw new TwakeAiError('login_required', `Twake Chat is not connected for ${agent}: run \`mcp-twake-ai login --chat --agent ${agent}\`.`);
     return { accessToken, expiresAt: NEVER_EXPIRES };
   });
 }

@@ -22,7 +22,7 @@ export function currentPlatform(): PlatformInfo {
   return { platform: process.platform, env: process.env, home: homedir() };
 }
 
-/** Where twake-ai keeps its files. TWAKE_AI_HOME groups them all under one directory (tests, several accounts). */
+/** Where mcp-twake-ai keeps its files. TWAKE_AI_HOME groups them all under one directory (tests, several accounts). */
 export function appPaths(p: PlatformInfo = currentPlatform()): AppPaths {
   const path = p.platform === 'win32' ? win32 : posix;
   let configDir: string;

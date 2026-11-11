@@ -1,10 +1,10 @@
-# twake-ai
+# mcp-twake-ai
 
 **Connect the Twake.ai MCP servers to your AI agent with one sign-in.**
 
-`twake-ai` is the token broker the six [Twake.ai MCP servers](https://github.com/linagora/mcp-twake-project#part-of-twakeai) refer to as `my-token-broker`. It signs you in once at your Twake.ai identity provider, keeps the refresh token in your operating system's keychain (macOS Keychain, Windows Credential Manager, Secret Service), and prints a fresh access token whenever an MCP server asks for one.
+`mcp-twake-ai` is the token broker the six [Twake.ai MCP servers](https://github.com/linagora/mcp-twake-project#part-of-twakeai) refer to as `my-token-broker`. It signs you in once at your Twake.ai identity provider, keeps the refresh token in your operating system's keychain (macOS Keychain, Windows Credential Manager, Secret Service), and prints a fresh access token whenever an MCP server asks for one.
 
-> **Status: early.** This version serves the six Twake.ai services (Mail, Calendar and contacts, Drive, Chat, Space, Project), starts their MCP servers (`twake-ai run`) and exports their configuration for any agent (`twake-ai export`). Writing the configuration of each agent for you (`twake-ai setup`) comes next.
+> **Status: early.** This version serves the six Twake.ai services (Mail, Calendar and contacts, Drive, Chat, Space, Project), starts their MCP servers (`mcp-twake-ai run`) and exports their configuration for any agent (`mcp-twake-ai export`). Writing the configuration of each agent for you (`mcp-twake-ai setup`) comes next.
 
 ## Requirements
 
@@ -15,50 +15,50 @@
 ## Install and sign in
 
 ```bash
-npm install -g twake-ai
-twake-ai login --email jane.doe@example.com
+npm install -g mcp-twake-ai
+mcp-twake-ai login --email jane.doe@example.com
 ```
 
-The MCP servers call `twake-ai` on their own, long after you signed in: it has to stay installed (`npx` would not leave a `twake-ai` command behind).
+The MCP servers call `mcp-twake-ai` on their own, long after you signed in: it has to stay installed (`npx` would not leave a `mcp-twake-ai` command behind).
 
-`twake-ai` finds your Twake.ai services from your address, opens your browser to sign in, and stores the session. Over SSH or without a display it shows a code to enter from another device instead (`--no-browser` forces it).
+`mcp-twake-ai` finds your Twake.ai services from your address, opens your browser to sign in, and stores the session. Over SSH or without a display it shows a code to enter from another device instead (`--no-browser` forces it).
 
 ## Use it from an MCP server
 
-Every Twake.ai MCP server takes a command that prints a token. Give it the absolute path of `twake-ai` (`command -v twake-ai` prints it): some agents, such as Claude Desktop started from the Finder, do not see your `PATH`.
+Every Twake.ai MCP server takes a command that prints a token. Give it the absolute path of `mcp-twake-ai` (`command -v mcp-twake-ai` prints it): some agents, such as Claude Desktop started from the Finder, do not see your `PATH`.
 
 ```bash
 claude mcp add twake-project --scope user \
   -e TWAKE_PROJECT_URL=https://projects.example.com \
-  -e "TWAKE_PROJECT_TOKEN_COMMAND=$(command -v twake-ai) token project" \
+  -e "TWAKE_PROJECT_TOKEN_COMMAND=$(command -v mcp-twake-ai) token project" \
   -e TWAKE_PROJECT_OIDC_ISSUER=https://sso.example.com/ \
   -- npx -y mcp-twake-project
 ```
 
-`twake-ai token <mail|dav|space|project>` prints `{"access_token": "...", "expires_at": <epoch s>}`. It serves the cached token while it is valid for more than 60 seconds, and otherwise renews it under a lock shared by every process, so several servers in several agents never spend the same refresh token twice. When the session has expired it exits with an error that says to run `twake-ai login`, which signs you in again with the same identity provider client.
+`mcp-twake-ai token <mail|dav|space|project>` prints `{"access_token": "...", "expires_at": <epoch s>}`. It serves the cached token while it is valid for more than 60 seconds, and otherwise renews it under a lock shared by every process, so several servers in several agents never spend the same refresh token twice. When the session has expired it exits with an error that says to run `mcp-twake-ai login`, which signs you in again with the same identity provider client.
 
-Every address `twake-ai` discovers must use HTTPS (plain http is accepted only for `localhost`), and the identity provider's discovery document must speak for the issuer your domain announces.
+Every address `mcp-twake-ai` discovers must use HTTPS (plain http is accepted only for `localhost`), and the identity provider's discovery document must speak for the issuer your domain announces.
 
 ## Twake Drive and Twake Chat
 
 ```bash
-twake-ai login --drive                 # registers "Twake AI" on your Twake Drive and connects it
-twake-ai login --chat --agent hermes   # gives that agent its own Twake Chat device
+mcp-twake-ai login --drive                 # registers "Twake AI" on your Twake Drive and connects it
+mcp-twake-ai login --chat --agent hermes   # gives that agent its own Twake Chat device
 ```
 
-- **Twake Drive** has its own sign-in (cozy-stack OAuth). Your Twake session is already open, so the browser only asks you to accept the permissions. `twake-ai token drive` then serves Drive tokens.
-- **Twake Chat** encrypts messages end to end, and the encryption keys belong to a device. Each agent therefore gets its own device, "Twake AI · <agent>", listed in your Twake Chat sessions. `twake-ai token chat --agent hermes` prints the token together with its `device_id` and `user_id`, as mcp-twake-chat expects. Signing in again for the same agent replaces its device and logs the old one out.
-- **Over SSH or without a display:** `twake-ai` prints the address to open on a phone or another computer. At the end, the browser shows a page that cannot load: paste its address back into the terminal.
+- **Twake Drive** has its own sign-in (cozy-stack OAuth). Your Twake session is already open, so the browser only asks you to accept the permissions. `mcp-twake-ai token drive` then serves Drive tokens.
+- **Twake Chat** encrypts messages end to end, and the encryption keys belong to a device. Each agent therefore gets its own device, "Twake AI · <agent>", listed in your Twake Chat sessions. `mcp-twake-ai token chat --agent hermes` prints the token together with its `device_id` and `user_id`, as mcp-twake-chat expects. Signing in again for the same agent replaces its device and logs the old one out.
+- **Over SSH or without a display:** `mcp-twake-ai` prints the address to open on a phone or another computer. At the end, the browser shows a page that cannot load: paste its address back into the terminal.
 
-## Any agent: `twake-ai export`
+## Any agent: `mcp-twake-ai export`
 
 ```bash
-twake-ai export --agent zed                         # every service found and connected
-twake-ai export --agent cursor --services mail,chat --out ./cursor-config
-twake-ai export --agent zed --raw                   # the servers and their full environment
+mcp-twake-ai export --agent zed                         # every service found and connected
+mcp-twake-ai export --agent cursor --services mail,chat --out ./cursor-config
+mcp-twake-ai export --agent zed --raw                   # the servers and their full environment
 ```
 
-`export` installs the pinned Twake.ai MCP servers into twake-ai's private folder, creates the agent's Twake Chat device if needed, and writes `mcpServers.json` (Claude Desktop, Cursor, Windsurf, Cline, Gemini CLI…), `vscode-mcp.json`, `hermes.yaml`, `codex.toml`, `claude-code.sh` and one `<service>.env` per service, with a README saying where each goes. By default the entries start `twake-ai run <service> --agent <id>`, which builds the server's environment (URLs, token command, language, time zone); variables already set in the agent's environment win. No file holds a secret.
+`export` installs the pinned Twake.ai MCP servers into mcp-twake-ai's private folder, creates the agent's Twake Chat device if needed, and writes `mcpServers.json` (Claude Desktop, Cursor, Windsurf, Cline, Gemini CLI…), `vscode-mcp.json`, `hermes.yaml`, `codex.toml`, `claude-code.sh` and one `<service>.env` per service, with a README saying where each goes. By default the entries start `mcp-twake-ai run <service> --agent <id>`, which builds the server's environment (URLs, token command, language, time zone); variables already set in the agent's environment win. No file holds a secret.
 
 ## Files
 

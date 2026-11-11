@@ -33,7 +33,7 @@ const config: TwakeAiConfig = {
 async function context(): Promise<CatalogContext> {
   const { paths } = await tempPaths();
   for (const service of ['mail', 'project', 'chat'] as const) await installFakeMcp(paths, service);
-  return { config, paths, nodePath: '/usr/bin/node', cliPath: '/opt/twake-ai/build/bin.js', language: 'en', timezone: 'UTC' };
+  return { config, paths, nodePath: '/usr/bin/node', cliPath: '/opt/twake-ai/build/bin.js', platform: 'linux', language: 'en', timezone: 'UTC' };
 }
 
 describe('exportFiles', () => {
@@ -53,6 +53,12 @@ describe('exportFiles', () => {
     expect(files['claude-code.sh']).toContain(`claude mcp add-json --scope user twake-mail '{"type":"stdio","command":"/usr/bin/node"`);
     expect(files['mail.env']).toContain(`JMAP_SESSION_URL='https://jmap.linagora.com/jmap/session'`);
     expect(files['README.md']).toContain('mcpServers.json');
+  });
+
+  it('writes commands.txt for cmd.exe on Windows', async () => {
+    const ctx = { ...(await context()), platform: 'win32' as const, nodePath: 'C:\\Program Files\\nodejs\\node.exe', cliPath: 'C:\\npm\\bin.js' };
+    const files = await exportFiles({ agent: 'zed', services: ['mail'], raw: false }, ctx);
+    expect(files['commands.txt']).toContain('"C:\\Program Files\\nodejs\\node.exe" "C:\\npm\\bin.js" "run" "mail" "--agent" "zed"');
   });
 
   it('gives the servers and their full environment with --raw', async () => {

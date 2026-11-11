@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-/** A cozy-stack instance on 127.0.0.1 with the /auth, /oidc and /settings routes twake-ai uses. */
+/** A cozy-stack instance on 127.0.0.1 with the /auth, /oidc and /settings routes mcp-twake-ai uses. */
 export interface FakeCozy {
   url: string;
   refreshCount: number;

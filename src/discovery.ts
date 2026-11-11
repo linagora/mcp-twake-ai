@@ -58,7 +58,7 @@ const notTwake = (domain: string) =>
     `${domain} does not look like a Twake.ai domain (no Matrix client discovery at https://${domain}/.well-known/matrix/client).`,
   );
 
-/** Everything twake-ai can learn from the email address alone, before signing in. */
+/** Everything mcp-twake-ai can learn from the email address alone, before signing in. */
 export async function discover(email: string, deps: DiscoveryDeps): Promise<TwakeEnvironment> {
   const domain = emailDomain(email);
   let wellKnown: z.infer<typeof MatrixClientWellKnownSchema>;

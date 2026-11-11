@@ -4,7 +4,7 @@ import { lock } from 'proper-lockfile';
 import { TwakeAiError } from './errors.js';
 
 /**
- * Runs `fn` while holding a lock shared by every twake-ai process of this user.
+ * Runs `fn` while holding a lock shared by every mcp-twake-ai process of this user.
  * Token refreshes run under it: two processes must never spend the same refresh token.
  */
 export async function withLock<T>(
@@ -27,7 +27,7 @@ export async function withLock<T>(
     if ((error as NodeJS.ErrnoException).code === 'ELOCKED') {
       throw new TwakeAiError(
         'lock_timeout',
-        `Another twake-ai process has held the "${name}" lock for more than ${Math.round(timeoutMs / 1000)} s: try again, or delete ${target}.lock if no twake-ai process is running.`,
+        `Another mcp-twake-ai process has held the "${name}" lock for more than ${Math.round(timeoutMs / 1000)} s: try again, or delete ${target}.lock if no mcp-twake-ai process is running.`,
       );
     }
     throw error;

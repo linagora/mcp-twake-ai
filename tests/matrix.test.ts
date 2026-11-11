@@ -66,7 +66,7 @@ describe('sessions', () => {
   it('asks to reconnect the agent when the refresh token is refused', async () => {
     await expect(refreshMatrix(synapse.url, 'syr-unknown', 'hermes')).rejects.toMatchObject({
       code: 'login_required',
-      message: expect.stringContaining('twake-ai login --chat --agent hermes'),
+      message: expect.stringContaining('mcp-twake-ai login --chat --agent hermes'),
     });
   });
 

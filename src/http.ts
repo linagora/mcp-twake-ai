@@ -71,7 +71,7 @@ export async function requestJson(url: string, init: RequestInit, options: HttpO
   if (response.redirected) requireSecureUrl(response.url, `The redirect of ${url}`);
   const body = await response.text();
   if (response.status >= 300 && response.status < 400) {
-    throw new TwakeAiError('bad_response', `${url} answered a redirect (HTTP ${response.status}), which twake-ai does not follow for this request.`);
+    throw new TwakeAiError('bad_response', `${url} answered a redirect (HTTP ${response.status}), which mcp-twake-ai does not follow for this request.`);
   }
   if (response.status >= 500 || response.status === 408 || response.status === 429) {
     throw new TwakeAiError('unavailable', `${hostOf(url)} is unavailable right now (HTTP ${response.status}): try again in a moment.`);
@@ -109,7 +109,7 @@ export function parseAnswer<T>(schema: z.ZodType<T>, raw: unknown, url: string):
   if (result.success) return result.data;
   const issue = result.error.issues[0];
   const where = issue?.path.length ? issue.path.join('.') : 'body';
-  throw new TwakeAiError('bad_response', `${url} answered something twake-ai cannot read (${where}: ${issue?.message ?? 'invalid'}).`);
+  throw new TwakeAiError('bad_response', `${url} answered something mcp-twake-ai cannot read (${where}: ${issue?.message ?? 'invalid'}).`);
 }
 
 /** POST JSON without following redirects (Matrix and cozy-stack APIs). */

@@ -98,7 +98,7 @@ describe('refresh', () => {
   it('asks to sign in again when the refresh token is no longer valid', async () => {
     await expect(refreshTokens(meta, client, 'refresh-unknown')).rejects.toMatchObject({
       code: 'login_required',
-      message: expect.stringContaining('twake-ai login'),
+      message: expect.stringContaining('mcp-twake-ai login'),
     });
   });
 });

@@ -22,7 +22,7 @@ export const ConfigSchema = z.object({
 export type TwakeAiConfig = z.infer<typeof ConfigSchema>;
 
 export async function loadConfig(paths: AppPaths): Promise<TwakeAiConfig | undefined> {
-  const damaged = new TwakeAiError('damaged_file', `${paths.configFile} is damaged: delete it, then run \`twake-ai login --email <address>\`.`);
+  const damaged = new TwakeAiError('damaged_file', `${paths.configFile} is damaged: delete it, then run \`mcp-twake-ai login --email <address>\`.`);
   let raw: unknown;
   try {
     raw = await readPrivateJson(paths.configFile);

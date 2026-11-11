@@ -26,7 +26,7 @@ const config: TwakeAiConfig = {
   },
 };
 
-/** `twake-ai run …` as an agent starts it, with a JSON-RPC client on its stdio. */
+/** `mcp-twake-ai run …` as an agent starts it, with a JSON-RPC client on its stdio. */
 async function launch(args: string[], env: Record<string, string> = {}) {
   const { root, paths } = await tempPaths();
   await saveConfig(paths, config);
@@ -56,7 +56,7 @@ async function launch(args: string[], env: Record<string, string> = {}) {
   };
 }
 
-describe('twake-ai run', () => {
+describe('mcp-twake-ai run', () => {
   it('starts the server with its environment and lets the approval request go both ways', { timeout: 30_000 }, async () => {
     const mcp = await launch(['mail', '--agent', 'claude-code']);
     mcp.send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: { elicitation: {} }, clientInfo: { name: 'test', version: '1' } } });
@@ -70,7 +70,8 @@ describe('twake-ai run', () => {
     expect(result.env).toMatchObject({
       JMAP_SESSION_URL: 'https://jmap.linagora.com/jmap/session',
       JMAP_AUTH_METHOD: 'command',
-      JMAP_TOKEN_COMMAND: expect.stringContaining("'token' 'mail'"),
+      // quoted for the shell the server runs it through: cmd.exe on Windows, /bin/sh elsewhere
+      JMAP_TOKEN_COMMAND: expect.stringContaining(process.platform === 'win32' ? '"token" "mail"' : "'token' 'mail'"),
       USER_LANGUAGE: 'en',
     });
     mcp.close();
@@ -99,6 +100,6 @@ describe('twake-ai run', () => {
   it('says on stderr, never on stdout, what is missing', { timeout: 30_000 }, async () => {
     const mcp = await launch(['space', '--agent', 'claude-code']);
     expect(await mcp.exited).toBe(1);
-    expect(mcp.stderr()).toMatch(/^twake-ai: No Twake Space server was found/);
+    expect(mcp.stderr()).toMatch(/^mcp-twake-ai: No Twake Space server was found/);
   });
 });
