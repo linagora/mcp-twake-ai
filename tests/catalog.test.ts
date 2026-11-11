@@ -237,7 +237,20 @@ describe('parseEnvOption', () => {
   });
 
   it('refuses the variables that name a server or carry a secret', () => {
-    for (const option of ['dav.DAV_URL=https://evil.example/', 'dav.DAV_TOKEN_COMMAND=x', 'mail.JMAP_PASSWORD=x', 'space.TWAKE_SPACE_CLIENT_SECRET=x', 'space.TWAKE_SPACE_API_KEY=x', 'dav.DAV_AUTH_METHOD=bearer']) {
+    for (const option of [
+      'dav.DAV_URL=https://evil.example/',
+      'dav.DAV_TOKEN_COMMAND=x',
+      'mail.JMAP_PASSWORD=x',
+      'space.TWAKE_SPACE_CLIENT_SECRET=x',
+      'space.TWAKE_SPACE_API_KEY=x',
+      'dav.DAV_AUTH_METHOD=bearer',
+      'dav.DAV_HREF_PREFIX=/dav',
+      'dav.DAV_ORGANIZER_EMAIL=someone@example.com',
+      'dav.DAV_ORGANIZER_NAME=Someone',
+      'dav.DAV_USERNAME=someone',
+      'mail.JMAP_OIDC_SCOPE=openid',
+      'chat.MATRIX_PASSPHRASE=secret',
+    ]) {
       expect(() => parseEnvOption([option]), option).toThrow(/--env /);
     }
   });
@@ -260,6 +273,9 @@ describe('parseEnvOption', () => {
       'mail.DAV_DEFAULT_CALENDAR=XG',
     ]) {
       expect(() => parseEnvOption([option]), option).toThrow(/is not a variable of/);
+    }
+    for (const option of ['dav.LOG_FORMAT=json', 'dav.LOG_PATH=/tmp/x.log']) {
+      expect(() => parseEnvOption([option]), option).toThrow(/LOG_LEVEL/);
     }
     expect(parseEnvOption(['dav.USER_LANGUAGE=en', 'space.USER_TIMEZONE=UTC', 'mail.LOG_LEVEL=debug']).set).toEqual({
       dav: { USER_LANGUAGE: 'en' },
