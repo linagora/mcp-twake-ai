@@ -511,6 +511,22 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toMatch(/✗ twake-mail\s+.*(Cannot find module|MODULE_NOT_FOUND|stopped)/);
   });
 
+  it('says when an agent is not installed or has no Twake.ai entry, and exits with 1', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['status', '--agents', 'claude-desktop,cursor', '--no-start'], io, deps)).toBe(1);
+    expect(io.out).toMatch(/Claude Desktop .*\n  ✗ not found on this computer/);
+    expect(io.out).toMatch(/Cursor .*\n  no Twake.ai entry: run setup/);
+  });
+
+  it('logs out with exit code 1 when a revocation fails, naming it', async () => {
+    const { deps } = await readyForSetup();
+    idp.close();
+    const io = captureIo();
+    expect(await main(['logout'], io, deps)).toBe(1);
+    expect(io.out).toMatch(/✗ Twake session: /);
+  });
+
   it('prints the environment run would build', async () => {
     const { deps } = await readyForSetup();
     const io = captureIo();
@@ -549,6 +565,8 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await readText(join(prefixDir(deps.paths), 'mcp-twake-mail', 'package.json'))).toBeUndefined();
     expect(io.out).toContain(`Twake Chat stores kept in ${join(deps.paths.dataDir, 'chat')}`);
     expect(synapse.loggedOut).toHaveLength(2);
+    // the journal goes with the rest, and the uninstall itself does not bring it back
+    expect(await stat(journalFile(deps.paths)).then(() => true, () => false)).toBe(false);
   });
 
   it('keeps an entry changed by hand unless --force, and the Chat stores unless asked', async () => {
@@ -559,10 +577,28 @@ describe('main: Twake Drive and Twake Chat', () => {
     await writeFile(cursor, JSON.stringify(servers));
     await mkdir(join(deps.paths.dataDir, 'chat', 'cursor'), { recursive: true });
     const io = captureIo();
-    expect(await main(['uninstall', '--yes', '--delete-chat-stores'], io, deps)).toBe(0);
+    expect(await main(['uninstall', '--yes', '--delete-chat-stores'], io, deps)).toBe(1);
     expect(io.out).toContain('left as they are: twake-mail');
     expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail'].env).toEqual({ DEBUG: '1' });
     expect(await stat(join(deps.paths.dataDir, 'chat')).then(() => true, () => false)).toBe(false);
+    // what is left stays recorded, so that --force can still remove it
+    expect((await loadConfig(deps.paths))?.agents?.cursor?.entries).toHaveProperty('twake-mail');
+    expect(await main(['uninstall', '--yes', '--force'], captureIo(), deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers).toEqual({});
+    expect(await loadConfig(deps.paths)).toBeUndefined();
+  });
+
+  it('refuses to uninstall over a configuration it cannot read, unless --force', async () => {
+    const { deps } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
+    await writeFile(deps.paths.configFile, '{ damaged');
+    const io = captureIo();
+    expect(await main(['uninstall', '--yes'], io, deps)).toBe(1);
+    expect(io.err).toContain('--force');
+    expect(await stat(prefixDir(deps.paths)).then(() => true, () => false)).toBe(true);
+    expect(await main(['uninstall', '--yes', '--force'], captureIo(), deps)).toBe(0);
+    expect(await stat(prefixDir(deps.paths)).then(() => true, () => false)).toBe(false);
+    expect(await stat(deps.paths.configFile).then(() => true, () => false)).toBe(false);
   });
 });
 

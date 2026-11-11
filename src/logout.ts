@@ -2,7 +2,9 @@ import { rm } from 'node:fs/promises';
 import { saveConfig, type TwakeAiConfig } from './config.js';
 import { deleteCozyClient } from './cozy.js';
 import { describeError } from './describe.js';
-import { COZY_KEYS, matrixKey, OIDC_REFRESH_KEY } from './grants.js';
+import { COZY_GRANT, COZY_KEYS, matrixGrant, matrixKey, OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
+import { withLock } from './lock.js';
+import { deleteCachedToken, readCachedToken } from './token-cache.js';
 import { logoutDevice } from './matrix.js';
 import type { OidcHttp } from './oidc.js';
 import { revokeToken } from './oidc.js';
@@ -32,20 +34,39 @@ export async function logout(d: LogoutDeps): Promise<{ done: string[]; failed: s
       failed.push(`${what}: ${describeError(error)}`);
     }
   };
-  const refresh = await vault.get(OIDC_REFRESH_KEY);
-  if (refresh) await attempt('Twake session revoked', 'Twake session', () => revokeToken(config.environment.oidc, config.oidc, refresh, http));
-  const instance = config.environment.cozy.instance;
-  if (config.drive && instance) {
-    const client = { clientId: config.drive.clientId, clientSecret: (await vault.get(COZY_KEYS.clientSecret)) ?? '', registrationToken: (await vault.get(COZY_KEYS.registrationToken)) ?? '' };
-    await attempt('Twake Drive access removed', 'Twake Drive', () => deleteCozyClient(instance, client, http));
-  }
-  const agents = Object.keys(config.chat ?? {});
-  for (const agent of agents) {
-    const tokens = { accessToken: await vault.get(matrixKey(agent, 'access_token')), refreshToken: await vault.get(matrixKey(agent, 'refresh_token')) };
-    await attempt(`Twake Chat device of ${agent} signed out`, `Twake Chat (${agent})`, () => logoutDevice(config.environment.matrix.homeserver, agent, tokens, http));
-  }
-  for (const key of [OIDC_REFRESH_KEY, ...Object.values(COZY_KEYS), ...agents.flatMap((agent) => [matrixKey(agent, 'access_token'), matrixKey(agent, 'refresh_token')])]) {
-    await vault.delete(key).catch(() => undefined);
+  // each authorization is read, revoked and forgotten under its own lock: a server renewing it at that very moment
+  // cannot store a new token after it is gone (spec §7.2)
+  const underLock = async (grant: string, what: string, step: () => Promise<void>) => {
+    try {
+      await withLock(d.paths.locksDir, grant, step);
+    } catch (error) {
+      failed.push(`${what}: ${describeError(error)}`);
+    }
+  };
+  await underLock(OIDC_GRANT, 'Twake session', async () => {
+    const refresh = await vault.get(OIDC_REFRESH_KEY);
+    if (refresh) await attempt('Twake session revoked', 'Twake session', () => revokeToken(config.environment.oidc, config.oidc, refresh, http));
+    await vault.delete(OIDC_REFRESH_KEY).catch(() => undefined);
+    await deleteCachedToken(d.paths, OIDC_GRANT);
+  });
+  await underLock(COZY_GRANT, 'Twake Drive', async () => {
+    const instance = config.environment.cozy.instance;
+    if (config.drive && instance) {
+      const client = { clientId: config.drive.clientId, clientSecret: (await vault.get(COZY_KEYS.clientSecret)) ?? '', registrationToken: (await vault.get(COZY_KEYS.registrationToken)) ?? '' };
+      await attempt('Twake Drive access removed', 'Twake Drive', () => deleteCozyClient(instance, client, http));
+    }
+    for (const key of Object.values(COZY_KEYS)) await vault.delete(key).catch(() => undefined);
+    await deleteCachedToken(d.paths, COZY_GRANT);
+  });
+  for (const agent of Object.keys(config.chat ?? {})) {
+    await underLock(matrixGrant(agent), `Twake Chat (${agent})`, async () => {
+      // the broker caches each renewed access token; the one kept at login is stale after a few minutes
+      const cached = await readCachedToken(d.paths, matrixGrant(agent));
+      const tokens = { accessToken: cached?.accessToken ?? (await vault.get(matrixKey(agent, 'access_token'))), refreshToken: await vault.get(matrixKey(agent, 'refresh_token')) };
+      await attempt(`Twake Chat device of ${agent} signed out`, `Twake Chat (${agent})`, () => logoutDevice(config.environment.matrix.homeserver, agent, tokens, http));
+      for (const key of [matrixKey(agent, 'access_token'), matrixKey(agent, 'refresh_token')]) await vault.delete(key).catch(() => undefined);
+      await deleteCachedToken(d.paths, matrixGrant(agent));
+    });
   }
   await rm(d.paths.tokensDir, { recursive: true, force: true });
   const { drive: _drive, chat: _chat, ...rest } = config;

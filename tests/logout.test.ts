@@ -1,7 +1,9 @@
 import { readdir } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { saveConfig, loadConfig, type TwakeAiConfig } from '../src/config.js';
-import { COZY_KEYS, matrixKey, OIDC_REFRESH_KEY } from '../src/grants.js';
+import { COZY_KEYS, matrixGrant, matrixKey, OIDC_GRANT, OIDC_REFRESH_KEY } from '../src/grants.js';
+import { withLock } from '../src/lock.js';
+import { refreshMatrix } from '../src/matrix.js';
 import { logout } from '../src/logout.js';
 import { fetchOidcMetadata } from '../src/oidc.js';
 import { writeCachedToken } from '../src/token-cache.js';
@@ -76,6 +78,28 @@ describe('logout', () => {
     expect(result.failed[0]).toMatch(/^Twake session: /);
     expect(synapse.loggedOut).toEqual([device.deviceId]);
     expect(await vault.get(OIDC_REFRESH_KEY)).toBeUndefined();
+  });
+
+  it('waits for a token being renewed by a server, then revokes the session', async () => {
+    const { paths, vault, config, refresh } = await signedIn();
+    const held = withLock(paths.locksDir, OIDC_GRANT, () => new Promise<void>((resolve) => setTimeout(resolve, 400)));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const out = logout({ paths, config, vault, http: {} });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(idp.revoked).toEqual([]);
+    await held;
+    expect((await out).failed).toEqual([]);
+    expect(idp.revoked).toEqual([refresh]);
+  });
+
+  it('signs a device out with the fresh access token the broker cached, not the one kept at login', async () => {
+    const { paths, vault, config, device } = await signedIn();
+    synapse.expireIssuedAccessTokens();
+    // a server renewed the session since: the refresh token kept at login is spent, the fresh access token is cached
+    const renewed = await refreshMatrix(synapse.url, device.refreshToken, 'hermes');
+    await writeCachedToken(paths, matrixGrant('hermes'), { accessToken: renewed.accessToken, expiresAt: Number.MAX_SAFE_INTEGER });
+    expect((await logout({ paths, config, vault, http: {} })).failed).toEqual([]);
+    expect(synapse.loggedOut).toEqual([device.deviceId]);
   });
 
   it('signs out a device whose access token has expired, after a refresh', async () => {

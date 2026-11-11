@@ -3,13 +3,13 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { getToken, isServiceId, SERVICE_IDS, type ServiceId } from './broker.js';
-import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig, type TwakeAiConfig } from './config.js';
+import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig, saveConfig, type TwakeAiConfig } from './config.js';
 import { discover, type DiscoveryDeps } from './discovery.js';
 import { TwakeAiError } from './errors.js';
 import { describeError } from './describe.js';
 import { journal } from './journal.js';
 import { logout } from './logout.js';
-import { removeFiles, uninstallPlan } from './uninstall.js';
+import { forgetSecrets, removeFiles, uninstallPlan } from './uninstall.js';
 import { checkChat, checkDrive, checkSession, entryStates, handshake, type Check, type EntryState } from './status.js';
 import { chooseLoginMode, loginOidc } from './login.js';
 import { appPaths, type AppPaths } from './paths.js';
@@ -146,7 +146,9 @@ export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()
     code = error instanceof TwakeAiError && error.code === 'usage' ? 2 : 1;
   }
   // token and run are called all day long by the servers: only their failures are worth a line
-  if (code !== 0 || (command !== 'token' && command !== 'run')) {
+  // a finished uninstall has removed the journal: it must not come back
+  const uninstalled = command === 'uninstall' && code === 0 && args.includes('--yes');
+  if (!uninstalled && (code !== 0 || (command !== 'token' && command !== 'run'))) {
     await journal(deps.paths, `${[command, ...args].join(' ')} → ${code}${failure ? `: ${failure.split('\n')[0]}` : ''}`);
   }
   return code;
@@ -540,9 +542,22 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   const { values } = usageErrors(() =>
     parseArgs({ args, options: { yes: { type: 'boolean' }, force: { type: 'boolean' }, 'delete-chat-stores': { type: 'boolean' } }, strict: true }),
   );
-  const config = await loadConfig(d.paths).catch(() => undefined);
-  const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
   const force = values.force ?? false;
+  let config: TwakeAiConfig | undefined;
+  let unreadable = false;
+  try {
+    config = await loadConfig(d.paths);
+  } catch (error) {
+    // without it, nothing tells which entries and authorizations are mcp-twake-ai's
+    if (!force) {
+      throw new TwakeAiError(
+        'damaged_file',
+        `${d.paths.configFile} cannot be read (${describeError(error)}): fix it, or run uninstall --yes --force to remove mcp-twake-ai's files anyway (the agents keep their entries).`,
+      );
+    }
+    unreadable = true;
+  }
+  const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
   const plans = config ? await uninstallPlan(config, adapters) : [];
   for (const { adapter, actions } of plans) printPlan(io, adapter, actions, force);
   const chat = join(d.paths.dataDir, 'chat');
@@ -552,15 +567,19 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     io.stdout('Nothing was changed: run the same command with --yes to do it.\n');
     return 0;
   }
-  let failed = false;
+  // the entries an agent still has (skipped, or its write failed) stay recorded
+  const left: Record<string, { entries: Record<string, string> }> = {};
   for (const { adapter, owned, actions } of plans) {
     const result = await applyAgent(adapter, actions, owned, () => force);
     if (result.status === 'failed') {
-      failed = true;
+      left[adapter.id] = { entries: owned };
       io.stdout(`${adapter.label}: not changed, ${result.error}\n`);
-    } else {
-      io.stdout(`${adapter.label}: ${result.status === 'written' ? 'entries removed' : 'nothing to remove'}.\n`);
-      if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to remove them)\n`);
+      continue;
+    }
+    io.stdout(`${adapter.label}: ${result.status === 'written' ? 'entries removed' : 'nothing to remove'}.\n`);
+    if (result.skipped.length > 0) {
+      left[adapter.id] = { entries: result.owned };
+      io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to remove them)\n`);
     }
   }
   if (config) {
@@ -568,7 +587,17 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     const { failed: notRevoked } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
     for (const line of notRevoked) io.stdout(`✗ ${line}\n`);
   }
-  await removeFiles(d.paths, values['delete-chat-stores'] ?? false);
+  if (unreadable) await forgetSecrets(d.paths);
+  const keepConfig = Object.keys(left).length > 0;
+  if (keepConfig) {
+    const remaining = await loadConfig(d.paths);
+    if (remaining) await saveConfig(d.paths, { ...remaining, agents: left });
+  }
+  await removeFiles(d.paths, values['delete-chat-stores'] ?? false, keepConfig);
+  if (keepConfig) {
+    io.stdout(`Some entries are still in place and recorded in ${d.paths.configFile}: run uninstall --yes --force to remove them, or remove them by hand.\n`);
+    return 1;
+  }
   io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`} Remove the command itself with: npm uninstall -g mcp-twake-ai\n`);
-  return failed ? 1 : 0;
+  return 0;
 }
