@@ -107,6 +107,11 @@ export async function startFakeSynapse(): Promise<FakeSynapse> {
       synapse.refreshCount++;
       return json(200, session(device, true));
     }
+    if (req.method === 'GET' && url.pathname === '/_matrix/client/v3/account/whoami') {
+      const device = accessTokens.get(bearer);
+      if (!device || expired.has(bearer)) return json(401, { errcode: 'M_UNKNOWN_TOKEN', error: 'Unknown token', soft_logout: true });
+      return json(200, { user_id: '@alice:example.com', device_id: device });
+    }
     if (req.method === 'POST' && url.pathname === '/_matrix/client/v3/logout') {
       const device = accessTokens.get(bearer);
       if (!device || expired.has(bearer)) return json(401, { errcode: 'M_UNKNOWN_TOKEN', error: 'Unknown token', soft_logout: true });

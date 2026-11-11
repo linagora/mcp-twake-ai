@@ -149,6 +149,10 @@ export async function startFakeCozy(): Promise<FakeCozy> {
       cozy.oidcTokens.push(body.oidc_token ?? '');
       return json(200, issue(body.client_id ?? '', true));
     }
+    if (req.method === 'GET' && url.pathname === '/settings/instance') {
+      if (!accessTokens.has(bearer)) return json(401, { error: 'unauthorized' });
+      return json(200, { data: { type: 'io.cozy.settings', id: 'io.cozy.settings.instance', attributes: { locale: 'fr', public_name: 'Alice' } } });
+    }
     if (req.method === 'GET' && url.pathname === '/settings/context') {
       if (!accessTokens.has(bearer)) return json(401, { error: 'unauthorized' });
       return json(200, { data: { type: 'io.cozy.settings', id: 'io.cozy.settings.context', attributes: { additional_platform_apps: cozy.apps } } });
