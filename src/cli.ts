@@ -349,6 +349,7 @@ async function exportCommand(args: string[], io: Io, d: CliDeps): Promise<number
     config = (await loadConfig(d.paths)) ?? config;
   }
   const ctx = catalogContext(config, d);
+  if (isNpxCache(d.cliPath)) await selfInstall(d.paths, packageVersion(), d.runInstall);
   await ensureInstalled(d.paths, chosen, { run: d.runInstall, print: (line) => io.stdout(`${line}\n`) });
   const files = await exportFiles({ agent, services: chosen, raw: values.raw ?? false, twakeAiHome: d.env.TWAKE_AI_HOME }, ctx);
   const out = resolvePath(values.out ?? 'twake-ai-export');
@@ -357,8 +358,13 @@ async function exportCommand(args: string[], io: Io, d: CliDeps): Promise<number
   return 0;
 }
 
+/** The command agents and token commands run: under npx, the copy installed in the prefix, never npx's cache (spec §5.3). */
+function agentCliPath(d: CliDeps): string {
+  return isNpxCache(d.cliPath) ? selfInstalledCli(d.paths) : d.cliPath;
+}
+
 function catalogContext(config: TwakeAiConfig, d: CliDeps): CatalogContext {
-  return { config, paths: d.paths, nodePath: d.nodePath, cliPath: d.cliPath, platform: d.platform, language: detectLanguage(d.env), timezone: systemTimezone() };
+  return { config, paths: d.paths, nodePath: d.nodePath, cliPath: agentCliPath(d), platform: d.platform, language: detectLanguage(d.env), timezone: systemTimezone() };
 }
 
 const PLAN_LINE: Record<ActionKind, [string, string]> = {
@@ -454,8 +460,8 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
   // under npx the entries must not point into npx's cache: mcp-twake-ai installs itself into the prefix (spec §5.3)
   const fromNpx = isNpxCache(d.cliPath);
-  const cliPath = fromNpx ? selfInstalledCli(d.paths) : d.cliPath;
-  const ctx = catalogContext(config, { ...d, cliPath });
+  const cliPath = agentCliPath(d);
+  const ctx = catalogContext(config, d);
   // what needs no new connection is checked before anything changes
   for (const agent of names) for (const service of chosen) if (service !== 'drive' && service !== 'chat') serviceEnv(service, agent, ctx);
   const env: Record<string, string> = d.env.TWAKE_AI_HOME ? { TWAKE_AI_HOME: d.env.TWAKE_AI_HOME } : {};

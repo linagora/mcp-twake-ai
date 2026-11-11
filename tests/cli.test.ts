@@ -637,8 +637,8 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toContain('Nothing was changed');
   });
 
-  it('under npx, installs itself into the prefix, points the entries there and adds a shortcut', async () => {
-    const { deps, cursor } = await readyForSetup();
+  /** As if run by npx: the CLI sits in npx's cache, and npm installs mcp-twake-ai itself into the prefix. */
+  function underNpx(deps: CliDeps): string {
     deps.cliPath = join(deps.home, '.npm', '_npx', 'abc', 'node_modules', 'mcp-twake-ai', 'build', 'bin.js');
     const npm = fakeNpm(deps.paths);
     const installed = join(serverDir(deps.paths, 'mcp-twake-ai'), 'node_modules', 'mcp-twake-ai');
@@ -649,6 +649,24 @@ describe('main: Twake Drive and Twake Chat', () => {
       await writeFile(join(installed, 'package.json'), JSON.stringify({ name: 'mcp-twake-ai', version: self.split('@')[1], bin: { 'mcp-twake-ai': 'build/bin.js' } }));
       await writeFile(join(installed, 'build', 'bin.js'), '');
     };
+    return installed;
+  }
+
+  it('under npx, export too points to the copy installed in the prefix', async () => {
+    const { deps } = await readyForSetup();
+    const installed = underNpx(deps);
+    const out = join(deps.paths.dataDir, '..', 'export-npx');
+    expect(await main(['export', '--agent', 'zed', '--services', 'mail', '--out', out], captureIo(), deps)).toBe(0);
+    expect(JSON.parse(await readFile(join(out, 'mcpServers.json'), 'utf8')).mcpServers['twake-mail'].args[0]).toBe(join(installed, 'build', 'bin.js'));
+    expect(await readText(join(installed, 'package.json'))).toBeDefined();
+    const env = captureIo();
+    expect(await main(['status', '--env', 'mail'], env, deps)).toBe(0);
+    expect(env.out).not.toContain('_npx');
+  });
+
+  it('under npx, installs itself into the prefix, points the entries there and adds a shortcut', async () => {
+    const { deps, cursor } = await readyForSetup();
+    const installed = underNpx(deps);
     const io = captureIo();
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
     expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail'].args[0]).toBe(join(installed, 'build', 'bin.js'));
