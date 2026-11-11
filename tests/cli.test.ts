@@ -511,6 +511,22 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toMatch(/✗ twake-mail\s+.*(Cannot find module|MODULE_NOT_FOUND|stopped)/);
   });
 
+  it('says when an agent is not installed or has no Twake.ai entry, and exits with 1', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['status', '--agents', 'claude-desktop,cursor', '--no-start'], io, deps)).toBe(1);
+    expect(io.out).toMatch(/Claude Desktop .*\n  ✗ not found on this computer/);
+    expect(io.out).toMatch(/Cursor .*\n  no Twake.ai entry: run setup/);
+  });
+
+  it('logs out with exit code 1 when a revocation fails, naming it', async () => {
+    const { deps } = await readyForSetup();
+    idp.close();
+    const io = captureIo();
+    expect(await main(['logout'], io, deps)).toBe(1);
+    expect(io.out).toMatch(/✗ Twake session: /);
+  });
+
   it('prints the environment run would build', async () => {
     const { deps } = await readyForSetup();
     const io = captureIo();

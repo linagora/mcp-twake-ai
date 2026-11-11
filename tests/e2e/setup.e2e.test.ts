@@ -1,12 +1,14 @@
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { findExecutable } from '../../src/agents/claude-code.js';
-import { saveConfig } from '../../src/config.js';
+import { loadConfig, saveConfig } from '../../src/config.js';
+import { prefixDir } from '../../src/installer.js';
+import { journalFile } from '../../src/journal.js';
 import { OIDC_REFRESH_KEY } from '../../src/grants.js';
 import { fetchOidcMetadata } from '../../src/oidc.js';
 import { openVault } from '../../src/vault.js';
@@ -126,8 +128,16 @@ describe('mcp-twake-ai setup, end to end', () => {
       expect(current).not.toBe(refresh);
       expect((await run('logout')).out).toContain('✓ Twake session revoked');
       expect(idp.revoked).toEqual([current]);
+      // sign in again, so that uninstall itself signs out
+      const second = idp.issueRefreshToken();
+      await saveConfig(paths, { ...sampleConfig, email: 'alice@example.com', drive: undefined, chat: undefined, environment: { ...sampleConfig.environment, oidc: await fetchOidcMetadata(idp.url) }, agents: (await loadConfig(paths))?.agents });
+      await (await openVault('file', paths)).set(OIDC_REFRESH_KEY, second);
       expect((await run('uninstall', '--yes')).code).toBe(0);
+      expect(idp.revoked).toContain(second);
       expect(JSON.parse(await readFile(join(home, '.cursor', 'mcp.json'), 'utf8')).mcpServers).toEqual({});
+      for (const gone of [prefixDir(paths), paths.configFile, paths.vaultFile, paths.cacheDir, journalFile(paths)]) {
+        expect(await stat(gone).then(() => gone, () => undefined)).toBeUndefined();
+      }
       expect((await run('status')).err).toContain('mcp-twake-ai login --email');
     } finally {
       idp.close();
