@@ -47,13 +47,13 @@ La spec est découpée en quatre plans. Chacun livre un logiciel qui fonctionne 
 - **`logout` complet et `uninstall`** (section 12.3 de la spec).
 - **Raccourci `mcp-twake-ai`** à un chemin stable.
 - **Journal** avec les jetons masqués.
-- **CI** Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS ; **`scripts/live.mjs`** et liste de recette manuelle par agent.
+- **CI** Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS (en place depuis le 2026-11-11) ; **`scripts/live.mjs`** et liste de recette manuelle par agent.
 
 ## Prérequis extérieurs
 
 | Prérequis | Bloque | Responsable |
 |---|---|---|
 | Client OIDC « twake-ai-agents » dans le LemonLDAP du SaaS (spec 7.4) | le test réel des plans 1 à 4 (le code se teste avec le faux IdP) | IdP / exploitation SaaS |
-| Les six MCP lancent `*_TOKEN_COMMAND` avec `cmd.exe` sous Windows | Windows aux plans 3 et 4 | dépôts MCP |
+| ~~Les six MCP lancent `*_TOKEN_COMMAND` avec `cmd.exe` sous Windows~~ : fusionné le 2026-11-11, reste la publication sur npm | Windows aux plans 3 et 4 | dépôts MCP |
 | Prise en charge de l'élicitation par Claude Desktop et Cursor | la table de capacités du plan 3 | à vérifier au début du plan 3 |
 | Synapse : refresh tokens et MSC3882 | les choix du plan 2 (sans eux, le plan 2 fonctionne quand même) | à vérifier au début du plan 2 |

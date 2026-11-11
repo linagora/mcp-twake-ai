@@ -386,7 +386,7 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 | Demande | Équipe | Bloquant ? |
 |---|---|---|
 | Client OIDC « twake-ai-agents » (section 7.4) | IdP / exploitation SaaS | **oui** |
-| Les six MCP lancent `*_TOKEN_COMMAND` avec `execFile('/bin/sh', ['-c', …])` (vérifié le 2026-11-10 dans `token-command.ts` de chaque dépôt) : sous Windows, il n'y a pas de `/bin/sh`. Il faut passer par `cmd.exe /d /s /c` quand `process.platform === 'win32'` | dépôts MCP | **oui pour Windows** |
+| ~~Les six MCP lancent `*_TOKEN_COMMAND` avec `execFile('/bin/sh', ['-c', …])`~~ : corrigé le 2026-11-11 (mail#22, dav#25, drive#12, chat#10, space#8, project#9). Ils passent par `exec`, donc par `cmd.exe /d /s /c` sous Windows, et un job `windows-latest` le vérifie. Versions 4.1.1, 4.2.1, 0.4.1, 0.6.1, 0.2.2 et 0.2.2 | dépôts MCP | **oui pour Windows**, jusqu'à leur publication sur npm |
 | Ajouter les URL de Space et Project dans `.well-known/matrix/client` (par exemple sous une clé `app.twake.ai`) | exploitation SaaS | non : la convention `<service>.<domaine>` sert de repli |
 | Activer `allow_oauth_token` sur les contextes cozy du SaaS, avec `userinfo_url` vers l'IdP | exploitation cozy | non : sert à Drive sans redirection ni navigateur |
 | Activer `login/get_token` (MSC3882) sur Synapse | exploitation Matrix | non : évite une redirection par agent pour Chat |
@@ -396,7 +396,7 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 ## 15. À vérifier au début de l'implémentation
 
 1. Prise en charge de l'élicitation par Claude Desktop et Cursor.
-2. ~~Comment chaque MCP exécute `*_TOKEN_COMMAND`~~ : vérifié le 2026-11-10, les six passent par `/bin/sh -c`. Sous Linux et macOS, `TOKEN_CMD` met donc chaque chemin entre apostrophes POSIX. Sous Windows, il faut d'abord corriger les MCP (section 14).
+2. ~~Comment chaque MCP exécute `*_TOKEN_COMMAND`~~ : vérifié le 2026-11-10, les six passaient par `/bin/sh -c`. Depuis le 2026-11-11, ils passent par le shell du système (section 14). Sous Linux et macOS, `TOKEN_CMD` met chaque chemin entre apostrophes POSIX. Sous Windows, il le met entre guillemets doubles pour `cmd.exe`, et refuse un chemin contenant `"`, `%`, `!` ou un saut de ligne, que `cmd.exe` modifierait.
 3. Les audiences acceptées par `jmap.linagora.com` et `dav.linagora.com` avec un jeton OIDC. (`dav.linagora.com` sert DAV à la racine : `/.well-known/caldav` redirige vers `/calendars`, donc pas de `DAV_HREF_PREFIX`. `jmap.linagora.com/.well-known/jmap` redirige vers `/jmap/session`.)
 4. Si LemonLDAP fait tourner les refresh tokens, et quelle est la durée de la session hors ligne.
 5. Si Synapse renvoie un refresh token avec `refresh_token: true`, et si `login/get_token` est activé.
