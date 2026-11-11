@@ -44,7 +44,7 @@ const cmd = (service: string, agent?: string) => `'/usr/bin/node' '/opt/twake-ai
 describe('catalog', () => {
   it('pins the six MCP servers', () => {
     expect(Object.fromEntries(Object.entries(CATALOG).map(([service, pkg]) => [service, `${pkg.name}@${pkg.version}`]))).toEqual({
-      mail: 'mcp-twake-mail@4.1.1',
+      mail: 'mcp-twake-mail@4.2.0',
       dav: 'mcp-twake-dav@4.2.1',
       drive: 'mcp-twake-drive@0.4.1',
       chat: 'mcp-twake-chat@0.6.1',
@@ -97,12 +97,22 @@ describe('tokenCommand', () => {
 });
 
 describe('serviceEnv', () => {
+  it('gives Mail, Drive and Chat one folder for files: an attachment saved by Mail can go to the Drive or a room', () => {
+    const folders = [
+      serviceEnv('mail', 'hermes', ctx).JMAP_DOWNLOAD_DIR,
+      serviceEnv('drive', 'hermes', ctx).TWAKE_DRIVE_DOWNLOAD_DIR,
+      serviceEnv('chat', 'hermes', ctx).MATRIX_DOWNLOAD_DIR,
+    ];
+    expect(folders).toEqual(['~/Downloads/Twake', '~/Downloads/Twake', '~/Downloads/Twake']);
+  });
+
   it('builds the environment of each service', () => {
     const common = { USER_LANGUAGE: 'fr', USER_TIMEZONE: 'Europe/Paris' };
     expect(serviceEnv('mail', 'claude-code', ctx)).toEqual({
       JMAP_SESSION_URL: 'https://jmap.linagora.com/jmap/session',
       JMAP_AUTH_METHOD: 'command',
       JMAP_TOKEN_COMMAND: cmd('mail'),
+      JMAP_DOWNLOAD_DIR: '~/Downloads/Twake',
       ...common,
     });
     expect(serviceEnv('dav', 'claude-code', ctx)).toEqual({
@@ -115,7 +125,12 @@ describe('serviceEnv', () => {
     const sideService = { ...ctx, config: { ...config, environment: { ...config.environment, services: { dav: { url: 'https://twcalendar.linagora.com/dav/', source: 'convention' as const, hrefPrefix: '/dav' } } } } };
     expect(serviceEnv('dav', 'claude-code', sideService)).toMatchObject({ DAV_URL: 'https://twcalendar.linagora.com/dav/', DAV_HREF_PREFIX: '/dav' });
     expect(serviceEnv('dav', 'claude-code', ctx)).not.toHaveProperty('DAV_HREF_PREFIX');
-    expect(serviceEnv('drive', 'claude-code', ctx)).toEqual({ TWAKE_DRIVE_URL: 'https://jdoe.twake.linagora.com', TWAKE_DRIVE_TOKEN_COMMAND: cmd('drive'), ...common });
+    expect(serviceEnv('drive', 'claude-code', ctx)).toEqual({
+      TWAKE_DRIVE_URL: 'https://jdoe.twake.linagora.com',
+      TWAKE_DRIVE_TOKEN_COMMAND: cmd('drive'),
+      TWAKE_DRIVE_DOWNLOAD_DIR: '~/Downloads/Twake',
+      ...common,
+    });
     expect(serviceEnv('space', 'claude-code', ctx)).toEqual({
       TWAKE_SPACE_URL: 'https://space.linagora.com',
       TWAKE_SPACE_TOKEN_COMMAND: cmd('space'),

@@ -12,12 +12,12 @@ describe('ensureInstalled', () => {
     const npm = fakeNpm(paths);
     const lines: string[] = [];
     expect(await ensureInstalled(paths, ['mail', 'chat', 'mail'], { run: npm, print: (line) => lines.push(line) })).toEqual([
-      'mcp-twake-mail@4.1.1',
+      'mcp-twake-mail@4.2.0',
       'mcp-twake-chat@0.6.1',
     ]);
     expect(npm.calls).toEqual([
       // one folder per server: hoisted together, matrix-js-sdk's @babel/runtime 8 broke cozy-client (mcp-twake-drive)
-      ['install', '--prefix', serverDir(paths, 'mcp-twake-mail'), '--no-audit', '--no-fund', '--save-exact', 'mcp-twake-mail@4.1.1'],
+      ['install', '--prefix', serverDir(paths, 'mcp-twake-mail'), '--no-audit', '--no-fund', '--save-exact', 'mcp-twake-mail@4.2.0'],
       ['install', '--prefix', serverDir(paths, 'mcp-twake-chat'), '--no-audit', '--no-fund', '--save-exact', 'mcp-twake-chat@0.6.1'],
     ]);
     // npm 11 refuses --allow-scripts for a project: the prefix's package.json allows sqlite3's build instead

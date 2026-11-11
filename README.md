@@ -128,7 +128,7 @@ mcp-twake-ai setup --agents claude-code --yes --env dav.DAV_DEFAULT_CALENDAR=XG
 
 With `--email`, `setup` first signs in to that account if it is not the current one. With `--yes`, it connects Twake Drive and gives each agent its own Twake Chat device when those services are chosen, installs the pinned servers, then writes the agents.
 
-`--env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment (`--env` can be repeated). It is kept in `config.json` — never in an agent's file — and every entry, `run`, `status --env` and `export` builds it from there. A later sign-in to the same account keeps it; another account starts without it, since several of these variables name a calendar, an address or a prefix of one account. An empty value (`--env dav.DAV_DEFAULT_CALENDAR=`) forgets the variable. Services are `mail`, `dav`, `drive`, `chat`, `space` and `project`.
+`--env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment (`--env` can be repeated). It is kept in `config.json` — never in an agent's file — and every entry, `run`, `status --print-env` and `export` builds it from there. A later sign-in to the same account keeps it; another account starts without it, since several of these variables name a calendar, an address or a prefix of one account. An empty value (`--env dav.DAV_DEFAULT_CALENDAR=`) forgets the variable. Services are `mail`, `dav`, `drive`, `chat`, `space` and `project`. `status --print-env dav` shows the environment a server gets, yours included.
 
 Only a few names are accepted, on the command line and in a `config.json` edited by hand:
 
@@ -157,11 +157,11 @@ Two things to know: a variable set here applies to the service in every agent th
 ### Check, sign out, uninstall
 
 ```sh
-mcp-twake-ai status                             # session, Drive, every entry, and each server started once
-mcp-twake-ai status --no-start                  # the same without starting the servers
-mcp-twake-ai status --env mail --agent cursor   # the environment run builds for a server
-mcp-twake-ai logout                             # revokes every authorization and forgets the secrets
-mcp-twake-ai uninstall                          # shows what it would remove; add --yes to do it
+mcp-twake-ai status                                   # session, Drive, every entry, and each server started once
+mcp-twake-ai status --no-start                        # the same without starting the servers
+mcp-twake-ai status --print-env mail --agent cursor   # the environment run builds for a server
+mcp-twake-ai logout                                   # revokes every authorization and forgets the secrets
+mcp-twake-ai uninstall                                # shows what it would remove; add --yes to do it
 ```
 
 - `status` checks the Twake session, Twake Drive, each agent's Chat device, that every entry is the one mcp-twake-ai wrote, and that each server answers through its entry. It exits with 1 when something is wrong, and says what.

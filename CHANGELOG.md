@@ -6,11 +6,23 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
-- `setup --env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment, for settings the servers document but mcp-twake-ai does not know (for example `dav.DAV_DEFAULT_CALENDAR`, so that an assistant reads your calendars instead of every calendar shared with you). The variables are kept in `config.json`, a sign-in to the same account keeps them, and every entry, `run`, `status --env` and `export` builds them; an empty value forgets one. Only the variables of the server itself (`DAV_…`, `JMAP_…`…), the `USER_…` ones and `LOG_LEVEL` are accepted; names that point at a server, say how to sign in to it, or may carry a secret are refused.
+- `setup --env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment, for settings the servers document but mcp-twake-ai does not know (for example `dav.DAV_DEFAULT_CALENDAR`, so that an assistant reads your calendars instead of every calendar shared with you). The variables are kept in `config.json`, a sign-in to the same account keeps them, and every entry, `run`, `status --print-env` and `export` builds them; an empty value forgets one. Only the variables of the server itself (`DAV_…`, `JMAP_…`…), the `USER_…` ones and `LOG_LEVEL` are accepted; names that point at a server, say how to sign in to it, or may carry a secret are refused.
+- `status --print-env <service>` shows the environment built for a server.
+
+### Deprecated
+
+- `status --env <service>` is the old name of `status --print-env`, kept as an alias; it warns on stderr, so that stdout still holds the environment alone. Two commands no longer share a flag name with two meanings (`setup --env` sets a variable, `status --print-env` shows one).
+
+## [0.2.0] - 2026-11-11
+
+### Added
+
+- Mail, Drive and Chat share one folder for files, `~/Downloads/Twake`: an attachment Mail saves can go to the Drive or a Chat room without passing through the model. Requires mcp-twake-mail 4.2.0 (`download_attachment` with `save: true`), now the pinned version.
 
 ### Changed
 
 - The repository is now `linagora/mcp-twake-ai`, like the package.
+- Twake Drive registers mcp-twake-ai with the software id `github.com/linagora/mcp-twake-ai` (was `…/mcp-twake-wizard`). Clients registered before keep theirs, and are still removed by `logout` and `uninstall`.
 - The README shows the guided setup step by step and an example in Claude Code; CONTRIBUTING, SECURITY, a code of conduct and issue templates were added.
 
 ## [0.1.0] - 2026-11-11

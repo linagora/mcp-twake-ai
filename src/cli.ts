@@ -132,7 +132,7 @@ const USAGE = `usage:
   mcp-twake-ai run <${SERVICE_IDS.join('|')}> --agent <id>
   mcp-twake-ai export --agent <id> [--services <list>] [--raw] [--out <dir>] [--no-browser]
   mcp-twake-ai status [--agents <ids>] [--no-start]
-  mcp-twake-ai status --env <service> [--agent <id>]
+  mcp-twake-ai status --print-env <service> [--agent <id>]
   mcp-twake-ai logout
   mcp-twake-ai uninstall [--yes] [--force] [--delete-chat-stores]
   mcp-twake-ai --version
@@ -478,7 +478,7 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
 
 /**
  * setup --env <service>.<VARIABLE>=<value>: keep the user's variables in config.json, so that every entry, `run`,
- * `status --env` and `export` build them, rather than writing them by hand into the agents' files. An empty value
+ * `status --print-env` and `export` build them, rather than writing them by hand into the agents' files. An empty value
  * forgets the variable.
  *
  * Nothing is stored without --yes: the setup changes nothing before the user confirms it.
@@ -605,13 +605,27 @@ const mark = (check: Check) => (check.ok ? '✓' : '✗');
 /** status: the session, Drive, each agent's entries and Chat device, and a handshake with each server (spec §12.2). */
 async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
   const { values } = usageErrors(() =>
-    parseArgs({ args, options: { agents: { type: 'string' }, 'no-start': { type: 'boolean' }, env: { type: 'string' }, agent: { type: 'string' } }, strict: true }),
+    parseArgs({
+      args,
+      // --env is kept as a deprecated alias: setup --env sets a variable, status --print-env shows one
+      options: { agents: { type: 'string' }, 'no-start': { type: 'boolean' }, 'print-env': { type: 'string' }, env: { type: 'string' }, agent: { type: 'string' } },
+      strict: true,
+    }),
   );
   const config = await loadConfig(d.paths);
   if (!config) throw new TwakeAiError('login_required', 'mcp-twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
+  const printed = values['print-env'] ?? values.env;
   if (values.env !== undefined) {
-    if (!isServiceId(values.env)) throw new TwakeAiError('usage', `"${values.env}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
-    const env = serviceEnv(values.env, checkAgentId(values.agent ?? 'agent'), catalogContext(config, d));
+    // said on stderr: what a script reads on stdout stays the environment itself
+    io.stderr(
+      values['print-env'] === undefined
+        ? 'status --env is deprecated: use --print-env.\n'
+        : 'status --env is ignored: --print-env was given.\n',
+    );
+  }
+  if (printed !== undefined) {
+    if (!isServiceId(printed)) throw new TwakeAiError('usage', `"${printed}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
+    const env = serviceEnv(printed, checkAgentId(values.agent ?? 'agent'), catalogContext(config, d));
     for (const [key, value] of Object.entries(env)) io.stdout(`${key}=${value}\n`);
     return 0;
   }

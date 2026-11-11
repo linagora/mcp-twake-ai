@@ -82,8 +82,14 @@ describe('logout', () => {
 
   it('waits for a token being renewed by a server, then revokes the session', async () => {
     const { paths, vault, config, refresh } = await signedIn();
-    const held = withLock(paths.locksDir, OIDC_GRANT, () => new Promise<void>((resolve) => setTimeout(resolve, 400)));
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // the server holds the lock for real before logout starts (a fixed delay is too short on a slow machine)
+    let locked!: () => void;
+    const acquired = new Promise<void>((resolve) => (locked = resolve));
+    const held = withLock(paths.locksDir, OIDC_GRANT, () => {
+      locked();
+      return new Promise<void>((resolve) => setTimeout(resolve, 400));
+    });
+    await acquired;
     const out = logout({ paths, config, vault, http: {} });
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(idp.revoked).toEqual([]);
