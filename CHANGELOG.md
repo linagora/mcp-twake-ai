@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-11
+
 ### Fixed
 
 - When the sign-in code expires during the guided setup, it no longer says to run `mcp-twake-ai login`: it asks for the address again, and says so.
