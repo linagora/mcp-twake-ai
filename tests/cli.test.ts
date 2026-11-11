@@ -16,6 +16,7 @@ import { fakeNpm } from './helpers/fake-mcp.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readText } from '../src/agents/config-file.js';
+import { journalFile } from '../src/journal.js';
 import { cursorConfig, vscodeConfig } from '../src/agents/locations.js';
 
 const run = promisify(execFile);
@@ -145,6 +146,18 @@ describe('the mcp-twake-ai process', () => {
 });
 
 describe('main: second sign-in and failures', () => {
+  it('keeps a journal of commands and errors, without tokens', async () => {
+    const deps = await testDeps();
+    expect(await main(['login', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
+    expect(await main(['token', 'mail'], captureIo(), deps)).toBe(0);
+    expect(await main(['token', 'chat'], captureIo(), deps)).toBe(2);
+    const text = await readFile(journalFile(deps.paths), 'utf8');
+    expect(text).toContain('login --email alice@example.com → 0');
+    expect(text).not.toContain('token mail');
+    expect(text).toContain('token chat → 2: A Twake Chat token belongs to an agent');
+    expect(text).not.toMatch(/access_token|eyJ/);
+  });
+
   it('signs in again with the client and scope used the first time', async () => {
     const deps = await testDeps();
     expect(await main(['login', '--email', 'alice@example.com', '--client-id', 'my-test-client', '--scope', 'openid offline_access'], captureIo(), deps)).toBe(0);

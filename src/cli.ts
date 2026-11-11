@@ -6,7 +6,8 @@ import { getToken, isServiceId, SERVICE_IDS, type ServiceId } from './broker.js'
 import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig, type TwakeAiConfig } from './config.js';
 import { discover, type DiscoveryDeps } from './discovery.js';
 import { TwakeAiError } from './errors.js';
-import { hostOf, HttpError } from './http.js';
+import { describeError } from './describe.js';
+import { journal } from './journal.js';
 import { chooseLoginMode, loginOidc } from './login.js';
 import { appPaths, type AppPaths } from './paths.js';
 import { chooseVault, openVault, type Vault } from './vault.js';
@@ -128,39 +129,42 @@ function usageErrors<T>(parse: () => T): T {
 
 export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()): Promise<number> {
   const [command, ...args] = argv;
+  let code: number;
+  let failure: string | undefined;
   try {
-    switch (command) {
-      case '--version':
-      case '-v':
-        io.stdout(`${packageVersion()}\n`);
-        return 0;
-      case 'setup':
-        return await setupCommand(args, io, deps);
-      case 'login':
-        return await loginCommand(args, io, deps);
-      case 'token':
-        return await tokenCommand(args, io, deps);
-      case 'export':
-        return await exportCommand(args, io, deps);
-      case 'run':
-        return await runCommand(args, deps);
-      default:
-        io.stderr(USAGE);
-        return 2;
-    }
+    code = await dispatch(command, args, io, deps);
   } catch (error) {
-    io.stderr(`mcp-twake-ai: ${describeError(error)}\n`);
-    return error instanceof TwakeAiError && error.code === 'usage' ? 2 : 1;
+    failure = describeError(error);
+    io.stderr(`mcp-twake-ai: ${failure}\n`);
+    code = error instanceof TwakeAiError && error.code === 'usage' ? 2 : 1;
   }
+  // token and run are called all day long by the servers: only their failures are worth a line
+  if (code !== 0 || (command !== 'token' && command !== 'run')) {
+    await journal(deps.paths, `${[command, ...args].join(' ')} → ${code}${failure ? `: ${failure.split('\n')[0]}` : ''}`);
+  }
+  return code;
 }
 
-/** One line for the user (an MCP server shows only the last line of stderr). Usage errors keep the usage text. */
-function describeError(error: unknown): string {
-  if (error instanceof TwakeAiError) return error.message;
-  if (error instanceof HttpError) {
-    return `${hostOf(error.url)} refused the request (HTTP ${error.status}${error.oauthError ? `, ${error.oauthError}` : ''}).`;
+async function dispatch(command: string | undefined, args: string[], io: Io, deps: CliDeps): Promise<number> {
+  switch (command) {
+    case '--version':
+    case '-v':
+      io.stdout(`${packageVersion()}\n`);
+      return 0;
+    case 'setup':
+      return await setupCommand(args, io, deps);
+    case 'login':
+      return await loginCommand(args, io, deps);
+    case 'token':
+      return await tokenCommand(args, io, deps);
+    case 'export':
+      return await exportCommand(args, io, deps);
+    case 'run':
+      return await runCommand(args, deps);
+    default:
+      io.stderr(USAGE);
+      return 2;
   }
-  return `unexpected error: ${String((error as Error)?.message ?? error).split('\n')[0]}`;
 }
 
 async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
