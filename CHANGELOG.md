@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- `status --print-env <service>` shows the environment built for a server.
+
+### Deprecated
+
+- `status --env <service>` is the old name of `status --print-env`, kept as an alias; it warns on stderr, so that stdout still holds the environment alone. Two commands no longer share a flag name with two meanings (`setup --env` sets a variable, `status --print-env` shows one).
+
 ## [0.2.0] - 2026-11-11
 
 ### Added

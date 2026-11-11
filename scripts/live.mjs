@@ -139,7 +139,7 @@ if (backends.some((check) => check.service === 'dav' && !check.ok)) {
 // the calendar end to end: the DAV MCP itself, with the environment the agents get, lists the calendars (read only).
 // LIVE_DAV_VERSION picks the published mcp-twake-dav (4.2.1 is the catalog's pin once published)
 const davEnv = Object.fromEntries(
-  step('dav environment', ['status', '--env', 'dav'])
+  step('dav environment', ['status', '--print-env', 'dav'])
     .trim()
     .split('\n')
     .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
