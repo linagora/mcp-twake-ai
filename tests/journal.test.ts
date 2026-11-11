@@ -24,6 +24,14 @@ describe('mask, beyond snake_case', () => {
     expect(mask('?code=ABCDEF_GHIJ&state=s')).toBe('?code=***&state=s');
   });
 
+  it('masks a JSON-escaped token whole, and leaves ordinary sentences alone', () => {
+    expect(mask('{"access_token":"abc\\/def+ghi=="}')).toBe('{"access_token":"***"}');
+    expect(mask('{"token":"abc"}')).toBe('{"token":"***"}');
+    expect(mask('sso.example.com gave no refresh token: client "twake-ai-agents" may lack offline_access')).toBe('sso.example.com gave no refresh token: client "twake-ai-agents" may lack offline_access');
+    expect(mask('the server stopped (exit code: 2)')).toBe('the server stopped (exit code: 2)');
+    expect(mask('a basic check failed')).toBe('a basic check failed');
+  });
+
   it('hides the other secrets a request may carry', () => {
     expect(mask('token=r-3&token_type_hint=refresh_token')).toBe('token=***&token_type_hint=refresh_token');
     expect(mask('password=hunter2 client_assertion=eyX.y.z')).toBe('password=*** client_assertion=***');

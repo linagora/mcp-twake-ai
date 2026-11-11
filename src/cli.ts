@@ -22,7 +22,7 @@ import { createInterface } from 'node:readline/promises';
 import { checkAgentId, OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
 import { revokeToken } from './oidc.js';
 import { deleteCachedToken } from './token-cache.js';
-import { rm } from 'node:fs/promises';
+import { rm, stat } from 'node:fs/promises';
 import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
@@ -159,7 +159,8 @@ export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()
   }
   // token and run are called all day long by the servers: only their failures are worth a line
   // a finished uninstall has removed the journal: it must not come back
-  const uninstalled = command === 'uninstall' && code === 0 && args.includes('--yes');
+  // whatever its exit code (a revocation may have failed), once config.json is gone uninstall has removed its files
+  const uninstalled = command === 'uninstall' && args.includes('--yes') && !(await stat(deps.paths.configFile).then(() => true, () => false));
   if (!uninstalled && (code !== 0 || (command !== 'token' && command !== 'run'))) {
     await journal(deps.paths, `${[command, ...args].join(' ')} → ${code}${failure ? `: ${failure.split('\n')[0]}` : ''}`);
   }
@@ -524,7 +525,8 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
     if (result.status === 'unchanged') io.stdout(`${adapter.label}: already up to date.\n`);
     else io.stdout(`${adapter.label}: done${result.backup ? ` (previous file kept as ${result.backup})` : ''}. ${adapter.capabilities.reload}\n`);
     if (result.skipped.length > 0) {
-      failed = true;
+      // in the guided setup an entry left alone is the user's own answer, not a failure
+      if (!request.quiet) failed = true;
       io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')}${request.quiet ? '' : ' (add --force to change them)'}\n`);
     }
   }

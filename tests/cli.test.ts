@@ -814,6 +814,22 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(shown).toContain('twake-mail');
     expect(shown).not.toContain('--force');
   });
+
+  it('leaves no journal behind even when a revocation fails during uninstall', async () => {
+    const { deps } = await readyForSetup();
+    idp.close();
+    expect(await main(['uninstall', '--yes'], captureIo(), deps)).toBe(1);
+    expect(await stat(journalFile(deps.paths)).then(() => true, () => false)).toBe(false);
+  });
+
+  it('exits with 0 when the user of the guided setup declines a replacement', async () => {
+    const { deps, cursor } = await readyForSetup();
+    await writeFile(cursor, JSON.stringify({ mcpServers: { 'twake-mail': { command: 'my-mail' } } }));
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([true, ['cursor'], ['mail'], false, true]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail']).toEqual({ command: 'my-mail' });
+  });
 });
 
 describe('main: run', () => {
