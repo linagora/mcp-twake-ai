@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { posix, win32 } from 'node:path';
 
 /** The computer an agent is looked for on: OS, environment and home folder (replaceable in tests). */
@@ -34,4 +34,23 @@ export async function isDirectory(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Hermes' home: HERMES_HOME, else ~/.hermes (%LOCALAPPDATA%\hermes on Windows), or the active profile in it. */
+export async function hermesHome(p: Place): Promise<string> {
+  const set = p.env.HERMES_HOME?.trim();
+  if (set) return set;
+  const path = pathOf(p);
+  const root = p.platform === 'win32' ? path.join(p.env.LOCALAPPDATA || path.join(p.home, 'AppData', 'Local'), 'hermes') : path.join(p.home, '.hermes');
+  let active = '';
+  try {
+    active = (await readFile(path.join(root, 'active_profile'), 'utf8')).trim();
+  } catch {
+    // no profile chosen
+  }
+  if (/^[A-Za-z0-9_][\w.-]*$/.test(active) && active !== 'default') {
+    const profile = path.join(root, 'profiles', active);
+    if (await isDirectory(profile)) return profile;
+  }
+  return root;
 }
