@@ -35,7 +35,9 @@ describe('handshake', () => {
     expect(await handshake({ command: process.execPath, args: [crashing] }, process.env)).toEqual({ ok: false, detail: 'Error: Cannot find module /opt/x/bin.js' });
   });
 
-  it('reads all of stderr before reporting a server that stopped, even what a child it started writes last', async () => {
+  // POSIX only: on Windows, a grandchild's inherited end does not keep the pipe open once its parent exits (and the
+  // launcher never exits before its server anyway); the fix itself (settle on close, not exit) holds everywhere
+  it.skipIf(process.platform === 'win32')('reads all of stderr before reporting a server that stopped, even what a child it started writes last', async () => {
     // as the launcher does: the server it starts shares its stderr, and may write after the launcher itself has exited
     const launcher = await script(
       "require('node:child_process').spawn(process.execPath, ['-e', \"setTimeout(() => process.stderr.write('token command failed: No Twake session\\\\n'), 200)\"], { stdio: ['ignore', 'ignore', 'inherit'] }); process.exit(1);",
