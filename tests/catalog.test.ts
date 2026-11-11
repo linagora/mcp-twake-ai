@@ -231,6 +231,8 @@ describe('serviceEnv: the user\'s own variables', () => {
     // nor append another file than a signature to every mail
     const key = { ...ctx, config: { ...config, env: { mail: { JMAP_SIGNATURE_PATH: '~/.ssh/id_ed25519' } } } };
     expect(() => serviceEnv('mail', 'cursor', key)).toThrow(/mcp-twake-mail.*Remove it from/);
+    const file = { ...ctx, config: { ...config, env: { mail: { JMAP_ANYTHING_FILE: '/etc/shadow' } } } };
+    expect(() => serviceEnv('mail', 'cursor', file)).toThrow(/names a file.*Remove it from/);
     const signature = { ...ctx, config: { ...config, env: { mail: { JMAP_SIGNATURE_PATH: '~/.mcp-twake-mail/signature.md' } } } };
     expect(serviceEnv('mail', 'cursor', signature).JMAP_SIGNATURE_PATH).toBe('~/.mcp-twake-mail/signature.md');
   });
@@ -346,6 +348,13 @@ describe('parseEnvOption', () => {
     }
     // forgetting it needs no check
     expect(parseEnvOption(['mail.JMAP_SIGNATURE_PATH='])).toEqual({ set: {}, unset: { mail: ['JMAP_SIGNATURE_PATH'] } });
+  });
+
+  it('refuses any other file the server would read, a token path first as a secret', () => {
+    expect(() => parseEnvOption(['mail.JMAP_SOMETHING_FILE=/etc/shadow'])).toThrow(/names a file the server reads/);
+    expect(() => parseEnvOption(['dav.DAV_SOMETHING_PATH=~/.ssh/id_ed25519'])).toThrow(/names a file the server reads/);
+    // a token path is a secret before being a file: the message says so
+    expect(() => parseEnvOption(['mail.JMAP_TOKEN_PATH=/tmp/token'])).toThrow(/may carry a secret/);
   });
 
   it('accepts the settings the servers document', () => {

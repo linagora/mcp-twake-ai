@@ -175,7 +175,11 @@ function builtinServiceEnv(service: ServiceId, agent: string, ctx: CatalogContex
 /** An environment variable name a user may set: upper case, digits and underscores, as the servers document them */
 const EXTRA_ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
 
-/** A variable a user may not set: it names a server, how to sign in to it, or whose account it is — the account's discovery says so */
+/**
+ * A variable a user may not set: it names a server, how to sign in to it, or whose account it is — the account's discovery says so.
+ * JMAP_DEFAULT_FROM is accepted on purpose: the send tools already take a sender per message, and a user may send from one of
+ * their aliases. It does not identify the account as MATRIX_USER_ID does, from whose domain Chat also finds its ToM server.
+ */
 const SERVER_ENV_NAME = /(^|_)(URL|URI|HOMESERVER|AUTH_METHOD|OIDC|HREF_PREFIX|ORGANIZER_EMAIL|USERNAME|USER_ID)($|_)/;
 
 /** A variable a user may not set: it carries a secret, which mcp-twake-ai keeps in the keychain */
@@ -195,6 +199,9 @@ const FILES_ENV_NAME = /_(DOWNLOAD|UPLOAD)_DIR$/;
  * The server only expands a leading `~`, so no sub-folder, no `..` and no hidden file can lead elsewhere.
  */
 const SIGNATURE_PATH = /^~[\\/]\.mcp-twake-mail[\\/][^.\\/][^\\/]*$/;
+
+/** Any other variable naming a file the server reads: a pasted path would give it any file of this computer */
+const FILE_ENV_NAME = /_(PATH|FILE)$/;
 
 /** The prefix of a service's own variables: DAV_ for Twake Calendar, JMAP_ for Twake Mail… */
 export function serviceEnvPrefix(service: ServiceId): string {
@@ -219,11 +226,14 @@ export function envNameRefusal(name: string, service: ServiceId): string | undef
     return `${name} is not a variable of ${CATALOG[service].name}: only ${prefix}…, USER_… and LOG_LEVEL may be set`;
   }
   if (MANAGED_ENV_NAME.test(name)) return `${name} is managed by mcp-twake-ai, which keeps one store per device`;
+  // the reason that matters most comes first: JMAP_TOKEN_PATH is a secret before being a file
+  if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
   if (FILES_ENV_NAME.test(name)) {
     return `${name} is managed by mcp-twake-ai: Mail, Drive and Chat share one folder for files, ${FILES_FOLDER}`;
   }
+  // the signature is the one file accepted, from its own folder: envValueRefusal() checks where
+  if (FILE_ENV_NAME.test(name) && name !== 'JMAP_SIGNATURE_PATH') return `${name} names a file the server reads: a pasted path would give it any file of this computer`;
   if (SERVER_ENV_NAME.test(name)) return `${name} names a server, how to sign in to it, or whose account it is: those come from the account, not from the user`;
-  if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
   return undefined;
 }
 
