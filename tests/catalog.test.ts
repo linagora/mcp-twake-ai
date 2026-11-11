@@ -233,6 +233,9 @@ describe('serviceEnv: the user\'s own variables', () => {
     expect(() => serviceEnv('mail', 'cursor', key)).toThrow(/mcp-twake-mail.*Remove it from/);
     const file = { ...ctx, config: { ...config, env: { mail: { JMAP_ANYTHING_FILE: '/etc/shadow' } } } };
     expect(() => serviceEnv('mail', 'cursor', file)).toThrow(/names a file.*Remove it from/);
+    // nor lift the approval of writes for every agent
+    const unapproved = { ...ctx, config: { ...config, env: { mail: { JMAP_APPROVAL: 'client' } } } };
+    expect(() => serviceEnv('mail', 'cursor', unapproved)).toThrow(/approval of writes.*Remove it from/);
     const signature = { ...ctx, config: { ...config, env: { mail: { JMAP_SIGNATURE_PATH: '~/.mcp-twake-mail/signature.md' } } } };
     expect(serviceEnv('mail', 'cursor', signature).JMAP_SIGNATURE_PATH).toBe('~/.mcp-twake-mail/signature.md');
   });
@@ -348,6 +351,14 @@ describe('parseEnvOption', () => {
     }
     // forgetting it needs no check
     expect(parseEnvOption(['mail.JMAP_SIGNATURE_PATH='])).toEqual({ set: {}, unset: { mail: ['JMAP_SIGNATURE_PATH'] } });
+  });
+
+  it('refuses what would lift the approval of writes, but lets the prompt wait longer', () => {
+    for (const option of ['mail.JMAP_APPROVAL=client', 'mail.JMAP_APPROVAL_EXEMPT=send_email', 'dav.DAV_APPROVAL=client', 'drive.TWAKE_DRIVE_APPROVAL_EXEMPT=trash_item']) {
+      expect(() => parseEnvOption([option]), option).toThrow(/approval of writes/);
+    }
+    // the timeout changes how long the prompt waits, not whether it is shown
+    expect(parseEnvOption(['mail.JMAP_APPROVAL_TIMEOUT_MS=900000']).set).toEqual({ mail: { JMAP_APPROVAL_TIMEOUT_MS: '900000' } });
   });
 
   it('refuses any other file the server would read, a token path first as a secret', () => {
