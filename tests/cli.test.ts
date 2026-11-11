@@ -575,11 +575,22 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toContain("JMAP_TOKEN_COMMAND='/usr/bin/node' '/opt/twake-ai/build/bin.js' 'token' 'mail'\n");
   });
 
-  it('still accepts the deprecated status --env', async () => {
+  it('still accepts the deprecated status --env, and says so on stderr', async () => {
     const { deps } = await readyForSetup();
     const io = captureIo();
     expect(await main(['status', '--env', 'mail'], io, deps)).toBe(0);
+    // stdout stays the environment itself, for the scripts that read it
     expect(io.out).toContain('JMAP_SESSION_URL=https://jmap.example.com/jmap/session\n');
+    expect(io.out).not.toContain('deprecated');
+    expect(io.err).toContain('deprecated');
+  });
+
+  it('ignores --env when --print-env is given, and says so', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['status', '--print-env', 'mail', '--env', 'dav'], io, deps)).toBe(0);
+    expect(io.out).toContain('JMAP_SESSION_URL=');
+    expect(io.err).toContain('ignored');
   });
 
   it('logs out of everything, then token asks to sign in again', async () => {

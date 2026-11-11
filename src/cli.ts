@@ -567,6 +567,14 @@ async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number
   const config = await loadConfig(d.paths);
   if (!config) throw new TwakeAiError('login_required', 'mcp-twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
   const printed = values['print-env'] ?? values.env;
+  if (values.env !== undefined) {
+    // said on stderr: what a script reads on stdout stays the environment itself
+    io.stderr(
+      values['print-env'] === undefined
+        ? 'status --env is deprecated: use --print-env (setup --env sets a variable, status --print-env shows one).\n'
+        : 'status --env is ignored: --print-env was given.\n',
+    );
+  }
   if (printed !== undefined) {
     if (!isServiceId(printed)) throw new TwakeAiError('usage', `"${printed}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
     const env = serviceEnv(printed, checkAgentId(values.agent ?? 'agent'), catalogContext(config, d));

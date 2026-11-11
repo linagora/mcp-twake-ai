@@ -146,7 +146,7 @@ With `--email`, `setup` first signs in to that account if it is not the current 
 ```sh
 mcp-twake-ai status                             # session, Drive, every entry, and each server started once
 mcp-twake-ai status --no-start                  # the same without starting the servers
-mcp-twake-ai status --print-env mail --agent cursor   # the environment run builds for a server
+mcp-twake-ai status --print-env mail --agent cursor  # the environment run builds for a server
 mcp-twake-ai logout                             # revokes every authorization and forgets the secrets
 mcp-twake-ai uninstall                          # shows what it would remove; add --yes to do it
 ```

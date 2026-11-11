@@ -4,14 +4,16 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Changed
+
+- `status --print-env <service>` shows the environment built for a server; `status --env` still works as a deprecated alias. `setup --env <service>.<VARIABLE>=<value>` sets one, so the two commands no longer share a flag name with two meanings.
+
 ## [0.2.0] - 2026-11-11
 
 ### Added
 - Mail, Drive and Chat share one folder for files, `~/Downloads/Twake`: an attachment Mail saves can go to the Drive or a Chat room without passing through the model. Requires mcp-twake-mail 4.2.0 (`download_attachment` with `save: true`), now the pinned version.
 
 ### Changed
-
-- `status --print-env <service>` shows the environment built for a server; `status --env` still works as a deprecated alias. `setup --env <service>.<VARIABLE>=<value>` sets one, so the two commands no longer share a flag name with two meanings.
 
 - The repository is now `linagora/mcp-twake-ai`, like the package.
 - Twake Drive registers mcp-twake-ai with the software id `github.com/linagora/mcp-twake-ai` (was `…/mcp-twake-wizard`). Clients registered before keep theirs, and are still removed by `logout` and `uninstall`.
