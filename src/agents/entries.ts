@@ -6,6 +6,8 @@ import type { AgentAdapter, Entry, EntryChange } from './types.js';
 
 /** What identifies an entry whatever the agent adds around it: `type: "stdio"` is the default, and an empty env is no env. */
 export function normalizeEntry(entry: Entry): Entry {
+  // an entry emptied or broken by hand is still compared, as a value of its own
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return { value: entry as unknown };
   const { type, env, ...rest } = entry;
   const out: Entry = { ...rest };
   if (type !== undefined && type !== 'stdio') out.type = type;

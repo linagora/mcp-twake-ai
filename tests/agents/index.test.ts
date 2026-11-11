@@ -29,6 +29,12 @@ describe('the agents', () => {
     expect(await detectAgents(adapters)).toEqual(['hermes', 'cursor']);
   });
 
+  it('count an agent whose detection fails as present, so that its plan reports the problem', async () => {
+    const { adapters } = await computer();
+    const broken = { ...adapters, cursor: { ...adapters.cursor, detect: async () => { throw new Error('EACCES: permission denied'); } } };
+    expect(await detectAgents(broken)).toEqual(['cursor']);
+  });
+
   it('are written once, then left as they are on the next run', async () => {
     const { home, adapters } = await computer();
     await mkdir(join(home, '.cursor'));
