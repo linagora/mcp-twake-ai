@@ -86,7 +86,7 @@ export async function refreshMatrix(
     raw = await postJson(url, { refresh_token: refreshToken }, http);
   } catch (error) {
     if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
-      throw new TwakeAiError('login_required', `The Twake Chat session of ${agent} has expired: run \`twake-ai login --chat --agent ${agent}\`.`);
+      throw new TwakeAiError('login_required', `The Twake Chat session of ${agent} has expired: run \`mcp-twake-ai login --chat --agent ${agent}\`.`);
     }
     throw error;
   }

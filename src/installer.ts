@@ -38,7 +38,7 @@ export async function entryPoint(paths: AppPaths, service: ServiceId): Promise<s
   try {
     manifest = JSON.parse(await readFile(join(packageDir(paths, pkg.name), 'package.json'), 'utf8')) as typeof manifest;
   } catch {
-    throw new TwakeAiError('unsupported', `${pkg.name} is not installed for twake-ai: run \`twake-ai export --agent <id>\`.`);
+    throw new TwakeAiError('unsupported', `${pkg.name} is not installed for mcp-twake-ai: run \`mcp-twake-ai export --agent <id>\`.`);
   }
   const bin = typeof manifest.bin === 'string' ? manifest.bin : (manifest.bin?.[pkg.name] ?? Object.values(manifest.bin ?? {})[0]);
   if (!bin) throw new TwakeAiError('bad_response', `${pkg.name} declares no command to start.`);

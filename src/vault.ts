@@ -58,7 +58,7 @@ export class FileVault implements Vault {
       return ((await readPrivateJson(this.paths.vaultFile)) ?? {}) as Record<string, string>;
     } catch (error) {
       if (error instanceof SyntaxError) {
-        throw new TwakeAiError('damaged_file', `${this.paths.vaultFile} is damaged: delete it, then run \`twake-ai login\`.`);
+        throw new TwakeAiError('damaged_file', `${this.paths.vaultFile} is damaged: delete it, then run \`mcp-twake-ai login\`.`);
       }
       throw error;
     }
@@ -95,7 +95,7 @@ export function pinnedEntryFactory(Entry: KeyringEntryConstructor): KeyringEntry
 const keychainError = (error: unknown) =>
   new TwakeAiError(
     'keychain',
-    `The system keychain could not be used (${String((error as Error)?.message ?? error).split('\n')[0]}): unlock it, or sign in again with TWAKE_AI_VAULT=file twake-ai login.`,
+    `The system keychain could not be used (${String((error as Error)?.message ?? error).split('\n')[0]}): unlock it, or sign in again with TWAKE_AI_VAULT=file mcp-twake-ai login.`,
   );
 
 /** macOS Keychain, Windows Credential Manager, Secret Service on Linux. */

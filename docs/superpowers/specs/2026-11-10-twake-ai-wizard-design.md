@@ -1,21 +1,21 @@
-# twake-ai : wizard d'installation et broker d'authentification des MCP Twake.ai
+# mcp-twake-ai : wizard d'installation et broker d'authentification des MCP Twake.ai
 
 - **Date** : 2026-11-10
 - **Statut** : design validé en brainstorming, spec à relire
-- **Paquet npm** : `twake-ai` (nom libre sur npm au 2026-11-10)
+- **Paquet npm** : `mcp-twake-ai` (nom libre sur npm au 2026-11-11). La commande porte le même nom (`mcp-twake-ai setup`, `mcp-twake-ai login`…). Gardent `twake-ai` : les dossiers de données, les variables `TWAKE_AI_*`, le service du trousseau, le journal et le client OIDC `twake-ai-agents`.
 - **Licence** : AGPL-3.0, comme les six MCP
 
 ## 1. Objectif
 
-Twake.ai publie six serveurs MCP (mail, dav, drive, chat, space, project). Chacun s'installe, se configure et s'authentifie à sa façon, et leurs six README renvoient tous à un `my-token-broker` qui n'existe pas. `twake-ai` comble ce manque : un client du SaaS Twake.ai tape son adresse email, se connecte une fois en SSO, choisit ses agents et repart avec les six MCP opérationnels.
+Twake.ai publie six serveurs MCP (mail, dav, drive, chat, space, project). Chacun s'installe, se configure et s'authentifie à sa façon, et leurs six README renvoient tous à un `my-token-broker` qui n'existe pas. `mcp-twake-ai` comble ce manque : un client du SaaS Twake.ai tape son adresse email, se connecte une fois en SSO, choisit ses agents et repart avec les six MCP opérationnels.
 
 ### Critères de succès
 
 1. Un client SaaS passe de rien aux six MCP opérationnels dans les agents de son choix, avec **une seule saisie de mot de passe SSO**, en moins de 5 minutes.
 2. Aucun secret ni jeton dans les configurations d'agents.
-3. `twake-ai status` est entièrement vert à la fin du `setup`.
+3. `mcp-twake-ai status` est entièrement vert à la fin du `setup`.
 4. Relancer `setup` ne change rien quand rien n'a changé (idempotence).
-5. Les jetons se renouvellent sans intervention tant que la session hors ligne de l'IdP est valide ; quand elle expire, l'agent dit à l'utilisateur de lancer `twake-ai login`.
+5. Les jetons se renouvellent sans intervention tant que la session hors ligne de l'IdP est valide ; quand elle expire, l'agent dit à l'utilisateur de lancer `mcp-twake-ai login`.
 
 ## 2. Périmètre v1
 
@@ -30,7 +30,7 @@ Twake.ai publie six serveurs MCP (mail, dav, drive, chat, space, project). Chacu
 
 ## 3. Contexte : les six MCP
 
-| Service (`id`) | Paquet npm (version au 2026-11-10) | Node | Authentification utilisée par twake-ai | Particularités |
+| Service (`id`) | Paquet npm (version au 2026-11-10) | Node | Authentification utilisée par mcp-twake-ai | Particularités |
 |---|---|---|---|---|
 | `mail` | `mcp-twake-mail` 4.1.0 | ≥ 20 | `JMAP_AUTH_METHOD=command`, `JMAP_TOKEN_COMMAND` | a déjà son propre `setup` ; non utilisé |
 | `dav` | `mcp-twake-dav` 4.2.0 | ≥ 20.3 | `DAV_AUTH_METHOD=command`, `DAV_TOKEN_COMMAND` | `DAV_ORGANIZER_EMAIL` obligatoire avec un jeton SSO ; `DAV_HREF_PREFIX` selon le serveur |
@@ -48,25 +48,25 @@ Les six serveurs demandent l'accord de l'utilisateur avant chaque écriture, par
 | Cible | Clients du SaaS Twake.ai |
 | Agents v1 | Claude Code, Hermes, Claude Desktop, Cursor, VS Code, plus `export` pour les autres |
 | Forme | CLI dans le terminal ; navigateur ouvert uniquement pour le SSO |
-| Architecture | Un paquet `twake-ai` = wizard + broker de jetons + lanceur. Les MCP restent inchangés |
+| Architecture | Un paquet `mcp-twake-ai` = wizard + broker de jetons + lanceur. Les MCP restent inchangés |
 | Client OIDC | Un client public unique « twake-ai-agents », créé par LINAGORA dans le LemonLDAP du SaaS |
 | Drive | OAuth cozy classique (l'échange OIDC → cozy est désactivé sur le SaaS) |
 | Chat | Un device Matrix par agent |
 | OS | macOS, Linux, Windows, serveur sans navigateur |
 | Installation | Préfixe privé, versions figées des MCP, pas de `npx -y` au lancement |
-| Configs d'agents | Elles appellent le lanceur `twake-ai run <service> --agent <id>`, sans variables d'env |
+| Configs d'agents | Elles appellent le lanceur `mcp-twake-ai run <service> --agent <id>`, sans variables d'env |
 
 ## 5. Architecture
 
 ```
-                    ┌──────────────── twake-ai (npm, TypeScript, Node ≥ 22.13) ───────────────┐
+                    ┌──────────────── mcp-twake-ai (npm, TypeScript, Node ≥ 22.13) ───────────────┐
  utilisateur ──►    │  setup ─► discovery ─► auth (login) ─► catalog ─► agents (écriture)    │
                     │  token <service> [--agent X] ─► auth (refresh) ─► stdout JSON           │
                     │  run <service> --agent X ─► catalog ─► lance le MCP (stdio relayé)      │
                     │  login · status · export · logout · uninstall                           │
                     │                         vault (coffre OS + verrou)                      │
                     └─────────────────────────────────────────────────────────────────────────┘
- agent ─lance─► twake-ai run X ─lance─► mcp-twake-X ─*_TOKEN_COMMAND─► twake-ai token X
+ agent ─lance─► mcp-twake-ai run X ─lance─► mcp-twake-X ─*_TOKEN_COMMAND─► mcp-twake-ai token X
 ```
 
 ### 5.1 Commandes
@@ -101,10 +101,10 @@ Bibliothèques pressenties : `@clack/prompts` (questions), `open` (navigateur), 
 
 ### 5.3 Installation et fichiers sur disque
 
-- `npx twake-ai setup` s'installe avec les six MCP, en **versions figées**, dans un préfixe privé :
+- `npx mcp-twake-ai setup` s'installe avec les six MCP, en **versions figées**, dans un préfixe privé :
   - Linux et macOS : `~/.local/share/twake-ai/`
   - Windows : `%LOCALAPPDATA%\twake-ai\`
-- Un raccourci `twake-ai` est créé à un chemin stable (`~/.local/bin/twake-ai`, ou l'équivalent Windows) pour l'utilisateur. Les configurations d'agents, elles, utilisent toujours des chemins absolus, parce que certains agents (Claude Desktop lancé depuis le Finder, par exemple) n'héritent pas du `PATH` de l'utilisateur.
+- Un raccourci `mcp-twake-ai` est créé à un chemin stable (`~/.local/bin/mcp-twake-ai`, ou l'équivalent Windows) pour l'utilisateur. Les configurations d'agents, elles, utilisent toujours des chemins absolus, parce que certains agents (Claude Desktop lancé depuis le Finder, par exemple) n'héritent pas du `PATH` de l'utilisateur.
 - `~/.config/twake-ai/config.json` (rien de secret) contient :
   - l'email, l'environnement découvert, la langue et le fuseau ;
   - le chemin absolu de Node retenu au `setup` ;
@@ -157,10 +157,10 @@ Scopes cozy, repris du README de mcp-twake-drive : `io.cozy.files io.cozy.files.
 
 **Devices Chat suivants :** si Synapse permet `POST /_matrix/client/v1/login/get_token` (MSC3882), les devices des agents suivants sont créés à partir du premier, sans navigateur. Sinon, une redirection SSO par agent, enchaînées automatiquement.
 
-### 7.2 Contrat de `twake-ai token`
+### 7.2 Contrat de `mcp-twake-ai token`
 
 - Succès : code 0, et sur stdout `{"access_token": "...", "expires_at": <epoch s>}`. Pour `chat`, on ajoute `"device_id"` et `"user_id"`.
-- Échec : code non nul, et sur stderr une phrase qui dit quoi faire, par exemple « Session Twake expirée : lancez `twake-ai login` ». Rien n'est écrit sur stdout.
+- Échec : code non nul, et sur stderr une phrase qui dit quoi faire, par exemple « Session Twake expirée : lancez `mcp-twake-ai login` ». Rien n'est écrit sur stdout.
 - Le jeton d'accès en cache est servi s'il lui reste plus de 60 s. Sinon :
   1. prendre le verrou de l'autorisation ;
   2. **relire le cache**, car un autre processus a pu renouveler entre-temps ;
@@ -232,13 +232,13 @@ Au lancement, une bannière s'affiche :
 
 Rien n'est écrit, ni configuration ni préfixe, avant la confirmation de l'étape 9. Les autorisations obtenues aux étapes 3 et 6 sont révoquées si l'utilisateur abandonne.
 
-## 9. Lanceur `twake-ai run`
+## 9. Lanceur `mcp-twake-ai run`
 
 Une entrée d'agent ne contient que :
 
 ```
 command: <chemin absolu de node>
-args:    [<préfixe>/node_modules/twake-ai/dist/cli.js, "run", "<service>", "--agent", "<agent>"]
+args:    [<préfixe>/node_modules/mcp-twake-ai/dist/cli.js, "run", "<service>", "--agent", "<agent>"]
 ```
 
 `run` lit `config.json`, construit l'environnement à partir de `catalog` et lance `<préfixe>/node_modules/mcp-twake-<x>/build/index.js` avec le même Node. stdin, stdout et stderr sont relayés tels quels, les signaux sont transmis, et le code de sortie est propagé.
@@ -273,7 +273,7 @@ Les variables que l'utilisateur définit déjà dans l'environnement de l'agent 
 Règles communes :
 
 - **Écriture atomique** : fichier temporaire dans le même répertoire, puis renommage. Une sauvegarde est faite avant la première modification.
-- **Propriété des entrées** : `twake-ai` ne touche qu'aux entrées qu'il a écrites. Il les reconnaît à leur nom et à l'empreinte notée dans `config.json`.
+- **Propriété des entrées** : `mcp-twake-ai` ne touche qu'aux entrées qu'il a écrites. Il les reconnaît à leur nom et à l'empreinte notée dans `config.json`.
 - **Entrée inconnue du même nom** (par exemple un `twake-drive` configuré à la main), ou entrée modifiée depuis le dernier passage : le plan l'indique (« remplace une entrée configurée hors wizard ») et demande une confirmation explicite, entrée par entrée.
 - **Échec chez un agent** : cet agent est restauré depuis sa sauvegarde. Les autres agents ne sont pas affectés, et le récapitulatif indique l'état de chacun.
 
@@ -292,11 +292,11 @@ Quand un agent ne gère pas l'élicitation :
 ## 11. Export pour les autres harnais
 
 ```
-twake-ai export --agent <id> [--services mail,drive,…] [--raw] [--out ./twake-ai-export]
+mcp-twake-ai export --agent <id> [--services mail,drive,…] [--raw] [--out ./twake-ai-export]
 ```
 
 - `--agent <id>` déclare un nouvel agent (`zed`, `windsurf`…). Si Chat fait partie des services, l'export crée tout de suite son device Matrix : le broker ne pourra pas ouvrir de navigateur plus tard, quand le MCP lui demandera un jeton.
-- **Par défaut**, les entrées passent par le lanceur. **`--raw`** donne les commandes MCP directes avec toutes les variables d'env en clair ; `*_TOKEN_COMMAND` pointe toujours vers `twake-ai token`.
+- **Par défaut**, les entrées passent par le lanceur. **`--raw`** donne les commandes MCP directes avec toutes les variables d'env en clair ; `*_TOKEN_COMMAND` pointe toujours vers `mcp-twake-ai token`.
 - Aucun secret dans les fichiers générés.
 
 | Fichier | Couvre |
@@ -321,9 +321,9 @@ twake-ai export --agent <id> [--services mail,drive,…] [--raw] [--out ./twake-
 | Connexion annulée ou expirée (5 min en loopback, durée du code en device flow) | arrêt sans rien écrire |
 | Port loopback occupé | port suivant de la liste fixe ; tous occupés → erreur qui nomme les ports |
 | Échec d'écriture chez un agent | restauration de cet agent (section 10.1) |
-| Jeton impossible à obtenir à l'exécution | `token` sort en erreur (section 7.2) ; le MCP la remonte, l'agent dit de lancer `twake-ai login` |
+| Jeton impossible à obtenir à l'exécution | `token` sort en erreur (section 7.2) ; le MCP la remonte, l'agent dit de lancer `mcp-twake-ai login` |
 | Verrou bloqué plus de 10 s | erreur explicite |
-| Node retenu au `setup` introuvable (mise à jour via nvm…) | `run` sort avec « Node introuvable : relancez `twake-ai setup` » ; `status` le signale |
+| Node retenu au `setup` introuvable (mise à jour via nvm…) | `run` sort avec « Node introuvable : relancez `mcp-twake-ai setup` » ; `status` le signale |
 | Clés E2EE de Chat non récupérables via ToM | Chat fonctionne pour les nouveaux messages ; `status` l'indique |
 
 ### 12.2 `status`
@@ -341,7 +341,7 @@ Une matrice agents × services, avec, pour chaque case :
 
 1. Retrait des entrées d'agents dont l'empreinte correspond ; pour les autres, l'outil demande.
 2. `logout` (section 7.3).
-3. Suppression du préfixe et du raccourci `twake-ai`.
+3. Suppression du préfixe et du raccourci `mcp-twake-ai`.
 4. Stores Chat : supprimés **seulement après confirmation**, car ils contiennent l'index local des messages.
 5. Suppression de `config.json`, du cache et du journal.
 
@@ -359,7 +359,7 @@ Vitest, comme les six MCP. Aucun accès réseau en CI.
 |---|---|---|
 | `discovery` | `fetch` et résolveur DNS factices ; fixtures enregistrées sur linagora.com le 2026-11-10 | SaaS complet ; domaine non Twake ; space ou project injoignables ; URL corrigée à la main ; repli sur le modèle `{username}` |
 | `auth` | faux IdP (authorize, token, device, userinfo, revoke), faux cozy (register, authorize, access_token), faux Synapse (login, refresh, logout, get_token) | PKCE loopback ; device flow (`authorization_pending`, `slow_down`, expiration) ; repli par URL collée ; refresh révoqué → code et message ; sonde `allow_oauth_token` dans les deux états |
-| concurrence | N processus `twake-ai token` lancés en même temps | le faux IdP ne reçoit qu'un seul refresh ; aucun refresh token invalidé |
+| concurrence | N processus `mcp-twake-ai token` lancés en même temps | le faux IdP ne reçoit qu'un seul refresh ; aucun refresh token invalidé |
 | `vault` | backend en mémoire, backend fichier | permissions 0600 ; refus d'un fichier trop ouvert |
 | `catalog` | | environnement attendu pour chaque service et chaque agent (instantanés) |
 | `agents` | fichiers de référence réalistes : Hermes avec commentaires et d'autres serveurs, un `twake-drive` existant configuré à la main ; faux binaire `claude` qui enregistre ses arguments | plan ; application ; idempotence (une deuxième application ne change rien) ; conflit d'empreinte ; restauration sur échec d'écriture |
@@ -391,7 +391,7 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 | Activer `allow_oauth_token` sur les contextes cozy du SaaS, avec `userinfo_url` vers l'IdP | exploitation cozy | non : sert à Drive sans redirection ni navigateur |
 | Activer `login/get_token` (MSC3882) sur Synapse | exploitation Matrix | non : évite une redirection par agent pour Chat |
 | README de mcp-twake-chat : installation par npm (correction prête sur la branche `docs/npm-install`) | dépôt mcp-twake-chat | non |
-| Une fois `twake-ai` publié, renvoyer vers lui comme broker dans les six README, à la place de `my-token-broker` | dépôts MCP | non |
+| Une fois `mcp-twake-ai` publié, renvoyer vers lui comme broker dans les six README, à la place de `my-token-broker` | dépôts MCP | non |
 
 ## 15. À vérifier au début de l'implémentation
 

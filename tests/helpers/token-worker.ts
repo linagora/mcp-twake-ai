@@ -1,4 +1,4 @@
-// One twake-ai process asking for a token, as an MCP server would: used by the concurrency test.
+// One mcp-twake-ai process asking for a token, as an MCP server would: used by the concurrency test.
 import { getToken } from '../../src/broker.js';
 import { loadConfig } from '../../src/config.js';
 import { appPaths } from '../../src/paths.js';

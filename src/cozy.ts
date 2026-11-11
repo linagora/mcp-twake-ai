@@ -23,7 +23,7 @@ const RegistrationSchema = z.object({
   registration_access_token: z.string(),
 });
 
-/** Registers twake-ai on the Twake Drive instance: it shows up as "Twake AI" in the connected devices. */
+/** Registers mcp-twake-ai on the Twake Drive instance: it shows up as "Twake AI" in the connected devices. */
 export async function registerCozyClient(instance: string, redirectUris: string[], http: HttpOptions = {}): Promise<CozyClient> {
   const url = `${requireSecureUrl(instance, 'The Twake Drive instance')}/auth/register`;
   const body = { redirect_uris: redirectUris, client_name: 'Twake AI', software_id: COZY_SOFTWARE_ID, client_kind: 'desktop' };
@@ -88,7 +88,7 @@ export async function refreshCozy(instance: string, client: CozyClient, refreshT
     raw = await postForm(url, { grant_type: 'refresh_token', refresh_token: refreshToken, client_id: client.clientId, client_secret: client.clientSecret }, http);
   } catch (error) {
     if (error instanceof HttpError && error.status >= 400 && error.status < 500) {
-      throw new TwakeAiError('login_required', 'Your Twake Drive connection has expired or was revoked: run `twake-ai login --drive`.');
+      throw new TwakeAiError('login_required', 'Your Twake Drive connection has expired or was revoked: run `mcp-twake-ai login --drive`.');
     }
     throw error;
   }
@@ -113,7 +113,7 @@ export async function exchangeOidcForCozy(instance: string, client: CozyClient, 
   return toTokens(await postJson(url, body, http), (http.now ?? nowS)(), url);
 }
 
-/** Whether the client registered by twake-ai still exists: the user may have removed "Twake AI" from the connected devices. */
+/** Whether the client registered by mcp-twake-ai still exists: the user may have removed "Twake AI" from the connected devices. */
 export async function cozyClientExists(instance: string, client: CozyClient, http: HttpOptions = {}): Promise<boolean> {
   try {
     await getJson(`${instance}/auth/register/${encodeURIComponent(client.clientId)}`, http, { authorization: `Bearer ${client.registrationToken}` });

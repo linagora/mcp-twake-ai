@@ -50,7 +50,7 @@ export interface CliDeps {
   readLine(question: string): Promise<string>;
   /** npm, replaceable in tests */
   runInstall?: Runner;
-  /** absolute paths of node and of twake-ai's command, written into agent configurations and token commands */
+  /** absolute paths of node and of mcp-twake-ai's command, written into agent configurations and token commands */
   nodePath: string;
   cliPath: string;
   loopbackPorts?: number[];
@@ -101,13 +101,13 @@ export function packageVersion(): string {
 }
 
 const USAGE = `usage:
-  twake-ai login [--email <address>] [--no-browser] [--client-id <id>] [--scope <scopes>]
-  twake-ai login --drive [--no-browser]
-  twake-ai login --chat --agent <id> [--no-browser]
-  twake-ai token <${SERVICE_IDS.join('|')}> [--agent <id>]
-  twake-ai run <${SERVICE_IDS.join('|')}> --agent <id>
-  twake-ai export --agent <id> [--services <list>] [--raw] [--out <dir>] [--no-browser]
-  twake-ai --version
+  mcp-twake-ai login [--email <address>] [--no-browser] [--client-id <id>] [--scope <scopes>]
+  mcp-twake-ai login --drive [--no-browser]
+  mcp-twake-ai login --chat --agent <id> [--no-browser]
+  mcp-twake-ai token <${SERVICE_IDS.join('|')}> [--agent <id>]
+  mcp-twake-ai run <${SERVICE_IDS.join('|')}> --agent <id>
+  mcp-twake-ai export --agent <id> [--services <list>] [--raw] [--out <dir>] [--no-browser]
+  mcp-twake-ai --version
 `;
 
 function usageErrors<T>(parse: () => T): T {
@@ -139,7 +139,7 @@ export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()
         return 2;
     }
   } catch (error) {
-    io.stderr(`twake-ai: ${describeError(error)}\n`);
+    io.stderr(`mcp-twake-ai: ${describeError(error)}\n`);
     return error instanceof TwakeAiError && error.code === 'usage' ? 2 : 1;
   }
 }
@@ -220,7 +220,7 @@ async function connectService(
   if (values.chat && values.agent === undefined) throw new TwakeAiError('usage', `Twake Chat is connected for one agent: add --agent <id>.\n\n${USAGE}`);
   if (values.agent !== undefined) checkAgentId(values.agent);
   const config = await loadConfig(d.paths);
-  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `twake-ai login --email <address>`.');
+  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `mcp-twake-ai login --email <address>`.');
   const vault = await openVault(config.vault, d.paths);
   const http = { fetch: d.fetch, now: d.now, sleep: d.sleep };
   const mode = chooseLoginMode({ noBrowser: values['no-browser'] ?? false, env: d.env, platform: d.platform }) === 'browser' ? 'browser' : 'paste';
@@ -250,7 +250,7 @@ async function tokenCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     throw new TwakeAiError('usage', `A Twake Chat token belongs to an agent: add --agent <id>.\n\n${USAGE}`);
   }
   const config = await loadConfig(d.paths);
-  if (!config) throw new TwakeAiError('login_required', 'twake-ai is not set up on this computer: run `twake-ai login --email <address>`.');
+  if (!config) throw new TwakeAiError('login_required', 'twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
   const token = await getToken(service, {
     paths: d.paths,
     config,
@@ -292,7 +292,7 @@ async function exportCommand(args: string[], io: Io, d: CliDeps): Promise<number
   if (values.agent === undefined) throw new TwakeAiError('usage', `export needs --agent <id>: the agent these files are for.\n\n${USAGE}`);
   const agent = checkAgentId(values.agent);
   let config = await loadConfig(d.paths);
-  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `twake-ai login --email <address>`.');
+  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `mcp-twake-ai login --email <address>`.');
   const services = values.services === undefined ? defaultServices(config) : values.services.split(',').map((s) => s.trim());
   for (const service of services) {
     if (!isServiceId(service)) throw new TwakeAiError('usage', `"${service}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);

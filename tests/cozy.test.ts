@@ -89,7 +89,7 @@ describe('tokens', () => {
   it('asks to connect Drive again when the refresh token is refused', async () => {
     await expect(refreshCozy(cozy.url, client, 'cozy-refresh-unknown')).rejects.toMatchObject({
       code: 'login_required',
-      message: expect.stringContaining('twake-ai login --drive'),
+      message: expect.stringContaining('mcp-twake-ai login --drive'),
     });
   });
 

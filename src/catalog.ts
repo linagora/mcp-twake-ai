@@ -12,7 +12,7 @@ export interface McpPackage {
   approval: string;
 }
 
-/** The six Twake.ai MCP servers, pinned: an agent never starts a version nobody tested with twake-ai. */
+/** The six Twake.ai MCP servers, pinned: an agent never starts a version nobody tested with mcp-twake-ai. */
 export const CATALOG: Record<ServiceId, McpPackage> = {
   mail: { name: 'mcp-twake-mail', version: '4.1.0', approval: 'JMAP' },
   dav: { name: 'mcp-twake-dav', version: '4.2.0', approval: 'DAV' },
@@ -31,7 +31,7 @@ export const hermesEntryName = (service: ServiceId) => `twake_${service}`;
 export interface CatalogContext {
   config: TwakeAiConfig;
   paths: AppPaths;
-  /** absolute paths of node and of twake-ai's command (build/bin.js) */
+  /** absolute paths of node and of mcp-twake-ai's command (build/bin.js) */
   nodePath: string;
   cliPath: string;
   language: 'en' | 'fr';
@@ -84,14 +84,14 @@ export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContex
     }
     case 'drive': {
       const instance = env.cozy.instance;
-      if (!instance || !config.drive) throw new TwakeAiError('login_required', 'Twake Drive is not connected: run `twake-ai login --drive`.');
+      if (!instance || !config.drive) throw new TwakeAiError('login_required', 'Twake Drive is not connected: run `mcp-twake-ai login --drive`.');
       return { TWAKE_DRIVE_URL: instance, TWAKE_DRIVE_TOKEN_COMMAND: tokenCommand('drive', undefined, ctx), ...common };
     }
     case 'chat': {
       const device = config.chat?.[agent];
-      if (!device) throw new TwakeAiError('login_required', `Twake Chat is not connected for ${agent}: run \`twake-ai login --chat --agent ${agent}\`.`);
+      if (!device) throw new TwakeAiError('login_required', `Twake Chat is not connected for ${agent}: run \`mcp-twake-ai login --chat --agent ${agent}\`.`);
       if (!isSafeDeviceId(device.deviceId)) {
-        throw new TwakeAiError('bad_response', `The Twake Chat device id of ${agent} is not usable: run \`twake-ai login --chat --agent ${agent}\`.`);
+        throw new TwakeAiError('bad_response', `The Twake Chat device id of ${agent} is not usable: run \`mcp-twake-ai login --chat --agent ${agent}\`.`);
       }
       return {
         MATRIX_USER_ID: device.userId,

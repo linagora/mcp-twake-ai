@@ -24,7 +24,7 @@ export interface LaunchDeps {
 export async function runService(service: ServiceId, agent: string, deps: LaunchDeps): Promise<number> {
   checkAgentId(agent);
   const config = await loadConfig(deps.paths);
-  if (!config) throw new TwakeAiError('login_required', 'twake-ai is not set up on this computer: run `twake-ai login --email <address>`.');
+  if (!config) throw new TwakeAiError('login_required', 'twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
   const built = serviceEnv(service, agent, { config, paths: deps.paths, nodePath: deps.nodePath, cliPath: deps.cliPath, language: deps.language, timezone: deps.timezone });
   // what the agent's environment already sets wins (spec §9)
   const env = { ...built, ...deps.env };

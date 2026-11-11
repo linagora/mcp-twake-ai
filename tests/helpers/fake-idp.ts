@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-/** An OIDC provider on 127.0.0.1 with the endpoints twake-ai uses, and knobs to misbehave. */
+/** An OIDC provider on 127.0.0.1 with the endpoints mcp-twake-ai uses, and knobs to misbehave. */
 export interface FakeIdp {
   url: string;
   refreshCount: number;

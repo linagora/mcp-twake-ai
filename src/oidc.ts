@@ -116,11 +116,11 @@ export async function refreshTokens(meta: OidcMetadata, client: OidcClient, refr
     if (error instanceof HttpError && error.oauthError === 'invalid_client') {
       throw new TwakeAiError(
         'login_required',
-        `The identity provider no longer accepts the client "${client.clientId}": run \`twake-ai login\`, or ask your administrator.`,
+        `The identity provider no longer accepts the client "${client.clientId}": run \`mcp-twake-ai login\`, or ask your administrator.`,
       );
     }
     if (error instanceof HttpError && (error.oauthError === 'invalid_grant' || error.status === 401)) {
-      throw new TwakeAiError('login_required', 'Your Twake session has expired: run `twake-ai login`.');
+      throw new TwakeAiError('login_required', 'Your Twake session has expired: run `mcp-twake-ai login`.');
     }
     throw error;
   }
@@ -149,7 +149,7 @@ export type DeviceAuthorization = z.infer<typeof DeviceAuthorizationSchema>;
 
 export async function startDeviceAuthorization(meta: OidcMetadata, client: OidcClient, http: HttpOptions = {}): Promise<DeviceAuthorization> {
   if (!meta.device_authorization_endpoint) {
-    throw new TwakeAiError('unsupported', `${meta.issuer} does not offer sign-in from another device: run twake-ai login on a computer with a browser.`);
+    throw new TwakeAiError('unsupported', `${meta.issuer} does not offer sign-in from another device: run mcp-twake-ai login on a computer with a browser.`);
   }
   const url = meta.device_authorization_endpoint;
   const device = parseAnswer(DeviceAuthorizationSchema, await postForm(url, { client_id: client.clientId, scope: client.scope }, http), url);
@@ -162,7 +162,7 @@ export async function startDeviceAuthorization(meta: OidcMetadata, client: OidcC
 export async function pollDeviceToken(meta: OidcMetadata, client: OidcClient, device: DeviceAuthorization, http: OidcHttp = {}): Promise<TokenSet> {
   const now = http.now ?? nowS;
   const sleep = http.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const expired = new TwakeAiError('login_cancelled', 'The sign-in code has expired: run twake-ai login again.');
+  const expired = new TwakeAiError('login_cancelled', 'The sign-in code has expired: run mcp-twake-ai login again.');
   const deadline = now() + device.expires_in;
   let interval = device.interval ?? 5;
   while (now() < deadline) {

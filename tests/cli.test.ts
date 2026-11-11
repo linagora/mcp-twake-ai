@@ -89,10 +89,10 @@ describe('main', () => {
     }
   });
 
-  it('asks to sign in first when twake-ai is not set up, with nothing on stdout', async () => {
+  it('asks to sign in first when mcp-twake-ai is not set up, with nothing on stdout', async () => {
     const io = captureIo();
     expect(await main(['token', 'mail'], io, await testDeps())).toBe(1);
-    expect(io.err).toMatch(/^twake-ai: .*twake-ai login/);
+    expect(io.err).toMatch(/^mcp-twake-ai: .*mcp-twake-ai login/);
     expect(io.out).toBe('');
   });
 
@@ -129,7 +129,7 @@ describe('main', () => {
   });
 });
 
-describe('the twake-ai process', () => {
+describe('the mcp-twake-ai process', () => {
   it('exits 1 with the message on stderr and an empty stdout when not set up', { timeout: 30_000 }, async () => {
     const { root } = await tempPaths();
     const result = await run(process.execPath, ['--import', 'tsx', 'src/bin.ts', 'token', 'mail'], {
@@ -137,7 +137,7 @@ describe('the twake-ai process', () => {
       env: { ...process.env, TWAKE_AI_HOME: root },
     }).catch((error: { code: number; stdout: string; stderr: string }) => error);
     expect(result).toMatchObject({ code: 1, stdout: '' });
-    expect((result as { stderr: string }).stderr).toContain('twake-ai login');
+    expect((result as { stderr: string }).stderr).toContain('mcp-twake-ai login');
   });
 });
 
@@ -171,7 +171,7 @@ describe('main: second sign-in and failures', () => {
     const io = captureIo();
     expect(await main(['token', 'mail'], io, deps)).toBe(1);
     expect(io.err).toContain(deps.paths.configFile);
-    expect(io.err).toContain('twake-ai login');
+    expect(io.err).toContain('mcp-twake-ai login');
   });
 
   it('reports an identity provider outage on one line, with what to do', async () => {
@@ -181,7 +181,7 @@ describe('main: second sign-in and failures', () => {
     deps.clock.t += 1_000;
     const io = captureIo();
     expect(await main(['token', 'mail'], io, deps)).toBe(1);
-    expect(io.err).toMatch(/^twake-ai: .*127\.0\.0\.1.*try again.*\n$/);
+    expect(io.err).toMatch(/^mcp-twake-ai: .*127\.0\.0\.1.*try again.*\n$/);
     expect(io.err.trim()).not.toContain('\n');
     expect(io.out).toBe('');
   });
@@ -193,7 +193,7 @@ describe('main: second sign-in and failures', () => {
     };
     const io = captureIo();
     expect(await main(['login', '--email', 'alice@example.com'], io, deps)).toBe(1);
-    expect(io.err).toBe('twake-ai: unexpected error: first line\n');
+    expect(io.err).toBe('mcp-twake-ai: unexpected error: first line\n');
   });
 });
 
@@ -250,7 +250,7 @@ describe('main: Twake Drive and Twake Chat', () => {
   it('asks to sign in before connecting a service', async () => {
     const io = captureIo();
     expect(await main(['login', '--drive'], io, await testDeps())).toBe(1);
-    expect(io.err).toContain('twake-ai login --email');
+    expect(io.err).toContain('mcp-twake-ai login --email');
   });
 
   it('needs an agent for Chat, a valid one, and one service at a time', async () => {
@@ -305,7 +305,7 @@ describe('main: Twake Drive and Twake Chat', () => {
     deps.runInstall = npm;
     const io = captureIo();
     expect(await main(['export', '--agent', 'zed', '--services', 'drive,chat', '--out', join(deps.paths.dataDir, '..', 'x')], io, deps)).toBe(1);
-    expect(io.err).toContain('twake-ai login --drive');
+    expect(io.err).toContain('mcp-twake-ai login --drive');
     expect(synapse.deviceNames).toEqual({});
     expect(npm.calls).toEqual([]);
   });
@@ -327,7 +327,7 @@ describe('main: Twake Drive and Twake Chat', () => {
     const deps = await signedIn();
     const io = captureIo();
     expect(await main(['token', 'drive'], io, deps)).toBe(1);
-    expect(io.err).toContain('twake-ai login --drive');
+    expect(io.err).toContain('mcp-twake-ai login --drive');
   });
 });
 

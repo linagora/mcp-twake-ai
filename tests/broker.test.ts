@@ -29,7 +29,7 @@ beforeEach(async () => {
 });
 afterEach(() => idp.close());
 
-/** A machine where `twake-ai login` has run: configuration saved, refresh token in a file vault, no cached token. */
+/** A machine where `mcp-twake-ai login` has run: configuration saved, refresh token in a file vault, no cached token. */
 async function signedIn(): Promise<BrokerDeps & { root: string }> {
   const { root, paths } = await tempPaths();
   const config: TwakeAiConfig = {
@@ -88,7 +88,7 @@ describe('getToken', () => {
   it('asks to sign in when the vault holds no refresh token', async () => {
     const d = await signedIn();
     await d.vault.delete(OIDC_REFRESH_KEY);
-    await expect(getToken('mail', d)).rejects.toMatchObject({ code: 'login_required', message: expect.stringContaining('twake-ai login') });
+    await expect(getToken('mail', d)).rejects.toMatchObject({ code: 'login_required', message: expect.stringContaining('mcp-twake-ai login') });
   });
 
   it('asks to sign in when the IdP no longer accepts the refresh token', async () => {
@@ -168,7 +168,7 @@ describe('getToken for Drive and Chat', () => {
 
   it('asks to connect Drive when it is not', async () => {
     const d = await signedIn();
-    await expect(getToken('drive', d)).rejects.toMatchObject({ code: 'login_required', message: expect.stringContaining('twake-ai login --drive') });
+    await expect(getToken('drive', d)).rejects.toMatchObject({ code: 'login_required', message: expect.stringContaining('mcp-twake-ai login --drive') });
   });
 
   it('serves the Chat token of an agent with its device and user', async () => {
