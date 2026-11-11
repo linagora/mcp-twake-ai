@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { claudeDesktopConfig, cursorConfig, hermesHome, vscodeConfig } from '../../src/agents/locations.js';
+import { claudeCodeState, claudeDesktopConfig, cursorConfig, hermesHome, vscodeConfig } from '../../src/agents/locations.js';
 import { tempDir } from '../helpers/tmp.js';
 
 const mac = { platform: 'darwin' as const, env: {}, home: '/Users/al' };
@@ -45,5 +45,13 @@ describe('the Hermes home', () => {
     expect(await hermesHome(p)).toBe(join(home, '.hermes'));
     await writeFile(join(home, '.hermes', 'active_profile'), '../../etc');
     expect(await hermesHome(p)).toBe(join(home, '.hermes'));
+  });
+});
+
+describe('the Claude Code state file', () => {
+  it('is ~/.claude.json, or in CLAUDE_CONFIG_DIR', () => {
+    expect(claudeCodeState(mac)).toBe('/Users/al/.claude.json');
+    expect(claudeCodeState(win)).toBe('C:\\Users\\Al Ice\\.claude.json');
+    expect(claudeCodeState({ ...linux, env: { CLAUDE_CONFIG_DIR: '/cfg' } })).toBe('/cfg/.claude.json');
   });
 });
