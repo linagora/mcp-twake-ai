@@ -4,7 +4,7 @@
 
 `twake-ai` is the token broker the six [Twake.ai MCP servers](https://github.com/linagora/mcp-twake-project#part-of-twakeai) refer to as `my-token-broker`. It signs you in once at your Twake.ai identity provider, keeps the refresh token in your operating system's keychain (macOS Keychain, Windows Credential Manager, Secret Service), and prints a fresh access token whenever an MCP server asks for one.
 
-> **Status: early.** This version serves Twake Mail, Twake Calendar and contacts, Twake Space, Twake Project, Twake Drive and Twake Chat. The agent configuration (`twake-ai setup`) and the export for other agents come next.
+> **Status: early.** This version serves the six Twake.ai services (Mail, Calendar and contacts, Drive, Chat, Space, Project), starts their MCP servers (`twake-ai run`) and exports their configuration for any agent (`twake-ai export`). Writing the configuration of each agent for you (`twake-ai setup`) comes next.
 
 ## Requirements
 
@@ -49,6 +49,16 @@ twake-ai login --chat --agent hermes   # gives that agent its own Twake Chat dev
 - **Twake Drive** has its own sign-in (cozy-stack OAuth). Your Twake session is already open, so the browser only asks you to accept the permissions. `twake-ai token drive` then serves Drive tokens.
 - **Twake Chat** encrypts messages end to end, and the encryption keys belong to a device. Each agent therefore gets its own device, "Twake AI · <agent>", listed in your Twake Chat sessions. `twake-ai token chat --agent hermes` prints the token together with its `device_id` and `user_id`, as mcp-twake-chat expects. Signing in again for the same agent replaces its device and logs the old one out.
 - **Over SSH or without a display:** `twake-ai` prints the address to open on a phone or another computer. At the end, the browser shows a page that cannot load: paste its address back into the terminal.
+
+## Any agent: `twake-ai export`
+
+```bash
+twake-ai export --agent zed                         # every service found and connected
+twake-ai export --agent cursor --services mail,chat --out ./cursor-config
+twake-ai export --agent zed --raw                   # the servers and their full environment
+```
+
+`export` installs the pinned Twake.ai MCP servers into twake-ai's private folder, creates the agent's Twake Chat device if needed, and writes `mcpServers.json` (Claude Desktop, Cursor, Windsurf, Cline, Gemini CLI…), `vscode-mcp.json`, `hermes.yaml`, `codex.toml`, `claude-code.sh` and one `<service>.env` per service, with a README saying where each goes. By default the entries start `twake-ai run <service> --agent <id>`, which builds the server's environment (URLs, token command, language, time zone); variables already set in the agent's environment win. No file holds a secret.
 
 ## Files
 

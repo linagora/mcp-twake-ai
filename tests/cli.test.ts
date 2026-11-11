@@ -12,6 +12,9 @@ import { tempPaths } from './helpers/tmp.js';
 import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
+import { fakeNpm } from './helpers/fake-mcp.js';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const run = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -65,6 +68,8 @@ async function testDeps(): Promise<CliDeps & { clock: { t: number } }> {
     sleep: async (ms) => void (clock.t += ms / 1000),
     loopbackPorts: [0],
     readLine: async () => '',
+    nodePath: '/usr/bin/node',
+    cliPath: '/opt/twake-ai/build/bin.js',
   };
 }
 
@@ -280,10 +285,58 @@ describe('main: Twake Drive and Twake Chat', () => {
     );
   });
 
+  it('exports for an agent, creating its Chat device and installing the servers first', async () => {
+    const deps = await signedIn();
+    const npm = fakeNpm(deps.paths);
+    deps.runInstall = npm;
+    const out = join(deps.paths.dataDir, '..', 'export');
+    const io = captureIo();
+    expect(await main(['export', '--agent', 'zed', '--services', 'chat', '--out', out], io, deps)).toBe(0);
+    expect(io.out).toContain('Twake Chat connected for zed');
+    expect(npm.calls[0]).toContain('mcp-twake-chat@0.6.0');
+    const servers = JSON.parse(await readFile(join(out, 'mcpServers.json'), 'utf8')).mcpServers;
+    expect(servers['twake-chat'].args).toEqual(['/opt/twake-ai/build/bin.js', 'run', 'chat', '--agent', 'zed']);
+    expect(io.out).toContain(out);
+  });
+
+  it('checks every service before creating a Chat device or installing anything', async () => {
+    const deps = await signedIn();
+    const npm = fakeNpm(deps.paths);
+    deps.runInstall = npm;
+    const io = captureIo();
+    expect(await main(['export', '--agent', 'zed', '--services', 'drive,chat', '--out', join(deps.paths.dataDir, '..', 'x')], io, deps)).toBe(1);
+    expect(io.err).toContain('twake-ai login --drive');
+    expect(synapse.deviceNames).toEqual({});
+    expect(npm.calls).toEqual([]);
+  });
+
+  it('says how to leave Chat out when it comes by default', async () => {
+    const deps = await signedIn();
+    deps.runInstall = fakeNpm(deps.paths);
+    const io = captureIo();
+    expect(await main(['export', '--agent', 'zed', '--out', join(deps.paths.dataDir, '..', 'y')], io, deps)).toBe(0);
+    expect(io.out).toContain('--services');
+  });
+
+  it('refuses an unknown service in --services', async () => {
+    const io = captureIo();
+    expect(await main(['export', '--agent', 'zed', '--services', 'mail,calendar'], io, await signedIn())).toBe(2);
+  });
+
   it('asks to connect Drive before serving its tokens', async () => {
     const deps = await signedIn();
     const io = captureIo();
     expect(await main(['token', 'drive'], io, deps)).toBe(1);
     expect(io.err).toContain('twake-ai login --drive');
+  });
+});
+
+describe('main: run', () => {
+  it('needs a service and an agent', async () => {
+    for (const argv of [['run'], ['run', 'mail'], ['run', 'calendar', '--agent', 'hermes'], ['run', 'mail', '--agent', '../x']]) {
+      const io = captureIo();
+      expect(await main(argv, io, await testDeps())).toBe(2);
+      expect(io.out).toBe('');
+    }
   });
 });

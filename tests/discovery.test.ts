@@ -171,3 +171,49 @@ describe('discover: endpoint safety and fallbacks', () => {
     await expect(discover('jdoe@linagora.com', deps(routes))).rejects.toMatchObject({ code: 'unavailable' });
   });
 });
+
+describe('discover: SRV targets', () => {
+  it('ignores SRV targets outside the email domain, because DNS answers are not authenticated', async () => {
+    const env = await discover(
+      'jdoe@linagora.com',
+      deps(linagoraRoutes, {
+        '_jmap._tcp.linagora.com': [{ name: 'jmap.attacker.example.', port: 443, priority: 0, weight: 1 }],
+        '_caldavs._tcp.linagora.com': [{ name: 'linagora.com.evil.example', port: 443, priority: 0, weight: 1 }],
+      }),
+    );
+    expect(env.services.mail).toBeUndefined();
+    expect(env.services.dav).toBeUndefined();
+  });
+
+  it('keeps the domain itself and its subdomains', async () => {
+    const env = await discover(
+      'jdoe@linagora.com',
+      deps({ ...linagoraRoutes, 'https://linagora.com/.well-known/jmap': () => new Response('{}', { status: 401 }) }, {
+        '_jmap._tcp.linagora.com': [{ name: 'linagora.com.', port: 443, priority: 0, weight: 1 }],
+        '_caldavs._tcp.linagora.com': [{ name: 'DAV.Linagora.com.', port: 443, priority: 0, weight: 1 }],
+      }),
+    );
+    expect(env.services.mail?.url).toBe('https://linagora.com/.well-known/jmap');
+    expect(env.services.dav?.url).toBe('https://dav.linagora.com/');
+  });
+});
+
+describe('discover: host names', () => {
+  it('ignores SRV targets that are not plain host names, whatever they end with', async () => {
+    const env = await discover(
+      'jdoe@linagora.com',
+      deps(linagoraRoutes, {
+        '_jmap._tcp.linagora.com': [{ name: 'attacker.example/.linagora.com', port: 443, priority: 0, weight: 1 }],
+        '_caldavs._tcp.linagora.com': [{ name: 'attacker.example#.linagora.com', port: 443, priority: 0, weight: 1 }],
+      }),
+    );
+    expect(env.services.mail).toBeUndefined();
+    expect(env.services.dav).toBeUndefined();
+  });
+
+  it('refuses an email domain that is not a plain host name', () => {
+    for (const bad of ['<jdoe@linagora.com>', 'jdoe@attacker.example/x', 'jdoe@linagora.com#x', 'jdoe@linagora..com']) {
+      expect(() => emailDomain(bad)).toThrow(expect.objectContaining({ code: 'usage' }));
+    }
+  });
+});

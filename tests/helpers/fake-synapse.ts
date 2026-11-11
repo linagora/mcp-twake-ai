@@ -14,6 +14,8 @@ export interface FakeSynapse {
   deviceNames: Record<string, string>;
   loggedOut: string[];
   refreshCount: number;
+  /** device id it hands out instead of DEVICE<n> */
+  deviceIdOverride: string | undefined;
   /** every access token issued so far expires (as refreshable Synapse tokens do after 5 minutes) */
   expireIssuedAccessTokens(): void;
   close(): Promise<void>;
@@ -45,6 +47,7 @@ export async function startFakeSynapse(): Promise<FakeSynapse> {
     deviceNames: {},
     loggedOut: [],
     refreshCount: 0,
+    deviceIdOverride: undefined,
     expireIssuedAccessTokens() {
       for (const access of accessTokens.keys()) expired.add(access);
     },
@@ -93,7 +96,7 @@ export async function startFakeSynapse(): Promise<FakeSynapse> {
     }
     if (req.method === 'POST' && url.pathname === '/_matrix/client/v3/login') {
       if (body.type !== 'm.login.token' || !loginTokens.delete(String(body.token))) return json(403, { errcode: 'M_FORBIDDEN', error: 'Invalid login token' });
-      const device = `DEVICE${++devices}`;
+      const device = synapse.deviceIdOverride ?? `DEVICE${++devices}`;
       synapse.deviceNames[device] = String(body.initial_device_display_name ?? '');
       return json(200, { user_id: '@alice:example.com', device_id: device, ...session(device, synapse.refreshableTokens && body.refresh_token === true) });
     }

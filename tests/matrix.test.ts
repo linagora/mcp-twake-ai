@@ -82,3 +82,12 @@ describe('spent login tokens', () => {
     await expect(loginWithToken(synapse.url, 'loginToken-spent', 'Twake AI · hermes')).rejects.toMatchObject({ code: 'login_cancelled' });
   });
 });
+
+describe('device ids', () => {
+  it('refuses a device id that could name another folder', async () => {
+    synapse.deviceIdOverride = '../../../../tmp/elsewhere';
+    const response = await fetch(ssoRedirectUrl(synapse.url, 'oidc-twake', 'http://127.0.0.1:8765/callback?state=S'), { redirect: 'manual' });
+    const loginToken = new URL(response.headers.get('location') ?? '').searchParams.get('loginToken') ?? '';
+    await expect(loginWithToken(synapse.url, loginToken, 'Twake AI · hermes')).rejects.toMatchObject({ code: 'bad_response' });
+  });
+});
