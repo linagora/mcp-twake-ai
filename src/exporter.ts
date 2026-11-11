@@ -68,7 +68,8 @@ export async function exportFiles(options: ExportOptions, ctx: CatalogContext): 
     'vscode-mcp.json': json({ servers: byName(entryName, (entry) => ({ type: 'stdio', ...withEnv(entry) })) }),
     'hermes.yaml': stringifyYaml({
       mcp_servers: byName(hermesEntryName, (entry, service) => ({
-        ...withEnv(entry, { ...entry.env, [`${CATALOG[service].approval}_APPROVAL_TIMEOUT_MS`]: HERMES_APPROVAL_TIMEOUT_MS }),
+        // for the agent id hermes the environment already waits longer for approvals (catalog): the entry stays the one setup writes
+        ...(options.agent === 'hermes' ? withEnv(entry) : withEnv(entry, { ...entry.env, [`${CATALOG[service].approval}_APPROVAL_TIMEOUT_MS`]: HERMES_APPROVAL_TIMEOUT_MS })),
         timeout: 420,
         elicitation: { enabled: true, timeout: 300 },
       })),
