@@ -22,7 +22,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/linagora/mcp-twake-wizard.git"
+    "url": "git+https://github.com/linagora/mcp-twake-ai.git"
+  },
+  "homepage": "https://github.com/linagora/mcp-twake-ai#readme",
+  "bugs": {
+    "url": "https://github.com/linagora/mcp-twake-ai/issues"
   },
   "license": "AGPL-3.0-only",
   "dependencies": {
