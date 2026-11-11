@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { ServiceId } from './broker.js';
+import { isServiceId, SERVICE_IDS, type ServiceId } from './broker.js';
 import type { TwakeAiConfig } from './config.js';
 import { TwakeAiError } from './errors.js';
 import { checkAgentId, isSafeDeviceId } from './grants.js';
@@ -78,9 +78,17 @@ export function systemTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
-/** The environment of one MCP server for one agent: URLs, token command, language, time zone, agent-specific settings. */
+/**
+ * The environment of one MCP server for one agent: URLs, token command, language, time zone, agent-specific settings,
+ * then what the user added for this service (`setup --env dav.DAV_DEFAULT_CALENDAR=XG`), which has the last word.
+ */
 export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContext): Record<string, string> {
   checkAgentId(agent);
+  return { ...builtinServiceEnv(service, agent, ctx), ...(ctx.config.env?.[service] ?? {}) };
+}
+
+/** The environment mcp-twake-ai builds itself, before the user's own variables */
+function builtinServiceEnv(service: ServiceId, agent: string, ctx: CatalogContext): Record<string, string> {
   const { config } = ctx;
   const env = config.environment;
   const common: Record<string, string> = { USER_LANGUAGE: ctx.language, USER_TIMEZONE: ctx.timezone };
@@ -139,4 +147,46 @@ export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContex
       return { TWAKE_PROJECT_URL: url, TWAKE_PROJECT_TOKEN_COMMAND: tokenCommand('project', undefined, ctx), TWAKE_PROJECT_OIDC_ISSUER: env.oidc.issuer, ...common };
     }
   }
+}
+
+/** An environment variable name a user may set: upper case, digits and underscores, as the servers document them */
+const EXTRA_ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
+
+/** Variables `--env` refuses: they carry a secret, or replace the token broker mcp-twake-ai maintains */
+const RESERVED_ENV_NAME = /TOKEN|SECRET|PASSWORD/i;
+
+/**
+ * Read `--env <service>.<VARIABLE>=<value>` options.
+ *
+ * @param values - one option per variable, as given on the command line
+ * @returns the variables per service, merged with what an earlier run set
+ * @throws TwakeAiError('usage') when an option is malformed, names an unknown service, or would carry a secret
+ */
+export function parseEnvOption(values: string[]): Record<string, Record<string, string>> {
+  const result: Record<string, Record<string, string>> = {};
+  for (const raw of values) {
+    const equals = raw.indexOf('=');
+    const target = equals < 0 ? '' : raw.slice(0, equals);
+    const value = equals < 0 ? '' : raw.slice(equals + 1);
+    const dot = target.indexOf('.');
+    const service = dot < 0 ? '' : target.slice(0, dot);
+    const name = dot < 0 ? '' : target.slice(dot + 1);
+    if (!isServiceId(service) || !EXTRA_ENV_NAME.test(name)) {
+      throw new TwakeAiError(
+        'usage',
+        `--env takes <service>.<VARIABLE>=<value>, with a service among ${SERVICE_IDS.join(', ')} and an upper-case variable name, not "${raw}".`,
+      );
+    }
+    if (value === '' || /[\r\n\0]/.test(value)) {
+      throw new TwakeAiError('usage', `--env ${service}.${name} needs a value, without a line break.`);
+    }
+    if (RESERVED_ENV_NAME.test(name)) {
+      throw new TwakeAiError(
+        'usage',
+        `--env ${service}.${name}: ${name} carries a secret or replaces the token broker. Secrets stay in the keychain, and mcp-twake-ai gives each server its own token command.`,
+      );
+    }
+    result[service] = { ...(result[service] ?? {}), [name]: value };
+  }
+  return result;
 }

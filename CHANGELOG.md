@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- `setup --env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment, for settings the servers document but mcp-twake-ai does not know (for example `dav.DAV_DEFAULT_CALENDAR`, so that an assistant reads your calendars instead of every calendar shared with you). The variables are kept in `config.json` and reused by every entry, `run`, `status --env` and `export`; a variable carrying a secret is refused.
+
 ### Changed
 
 - The repository is now `linagora/mcp-twake-ai`, like the package.

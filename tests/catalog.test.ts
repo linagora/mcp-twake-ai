@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { CATALOG, detectLanguage, entryName, hermesEntryName, serviceEnv, shellQuote, tokenCommand, type CatalogContext } from '../src/catalog.js';
+import { CATALOG, detectLanguage, entryName, hermesEntryName, parseEnvOption, serviceEnv, shellQuote, tokenCommand, type CatalogContext } from '../src/catalog.js';
 import type { TwakeAiConfig } from '../src/config.js';
 import { appPaths } from '../src/paths.js';
 
@@ -174,5 +174,52 @@ describe('serviceEnv: Chat device ids', () => {
   it('refuses a device id that could name another folder', () => {
     const hostile = { ...ctx, config: { ...config, chat: { hermes: { userId: '@jdoe:linagora.com', deviceId: '../../x' } } } };
     expect(() => serviceEnv('chat', 'hermes', hostile)).toThrow(expect.objectContaining({ code: 'bad_response' }));
+  });
+});
+
+describe('serviceEnv: the user\'s own variables', () => {
+  const withEnv = { ...ctx, config: { ...config, env: { dav: { DAV_DEFAULT_CALENDAR: 'XG' }, mail: { JMAP_DEFAULT_FROM: 'jdoe@linagora.com' } } } };
+
+  it('adds the variables of this service, after the ones mcp-twake-ai builds', () => {
+    const env = serviceEnv('dav', 'cursor', withEnv);
+    expect(env.DAV_DEFAULT_CALENDAR).toBe('XG');
+    expect(env.DAV_URL).toBe('https://dav.linagora.com/');
+    expect(env.USER_TIMEZONE).toBe('Europe/Paris');
+  });
+
+  it('leaves the other services alone', () => {
+    expect(serviceEnv('space', 'cursor', withEnv)).not.toHaveProperty('DAV_DEFAULT_CALENDAR');
+    expect(serviceEnv('mail', 'cursor', withEnv).JMAP_DEFAULT_FROM).toBe('jdoe@linagora.com');
+  });
+
+  it('lets the user override a variable mcp-twake-ai sets', () => {
+    const override = { ...ctx, config: { ...config, env: { dav: { USER_TIMEZONE: 'America/New_York' } } } };
+    expect(serviceEnv('dav', 'cursor', override).USER_TIMEZONE).toBe('America/New_York');
+  });
+});
+
+describe('parseEnvOption', () => {
+  it('reads one option per variable', () => {
+    expect(parseEnvOption(['dav.DAV_DEFAULT_CALENDAR=XG', 'mail.JMAP_DEFAULT_FROM=jdoe@linagora.com', 'dav.DAV_RECURRING_WRITES=false'])).toEqual({
+      dav: { DAV_DEFAULT_CALENDAR: 'XG', DAV_RECURRING_WRITES: 'false' },
+      mail: { JMAP_DEFAULT_FROM: 'jdoe@linagora.com' },
+    });
+  });
+
+  it('keeps the value, equal signs included', () => {
+    expect(parseEnvOption(['dav.DAV_SOMETHING=a=b'])).toEqual({ dav: { DAV_SOMETHING: 'a=b' } });
+  });
+
+  it('refuses an unknown service, a lower-case name or a missing value', () => {
+    expect(() => parseEnvOption(['calendar.FOO=1'])).toThrow(/is not a Twake.ai service|--env takes/);
+    expect(() => parseEnvOption(['dav.lower=1'])).toThrow(/--env takes/);
+    expect(() => parseEnvOption(['dav.NO_EQUALS'])).toThrow(/--env takes/);
+    expect(() => parseEnvOption(['dav.EMPTY='])).toThrow(/needs a value/);
+  });
+
+  it('refuses the variables that carry a secret or replace the token broker', () => {
+    expect(() => parseEnvOption(['dav.DAV_TOKEN_COMMAND=x'])).toThrow(/token broker/);
+    expect(() => parseEnvOption(['mail.JMAP_PASSWORD=x'])).toThrow(/secret/);
+    expect(() => parseEnvOption(['space.TWAKE_SPACE_CLIENT_SECRET=x'])).toThrow(/secret/);
   });
 });

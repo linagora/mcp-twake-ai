@@ -27,7 +27,7 @@ import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
 import { fileURLToPath } from 'node:url';
-import { detectLanguage, serviceEnv, systemTimezone, type CatalogContext } from './catalog.js';
+import { detectLanguage, parseEnvOption, serviceEnv, systemTimezone, type CatalogContext } from './catalog.js';
 import { needsConsent, planEntries, wantedEntries, type ActionKind, type EntryAction } from './agents/entries.js';
 import { applyAgent, createAdapters, detectAgents, recordOwned } from './agents/index.js';
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
@@ -124,7 +124,7 @@ export function packageVersion(): string {
 }
 
 const USAGE = `usage:
-  mcp-twake-ai setup [--email <address>] --agents <ids|detected> [--services <list>] [--yes] [--force] [--no-browser]
+  mcp-twake-ai setup [--email <address>] --agents <ids|detected> [--services <list>] [--yes] [--force] [--no-browser] [--env <service.VARIABLE=value>]
   mcp-twake-ai login [--email <address>] [--no-browser] [--client-id <id>] [--scope <scopes>]
   mcp-twake-ai login --drive [--no-browser]
   mcp-twake-ai login --chat --agent <id> [--no-browser]
@@ -415,13 +415,14 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
         force: { type: 'boolean' },
         'no-browser': { type: 'boolean' },
         email: { type: 'string' },
+        env: { type: 'string', multiple: true },
       },
       strict: true,
     }),
   );
   const guided = values.agents === undefined && !values.yes && d.interactive;
-  if (guided && (values.services !== undefined || values.force)) {
-    throw new TwakeAiError('usage', `--services and --force go with --agents: without them, setup asks.\n\n${USAGE}`);
+  if (guided && (values.services !== undefined || values.force || values.env !== undefined)) {
+    throw new TwakeAiError('usage', `--services, --force and --env go with --agents: without them, setup asks.\n\n${USAGE}`);
   }
   if (guided) {
     const kit = wizardKit(io, d, { noBrowser: values['no-browser'] });
@@ -453,8 +454,32 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     if (!isServiceId(service)) throw new TwakeAiError('usage', `"${service}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
   }
   const force = values.force ?? false;
+  if (values.env !== undefined) await storeExtraEnv(values.env, values.yes ?? false, io, d);
   const request = { agents: names as AgentId[], services: services as ServiceId[] | undefined, apply: values.yes ?? false, consent: () => force, noBrowser: values['no-browser'] };
   return (await runSetup(request, io, d)).code;
+}
+
+/**
+ * setup --env <service>.<VARIABLE>=<value>: keep the user's variables in config.json, so that every entry and every
+ * `export` keeps building them, rather than writing them by hand into the agents' files.
+ *
+ * Nothing is stored without --yes: the setup changes nothing before the user confirms it.
+ */
+async function storeExtraEnv(options: string[], apply: boolean, io: Io, d: CliDeps): Promise<void> {
+  const added = parseEnvOption(options);
+  const listed = Object.entries(added)
+    .flatMap(([service, variables]) => Object.entries(variables).map(([name, value]) => `${service}.${name}=${value}`))
+    .join(', ');
+  if (!apply) {
+    io.stdout(`Environment: ${listed} would be set for the agents: add --yes to do it.\n`);
+    return;
+  }
+  const config = await loadConfig(d.paths);
+  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `mcp-twake-ai login --email <address>`.');
+  const env = { ...(config.env ?? {}) };
+  for (const [service, variables] of Object.entries(added)) env[service] = { ...(env[service] ?? {}), ...variables };
+  await saveConfig(d.paths, { ...config, env });
+  io.stdout(`Environment: ${listed} set for the agents in ${d.paths.configFile}.\n`);
 }
 
 /** Plans, and with apply connects, installs and writes, the agents of a setup; shared by both setups. */

@@ -123,9 +123,12 @@ mcp-twake-ai setup --email jane.doe@example.com --agents detected   # signs in, 
 mcp-twake-ai setup --agents detected                      # shows what would change, writes nothing
 mcp-twake-ai setup --agents claude-code,hermes --yes      # writes it
 mcp-twake-ai setup --agents cursor --services mail,dav --yes
+mcp-twake-ai setup --agents claude-code --yes --env dav.DAV_DEFAULT_CALENDAR=XG
 ```
 
 With `--email`, `setup` first signs in to that account if it is not the current one. With `--yes`, it connects Twake Drive and gives each agent its own Twake Chat device when those services are chosen, installs the pinned servers, then writes the agents.
+
+`--env <service>.<VARIABLE>=<value>` adds a variable of your own to a server's environment (`--env` can be repeated). It is kept in `config.json` — never in an agent's file — and every entry, `run`, `status --env` and `export` builds it from there. Services are `mail`, `dav`, `drive`, `chat`, `space` and `project`; a variable carrying a secret (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`) is refused, since the token broker already handles those.
 
 | Agent (`--agents`)                | Where                                                                                                   | Approval of writes                            |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
