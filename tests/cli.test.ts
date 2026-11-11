@@ -14,7 +14,7 @@ import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { fakeNpm } from './helpers/fake-mcp.js';
 import { prefixDir } from '../src/installer.js';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readText } from '../src/agents/config-file.js';
 import { journalFile } from '../src/journal.js';
@@ -434,6 +434,31 @@ describe('main: Twake Drive and Twake Chat', () => {
     const io = captureIo();
     expect(await main(['setup', '--agents', 'zed'], io, (await readyForSetup()).deps)).toBe(2);
     expect(io.err).toContain('use export');
+  });
+
+  it('goes on with the other agents when one has an entry emptied by hand', async () => {
+    const { deps, cursor } = await readyForSetup();
+    await mkdir(join(deps.home, '.hermes'), { recursive: true });
+    await writeFile(join(deps.home, '.hermes', 'config.yaml'), 'mcp_servers:\n  twake_mail:\n');
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'hermes,cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(io.out).toMatch(/! twake_mail\s+replaces an entry configured outside mcp-twake-ai/);
+    expect(JSON.parse((await readText(cursor))!).mcpServers).toHaveProperty('twake-mail');
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('goes on with the other agents when a file cannot be read, naming it', async () => {
+    const { deps, cursor, vscode } = await readyForSetup();
+    await writeFile(cursor, '{}');
+    await chmod(cursor, 0o000);
+    try {
+      const io = captureIo();
+      expect(await main(['setup', '--agents', 'cursor,vscode', '--services', 'mail', '--yes'], io, deps)).toBe(1);
+      expect(io.out).toContain(`Cursor: `);
+      expect(io.out).toContain(cursor);
+      expect(JSON.parse((await readText(vscode))!).servers).toHaveProperty('twake-mail');
+    } finally {
+      await chmod(cursor, 0o600);
+    }
   });
 
   it('reports a damaged agent file and still writes the others', async () => {

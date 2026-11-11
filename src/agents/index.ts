@@ -30,7 +30,14 @@ export async function createAdapters(d: AgentsDeps): Promise<Record<AgentId, Age
 
 export async function detectAgents(adapters: Record<AgentId, AgentAdapter>): Promise<AgentId[]> {
   const found: AgentId[] = [];
-  for (const id of AGENT_IDS) if (await adapters[id].detect()) found.push(id);
+  for (const id of AGENT_IDS) {
+    try {
+      if (await adapters[id].detect()) found.push(id);
+    } catch {
+      // present but unreadable (permissions): its plan will say what is wrong
+      found.push(id);
+    }
+  }
   return found;
 }
 

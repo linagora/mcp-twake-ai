@@ -402,19 +402,19 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
   const plans: { adapter: AgentAdapter; owned: Record<string, string>; actions: EntryAction[] }[] = [];
   for (const agent of names as AgentId[]) {
     const adapter = adapters[agent];
-    if (!(await adapter.detect())) {
-      io.stdout(`${adapter.label}: not found on this computer (${adapter.target}), left out.\n`);
-      continue;
-    }
     const owned = config.agents?.[agent]?.entries ?? {};
+    // one agent's problem (unreadable file, broken entry) never stops the others
     try {
+      if (!(await adapter.detect())) {
+        io.stdout(`${adapter.label}: not found on this computer (${adapter.target}), left out.\n`);
+        continue;
+      }
       const actions = planEntries(await adapter.read(), wantedEntries(adapter, chosen, ctx, env), owned);
       plans.push({ adapter, owned, actions });
       printPlan(io, adapter, actions, force);
     } catch (error) {
-      if (!(error instanceof TwakeAiError)) throw error;
       failed = true;
-      io.stdout(`${adapter.label}: ${error.message}\n`);
+      io.stdout(`${adapter.label}: ${describeError(error)}\n`);
     }
   }
   const driveFirst = chosen.includes('drive') && !config.drive;
@@ -436,7 +436,13 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
       io.stdout(`${adapter.label}: not changed, ${result.error}\n`);
       continue;
     }
-    await recordOwned(d.paths, adapter.id, result.owned);
+    try {
+      await recordOwned(d.paths, adapter.id, result.owned);
+    } catch (error) {
+      failed = true;
+      io.stdout(`${adapter.label}: written, but ${d.paths.configFile} could not record it: ${describeError(error)}\n`);
+      continue;
+    }
     if (result.status === 'unchanged') io.stdout(`${adapter.label}: already up to date.\n`);
     else io.stdout(`${adapter.label}: done${result.backup ? ` (previous file kept as ${result.backup})` : ''}. ${adapter.capabilities.reload}\n`);
     if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);

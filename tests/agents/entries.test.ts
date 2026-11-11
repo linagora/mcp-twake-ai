@@ -73,6 +73,10 @@ describe('planEntries', () => {
     expect(actions.every(needsConsent)).toBe(true);
   });
 
+  it('treats an entry that is not an object (emptied by hand) as one it did not write', () => {
+    expect(kinds(planEntries({ 'twake-mail': null as unknown as Record<string, unknown> }, { 'twake-mail': entry('mail') }, {}))).toEqual([['twake-mail', 'replace-foreign']]);
+  });
+
   it('adopts an identical entry it has no record of', () => {
     expect(kinds(planEntries({ 'twake-mail': { type: 'stdio', ...entry('mail'), env: {} } }, { 'twake-mail': entry('mail') }, {}))).toEqual([['twake-mail', 'keep']]);
   });

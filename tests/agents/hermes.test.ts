@@ -43,6 +43,30 @@ describe('Hermes', () => {
     expect((await hermes.read()).twake_mail).toEqual(entry);
   });
 
+  it('changes nothing outside mcp_servers, byte for byte, as Hermes reads YAML 1.1', async () => {
+    const home = await tempDir();
+    const hermes = hermesAgent(home, now);
+    const before = "# Hermes\nmodel: x # m\nfile_mode: 0644\nmcp_servers:\n  github:\n    command: npx # official\n    args: [-y, '@m/s']\n";
+    const after = `# after\naccount_id: 0612345678\nlong: ${'word '.repeat(30).trim()}\ntoolsets:\n    - web\n`;
+    await writeFile(hermes.target, before + after);
+    const entry = { command: '/usr/bin/node', args: ['/opt/cli.js', 'run', 'mail', '--agent', 'hermes'], timeout: 420, elicitation: { enabled: true, timeout: 300 } };
+    await hermes.write({ set: { twake_mail: entry }, remove: [] });
+    const text = await readFile(hermes.target, 'utf8');
+    expect(text.startsWith(before)).toBe(true);
+    expect(text.endsWith(after)).toBe(true);
+    expect((await hermes.read()).twake_mail).toEqual(entry);
+  });
+
+  it('keeps the CRLF line endings of a file written on Windows', async () => {
+    const home = await tempDir();
+    const hermes = hermesAgent(home, now);
+    await writeFile(hermes.target, 'model: x\r\nmcp_servers:\r\n  github:\r\n    command: npx\r\n');
+    await hermes.write({ set: { twake_dav: { command: 'node', args: ['dav'] } }, remove: [] });
+    const text = await readFile(hermes.target, 'utf8');
+    expect(text.replace(/\r\n/g, '')).not.toContain('\n');
+    expect(Object.keys(await hermes.read())).toEqual(['github', 'twake_dav']);
+  });
+
   it('removes its entry and leaves the others', async () => {
     const home = await tempDir();
     const hermes = hermesAgent(home, now);

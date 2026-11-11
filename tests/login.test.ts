@@ -120,6 +120,15 @@ describe('signing in again', () => {
     expect(again.chat).toEqual({ hermes: { userId: '@alice:example.com', deviceId: 'D1' } });
   });
 
+  it('keeps the record of the entries written into each agent, whatever the account', async () => {
+    const d = await deps();
+    const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    const agents = { cursor: { entries: { 'twake-mail': '0123456789abcdef' } } };
+    await saveConfig(d.paths, { ...first, agents });
+    expect((await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d)).agents).toEqual(agents);
+    expect((await loginOidc({ email: 'bob@example.com', environment, client, mode: 'browser', ports: [0] }, d)).agents).toEqual(agents);
+  });
+
   it('drops them when signing in to another domain', async () => {
     const d = await deps();
     const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
