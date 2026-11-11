@@ -37,14 +37,15 @@ describe('the Hermes home', () => {
 
   it('follows the active profile when its folder exists', async () => {
     const home = await tempDir();
-    const p = { platform: 'linux' as const, env: {}, home };
-    await mkdir(join(home, '.hermes', 'profiles', 'work'), { recursive: true });
-    await writeFile(join(home, '.hermes', 'active_profile'), 'work\n');
-    expect(await hermesHome(p)).toBe(join(home, '.hermes', 'profiles', 'work'));
-    await writeFile(join(home, '.hermes', 'active_profile'), 'gone');
-    expect(await hermesHome(p)).toBe(join(home, '.hermes'));
-    await writeFile(join(home, '.hermes', 'active_profile'), '../../etc');
-    expect(await hermesHome(p)).toBe(join(home, '.hermes'));
+    const p = { platform: process.platform, env: { LOCALAPPDATA: join(home, 'AppData', 'Local') }, home };
+    const root = process.platform === 'win32' ? join(home, 'AppData', 'Local', 'hermes') : join(home, '.hermes');
+    await mkdir(join(root, 'profiles', 'work'), { recursive: true });
+    await writeFile(join(root, 'active_profile'), 'work\n');
+    expect(await hermesHome(p)).toBe(join(root, 'profiles', 'work'));
+    await writeFile(join(root, 'active_profile'), 'gone');
+    expect(await hermesHome(p)).toBe(root);
+    await writeFile(join(root, 'active_profile'), '../../etc');
+    expect(await hermesHome(p)).toBe(root);
   });
 });
 

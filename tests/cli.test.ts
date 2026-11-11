@@ -16,6 +16,7 @@ import { fakeNpm } from './helpers/fake-mcp.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readText } from '../src/agents/config-file.js';
+import { cursorConfig, vscodeConfig } from '../src/agents/locations.js';
 
 const run = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -341,8 +342,9 @@ describe('main: Twake Drive and Twake Chat', () => {
       environment: { ...config.environment, services: { mail: { url: 'https://jmap.example.com/jmap/session', source: 'discovered' } } },
     });
     deps.runInstall = fakeNpm(deps.paths);
-    const cursor = join(deps.home, '.cursor', 'mcp.json');
-    const vscode = join(deps.home, 'Library', 'Application Support', 'Code', 'User', 'mcp.json');
+    const place = { platform: deps.platform, env: deps.env, home: deps.home };
+    const cursor = cursorConfig(place);
+    const vscode = vscodeConfig(place);
     await mkdir(dirname(cursor), { recursive: true });
     await mkdir(dirname(vscode), { recursive: true });
     return { deps, cursor, vscode };

@@ -63,9 +63,11 @@ async function computer() {
   delete env.HERMES_HOME;
   delete env.VSCODE_APPDATA;
   await mkdir(join(home, '.cursor'), { recursive: true });
-  await mkdir(join(home, '.hermes'), { recursive: true });
-  await writeFile(join(home, '.hermes', 'config.yaml'), 'model: x\n');
-  return { home, env, claude };
+  // where Hermes looks without HERMES_HOME: %LOCALAPPDATA%\hermes on Windows, ~/.hermes elsewhere
+  const hermes = process.platform === 'win32' ? join(home, 'AppData', 'Local', 'hermes') : join(home, '.hermes');
+  await mkdir(hermes, { recursive: true });
+  await writeFile(join(hermes, 'config.yaml'), 'model: x\n');
+  return { home, env, claude, hermes };
 }
 
 const setup = (env: NodeJS.ProcessEnv, ...args: string[]) => execFileSync(process.execPath, [cli, 'setup', ...args], { env, encoding: 'utf8' });
@@ -76,14 +78,14 @@ describe('mcp-twake-ai setup, end to end', () => {
   }, 120_000);
 
   it('writes entries that start their server, for Cursor, Hermes and Claude Code', { timeout: 60_000 }, async () => {
-    const { home, env, claude } = await computer();
+    const { home, env, claude, hermes: hermesDir } = await computer();
     const out = setup(env, '--agents', 'cursor,hermes,claude-code', '--services', 'mail', '--yes');
     expect(out).toContain('Cursor: done.');
     const cursor = JSON.parse(await readFile(join(home, '.cursor', 'mcp.json'), 'utf8')).mcpServers['twake-mail'];
     expect(cursor.args).toEqual([cli, 'run', 'mail', '--agent', 'cursor']);
     expect(await toolsOf(cursor, env)).toEqual(['hello_Europe_Paris']);
     const { parse } = await import('yaml');
-    const hermes = parse(await readFile(join(home, '.hermes', 'config.yaml'), 'utf8')).mcp_servers.twake_mail;
+    const hermes = parse(await readFile(join(hermesDir, 'config.yaml'), 'utf8')).mcp_servers.twake_mail;
     expect(hermes).toMatchObject({ timeout: 420, elicitation: { enabled: true, timeout: 300 } });
     expect(await toolsOf(hermes, env)).toEqual(['hello_Europe_Paris']);
     const code = JSON.parse(await readFile(join(claude.configDir, '.claude.json'), 'utf8')).mcpServers['twake-mail'];
