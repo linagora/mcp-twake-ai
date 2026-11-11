@@ -8,11 +8,17 @@ export const journalFile = (paths: AppPaths) => join(paths.stateDir, 'twake-ai.l
 
 const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]+/g;
 const BEARER = /\b(Bearer\s+)[\w.~+/=-]+/gi;
-const SECRET = /\b(access_token|refresh_token|id_token|client_secret|registration_access_token|code_verifier|device_code|loginToken|code)(["']?\s*[:=]\s*["']?)([^\s"'&,}]+)/g;
+const SECRET = /\b(access_token|refresh_token|id_token|client_secret|registration_access_token|code_verifier|device_code|loginToken|accessToken|refreshToken|idToken|clientSecret|code)(\\?["']?\s*[:=]\s*\\?["']?)([^\s"'&,}\\]+)/g;
+const MATRIX = /\bsy[tr]_[\w-]+/g;
 
 /** Hides every token, code or secret a line may carry (spec §12.4). */
 export function mask(text: string): string {
-  return text.replace(SECRET, '$1$2***').replace(JWT, '***').replace(BEARER, '$1***');
+  return text
+    // an error code (M_UNKNOWN_TOKEN, INVALID_GRANT) is not a secret, and says what went wrong
+    .replace(SECRET, (all, name: string, sep: string, value: string) => (name === 'code' && /^[A-Z_]+$/.test(value) ? all : `${name}${sep}***`))
+    .replace(JWT, '***')
+    .replace(BEARER, '$1***')
+    .replace(MATRIX, '***');
 }
 
 /** Appends one masked line to twake-ai.log (private, rotated past 1 MB). The journal never stops a command. */

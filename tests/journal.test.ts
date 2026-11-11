@@ -14,6 +14,15 @@ describe('mask', () => {
   });
 });
 
+describe('mask, beyond snake_case', () => {
+  it('also hides camelCase names, escaped JSON and Matrix tokens, and leaves error codes readable', () => {
+    expect(mask('{"refreshToken":"r-1","accessToken":"a-1"}')).toBe('{"refreshToken":"***","accessToken":"***"}');
+    expect(mask('body {\\"refresh_token\\":\\"r-2\\"}')).toBe('body {\\"refresh_token\\":\\"***\\"}');
+    expect(mask('token syt_YWxpY2U_abcdef_123 and syr_YWxpY2U_xyz_456')).toBe('token *** and ***');
+    expect(mask('{"code":"M_UNKNOWN_TOKEN"}')).toBe('{"code":"M_UNKNOWN_TOKEN"}');
+  });
+});
+
 describe('journal', () => {
   it('appends a private, masked line per call', async () => {
     const { paths } = await tempPaths();
