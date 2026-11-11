@@ -7,8 +7,8 @@ mcp-twake-ai signs you in to your [Twake.ai](https://twake.ai) account, keeps th
 Security fixes are released for the latest minor version.
 
 | Version | Supported |
-|---|---|
-| 0.1.x | ✅ |
+| ------- | --------- |
+| 0.1.x   | ✅        |
 
 ## Reporting a vulnerability
 

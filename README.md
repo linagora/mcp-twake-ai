@@ -27,13 +27,13 @@ You type your email address and sign in once at your Twake.ai identity provider.
 
 `mcp-twake-ai` installs and connects its six open source MCP servers:
 
-| MCP server | Twake.ai service | Protocol |
-|---|---|---|
-| [mcp-twake-mail](https://github.com/linagora/mcp-twake-mail) | Twake Mail | JMAP |
-| [mcp-twake-dav](https://github.com/linagora/mcp-twake-dav) | Twake Calendar and contacts | CalDAV / CardDAV |
-| [mcp-twake-drive](https://github.com/linagora/mcp-twake-drive) | Twake Drive | cozy-stack API |
-| [mcp-twake-chat](https://github.com/linagora/mcp-twake-chat) | Twake Chat | Matrix |
-| [mcp-twake-space](https://github.com/linagora/mcp-twake-space) | Twake Space (team spaces) | Twake Space API |
+| MCP server                                                         | Twake.ai service                        | Protocol          |
+| ------------------------------------------------------------------ | --------------------------------------- | ----------------- |
+| [mcp-twake-mail](https://github.com/linagora/mcp-twake-mail)       | Twake Mail                              | JMAP              |
+| [mcp-twake-dav](https://github.com/linagora/mcp-twake-dav)         | Twake Calendar and contacts             | CalDAV / CardDAV  |
+| [mcp-twake-drive](https://github.com/linagora/mcp-twake-drive)     | Twake Drive                             | cozy-stack API    |
+| [mcp-twake-chat](https://github.com/linagora/mcp-twake-chat)       | Twake Chat                              | Matrix            |
+| [mcp-twake-space](https://github.com/linagora/mcp-twake-space)     | Twake Space (team spaces)               | Twake Space API   |
 | [mcp-twake-project](https://github.com/linagora/mcp-twake-project) | Twake Project (projects, boards, tasks) | Twake Project API |
 
 ## Requirements
@@ -127,13 +127,13 @@ mcp-twake-ai setup --agents cursor --services mail,dav --yes
 
 With `--email`, `setup` first signs in to that account if it is not the current one. With `--yes`, it connects Twake Drive and gives each agent its own Twake Chat device when those services are chosen, installs the pinned servers, then writes the agents.
 
-| Agent (`--agents`) | Where | Approval of writes |
-|---|---|---|
-| Claude Code (`claude-code`) | `claude mcp add --scope user` | in Claude Code |
-| Hermes (`hermes`) | `config.yaml` in `$HERMES_HOME`, `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows) or its active profile | in Hermes |
-| Claude Desktop (`claude-desktop`) | `claude_desktop_config.json` | not supported: reads work, writes are refused |
-| Cursor (`cursor`) | `~/.cursor/mcp.json` | in Cursor |
-| VS Code (`vscode`) | `Code/User/mcp.json` of the default profile | in VS Code |
+| Agent (`--agents`)                | Where                                                                                                   | Approval of writes                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| Claude Code (`claude-code`)       | `claude mcp add --scope user`                                                                           | in Claude Code                                |
+| Hermes (`hermes`)                 | `config.yaml` in `$HERMES_HOME`, `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows) or its active profile | in Hermes                                     |
+| Claude Desktop (`claude-desktop`) | `claude_desktop_config.json`                                                                            | not supported: reads work, writes are refused |
+| Cursor (`cursor`)                 | `~/.cursor/mcp.json`                                                                                    | in Cursor                                     |
+| VS Code (`vscode`)                | `Code/User/mcp.json` of the default profile                                                             | in VS Code                                    |
 
 - It only changes the entries it wrote. An entry with the same name configured by hand, or changed since, is left alone unless you add `--force`.
 - A file is copied to `<file>.bak-<date>` before it changes. Comments and other settings are kept.
@@ -182,12 +182,12 @@ claude mcp add twake-project --scope user \
 
 ## Files
 
-| What | Where (Linux, macOS) |
-|---|---|
-| Configuration (no secret) | `~/.config/twake-ai/config.json` |
-| Refresh token | the OS keychain, service `twake-ai`; otherwise `~/.config/twake-ai/secrets.json` (`0600`) |
-| Cached access tokens | `~/.cache/twake-ai/tokens/` (`0600`) |
-| Journal (steps and errors, secrets masked) | `~/.local/state/twake-ai/twake-ai.log` |
+| What                                       | Where (Linux, macOS)                                                                      |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| Configuration (no secret)                  | `~/.config/twake-ai/config.json`                                                          |
+| Refresh token                              | the OS keychain, service `twake-ai`; otherwise `~/.config/twake-ai/secrets.json` (`0600`) |
+| Cached access tokens                       | `~/.cache/twake-ai/tokens/` (`0600`)                                                      |
+| Journal (steps and errors, secrets masked) | `~/.local/state/twake-ai/twake-ai.log`                                                    |
 
 On Windows: `%APPDATA%\twake-ai` and `%LOCALAPPDATA%\twake-ai`. `TWAKE_AI_HOME` groups everything under one directory.
 

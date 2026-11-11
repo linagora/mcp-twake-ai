@@ -6,8 +6,8 @@ By participating, you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Ways to contribute
 
-- **Report a bug**: open an issue with the *Bug report* template.
-- **Suggest a feature or a new agent to configure**: open an issue with the *Feature request* template, and describe the use case before the solution.
+- **Report a bug**: open an issue with the _Bug report_ template.
+- **Suggest a feature or a new agent to configure**: open an issue with the _Feature request_ template, and describe the use case before the solution.
 - **Report a vulnerability**: never in a public issue; follow [SECURITY.md](SECURITY.md).
 - **Improve the documentation**: typos, examples, agent-specific notes, translations.
 - **Send a pull request**: for anything bigger than a small fix, open an issue first so we can agree on the approach.
@@ -69,7 +69,7 @@ scripts/             # live test against a real account, e2e runner
 - Follow [Conventional Commits](https://www.conventionalcommits.org/): `feat: configure Windsurf`.
 - Keep pull requests focused on one concern, describe what changes and why, and link the related issue.
 - Before opening the pull request: `npm run typecheck`, `npm run build` and `npm test` must pass (CI runs them on Linux, macOS and Windows).
-- Add a line to [CHANGELOG.md](CHANGELOG.md) under *Unreleased* for any user-visible change.
+- Add a line to [CHANGELOG.md](CHANGELOG.md) under _Unreleased_ for any user-visible change.
 
 ## License
 
