@@ -191,6 +191,13 @@ const LOGGING_ENV_NAME = /^LOG_LEVEL$/;
 /** A variable mcp-twake-ai manages itself for the agent: one encryption store per device */
 const MANAGED_ENV_NAME = /^MATRIX_STORE_DIR$/;
 
+/**
+ * A variable that lifts the approval of writes: `client` mode, or tools that write without asking. --env applies to every
+ * agent that runs the service, so a pasted one would let every agent write without you. *_APPROVAL_TIMEOUT_MS stays free:
+ * it changes how long the prompt waits, not whether it is shown.
+ */
+const APPROVAL_ENV_NAME = /_APPROVAL(_EXEMPT)?$/;
+
 /** A folder the servers write files into or read them from: FILES_FOLDER, shared by Mail, Drive and Chat */
 const FILES_ENV_NAME = /_(DOWNLOAD|UPLOAD)_DIR$/;
 
@@ -226,6 +233,9 @@ export function envNameRefusal(name: string, service: ServiceId): string | undef
     return `${name} is not a variable of ${CATALOG[service].name}: only ${prefix}…, USER_… and LOG_LEVEL may be set`;
   }
   if (MANAGED_ENV_NAME.test(name)) return `${name} is managed by mcp-twake-ai, which keeps one store per device`;
+  if (APPROVAL_ENV_NAME.test(name)) {
+    return `${name} would lift the approval of writes in every agent that runs ${CATALOG[service].name}: each write is approved by you first`;
+  }
   // the reason that matters most comes first: JMAP_TOKEN_PATH is a secret before being a file
   if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
   if (FILES_ENV_NAME.test(name)) {
