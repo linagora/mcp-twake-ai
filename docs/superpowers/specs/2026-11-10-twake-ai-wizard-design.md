@@ -264,11 +264,11 @@ Les variables que l'utilisateur définit déjà dans l'environnement de l'agent 
 
 | Agent (`id`) | Fichier | Méthode | Noms d'entrées | Réglages propres |
 |---|---|---|---|---|
-| Claude Code (`claude-code`) | portée `user` | `claude mcp add-json --scope user` et `claude mcp remove --scope user` ; jamais d'édition directe de `~/.claude.json`, que Claude Code réécrit lui-même | `twake-mail`, `twake-dav`, `twake-drive`, `twake-chat`, `twake-space`, `twake-project` | aucun |
-| Hermes (`hermes`) | `~/.hermes/config.yaml` ou `$HERMES_HOME/config.yaml` | bibliothèque `yaml` (API Document : commentaires et ordre préservés), sauvegarde `config.yaml.bak-<AAAAMMJJTHHMMSSZ>` | `twake_mail`, `twake_dav`… | `timeout: 420`, `elicitation: {enabled: true, timeout: 300}` |
+| Claude Code (`claude-code`) | portée `user` | `claude mcp add --scope user <nom> [-e K=V] -- <command> <args…>` et `claude mcp remove --scope user` : pas de JSON sur la ligne de commande, que `cmd.exe` abîmerait avec `claude.cmd` sous Windows ; jamais d'édition directe de `~/.claude.json` (lu seulement, ou dans `$CLAUDE_CONFIG_DIR`), que Claude Code réécrit lui-même | `twake-mail`, `twake-dav`, `twake-drive`, `twake-chat`, `twake-space`, `twake-project` | aucun |
+| Hermes (`hermes`) | `$HERMES_HOME/config.yaml`, sinon `~/.hermes` (`%LOCALAPPDATA%\hermes` sous Windows), ou le profil actif (`active_profile` → `profiles/<nom>`) | bibliothèque `yaml` (API Document : commentaires et ordre préservés), sauvegarde `config.yaml.bak-<AAAAMMJJTHHMMSSZ>` | `twake_mail`, `twake_dav`… | `timeout: 420`, `elicitation: {enabled: true, timeout: 300}` |
 | Claude Desktop (`claude-desktop`) | `claude_desktop_config.json` (chemin selon l'OS) | JSON + sauvegarde | `twake-*` | rappel de redémarrage ; signale si l'application tourne |
 | Cursor (`cursor`) | `~/.cursor/mcp.json` | JSON `mcpServers` + sauvegarde | `twake-*` | |
-| VS Code (`vscode`) | `<User>/mcp.json` (chemin selon l'OS) | JSON `servers`, `type: "stdio"` + sauvegarde | `twake-*` | |
+| VS Code (`vscode`) | `<base>/Code/User/mcp.json` du profil par défaut, où `<base>` = `$VSCODE_APPDATA`, sinon Application Support, `%APPDATA%` ou `~/.config` | JSON `servers`, `type: "stdio"` + sauvegarde | `twake-*` | |
 
 Règles communes :
 
@@ -281,8 +281,8 @@ Règles communes :
 
 | Agent | Élicitation |
 |---|---|
-| Claude Code, Hermes, VS Code | gérée |
-| Claude Desktop, Cursor | **à vérifier à l'implémentation** ; la table des capacités vit dans l'adaptateur |
+| Claude Code, Hermes, VS Code (depuis 1.102), Cursor (depuis 1.5) | gérée (vérifié le 2026-11-11) |
+| Claude Desktop | non confirmée au 2026-11-11 : traitée comme non gérée ; la table des capacités vit dans l'adaptateur |
 
 Quand un agent ne gère pas l'élicitation :
 

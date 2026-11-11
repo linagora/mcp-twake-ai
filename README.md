@@ -4,7 +4,7 @@
 
 `mcp-twake-ai` is the token broker the six [Twake.ai MCP servers](https://github.com/linagora/mcp-twake-project#part-of-twakeai) refer to as `my-token-broker`. It signs you in once at your Twake.ai identity provider, keeps the refresh token in your operating system's keychain (macOS Keychain, Windows Credential Manager, Secret Service), and prints a fresh access token whenever an MCP server asks for one.
 
-> **Status: early.** This version serves the six Twake.ai services (Mail, Calendar and contacts, Drive, Chat, Space, Project), starts their MCP servers (`mcp-twake-ai run`) and exports their configuration for any agent (`mcp-twake-ai export`). Writing the configuration of each agent for you (`mcp-twake-ai setup`) comes next.
+> **Status: early.** This version serves the six Twake.ai services (Mail, Calendar and contacts, Drive, Chat, Space, Project), starts their MCP servers (`mcp-twake-ai run`) writes them into Claude Code, Hermes, Claude Desktop, Cursor and VS Code (`mcp-twake-ai setup`), and exports their configuration for any other agent (`mcp-twake-ai export`). The guided, interactive `setup` comes next.
 
 ## Requirements
 
@@ -49,6 +49,29 @@ mcp-twake-ai login --chat --agent hermes   # gives that agent its own Twake Chat
 - **Twake Drive** has its own sign-in (cozy-stack OAuth). Your Twake session is already open, so the browser only asks you to accept the permissions. `mcp-twake-ai token drive` then serves Drive tokens.
 - **Twake Chat** encrypts messages end to end, and the encryption keys belong to a device. Each agent therefore gets its own device, "Twake AI · <agent>", listed in your Twake Chat sessions. `mcp-twake-ai token chat --agent hermes` prints the token together with its `device_id` and `user_id`, as mcp-twake-chat expects. Signing in again for the same agent replaces its device and logs the old one out.
 - **Over SSH or without a display:** `mcp-twake-ai` prints the address to open on a phone or another computer. At the end, the browser shows a page that cannot load: paste its address back into the terminal.
+
+## Configure your agents: `mcp-twake-ai setup`
+
+```sh
+mcp-twake-ai setup --agents detected                      # shows what would change, writes nothing
+mcp-twake-ai setup --agents claude-code,hermes --yes      # writes it
+mcp-twake-ai setup --agents cursor --services mail,dav --yes
+```
+
+`setup` writes one entry per service into each agent: `twake-mail`, `twake-dav`… (`twake_mail`… for Hermes). Each entry starts `mcp-twake-ai run <service> --agent <id>`, which builds the server's environment. With `--yes`, `setup` first connects Twake Drive and creates the Chat device of each agent when they are chosen and not connected yet, then installs the pinned servers.
+
+| Agent (`--agents`) | Where | Approval of writes |
+|---|---|---|
+| Claude Code (`claude-code`) | `claude mcp add --scope user` | in Claude Code |
+| Hermes (`hermes`) | `config.yaml` in `$HERMES_HOME`, `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows) or its active profile | in Hermes |
+| Claude Desktop (`claude-desktop`) | `claude_desktop_config.json` | not supported: reads work, writes are refused |
+| Cursor (`cursor`) | `~/.cursor/mcp.json` | in Cursor |
+| VS Code (`vscode`) | `Code/User/mcp.json` of the default profile | in VS Code |
+
+- It only changes the entries it wrote. An entry with the same name configured by hand, or changed since, is left alone unless you add `--force`.
+- A file is copied to `<file>.bak-<date>` before it changes. Comments and other settings are kept.
+- An agent whose write fails is put back as it was; the others are still written.
+- Running it again changes nothing. With fewer `--services`, it removes the entries you left out.
 
 ## Any agent: `mcp-twake-ai export`
 
