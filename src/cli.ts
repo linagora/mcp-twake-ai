@@ -691,7 +691,9 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     io.stdout(`Some entries are still in place and recorded in ${d.paths.configFile}: run uninstall --yes --force to remove them, or remove them by hand.\n`);
     return 1;
   }
-  io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`} Remove the command itself with: npm uninstall -g mcp-twake-ai\n`);
+  // run from npx's cache, there is no global install to remove
+  const command = isNpxCache(d.cliPath) ? '' : ' Remove the command itself with: npm uninstall -g mcp-twake-ai';
+  io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`}${command}\n`);
   // the files are gone, but an authorization may still be alive at the server: say so with the exit code
   return revocationFailed ? 1 : 0;
 }

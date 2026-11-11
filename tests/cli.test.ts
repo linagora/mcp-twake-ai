@@ -675,8 +675,11 @@ describe('main: Twake Drive and Twake Chat', () => {
     const shortcut = shortcutPath({ platform: deps.platform, env: deps.env, home: deps.home });
     expect(await readText(shortcut)).toContain(join(installed, 'build', 'bin.js'));
     expect(io.out).toContain('to your PATH');
-    expect(await main(['uninstall', '--yes'], captureIo(), deps)).toBe(0);
+    const removed = captureIo();
+    expect(await main(['uninstall', '--yes'], removed, deps)).toBe(0);
     expect(await readText(shortcut)).toBeUndefined();
+    // run from npx's cache, nothing was installed globally: no npm uninstall -g to suggest
+    expect(removed.out).not.toContain('npm uninstall -g');
   });
 
   it('giving up after signing in again keeps the session, Drive and Chat that were there before', async () => {

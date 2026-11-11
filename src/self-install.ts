@@ -57,6 +57,15 @@ async function shortcutState(path: string): Promise<'none' | 'ours' | 'foreign'>
   }
 }
 
+/** The shortcut's folder is in PATH (Windows compares paths without case). */
+export function shortcutInPath(place: Place): boolean {
+  const p = pathOf(place);
+  const same = (a: string, b: string) => (place.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const folder = p.resolve(p.dirname(shortcutPath(place)));
+  const dirs = (Object.entries(place.env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '').split(p.delimiter);
+  return dirs.some((dir) => dir !== '' && same(p.resolve(dir), folder));
+}
+
 /** A command at a stable path for the user (the agents always use absolute paths). Another file there is left alone. */
 export async function writeShortcut(place: Place, nodePath: string, cliPath: string): Promise<{ path: string; inPath: boolean; written: boolean }> {
   const path = shortcutPath(place);
@@ -67,8 +76,7 @@ export async function writeShortcut(place: Place, nodePath: string, cliPath: str
   if (place.platform === 'win32' && /[^\x20-\x7e]|!/.test(nodePath + cliPath)) {
     throw new TwakeAiError('unsupported', `${cliPath} has characters cmd.exe would misread (accents or !): no shortcut is written; run mcp-twake-ai with its full path.`);
   }
-  const dirs = (Object.entries(place.env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '').split(p.delimiter);
-  const inPath = dirs.some((dir) => dir && p.resolve(dir) === p.resolve(p.dirname(path)));
+  const inPath = shortcutInPath(place);
   if ((await shortcutState(path)) === 'foreign') return { path, inPath, written: false };
   await mkdir(p.dirname(path), { recursive: true });
   if (place.platform === 'win32') await writeFile(path, `@rem ${MARK}\r\n@"${nodePath}" "${cliPath}" %*\r\n`);
