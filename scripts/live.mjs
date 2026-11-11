@@ -18,7 +18,7 @@ const home = mkdtempSync(join(tmpdir(), 'mcp-twake-ai-live-'));
 const env = { ...process.env, TWAKE_AI_HOME: home, TWAKE_AI_VAULT: 'file' };
 
 /** Runs one step; stops the whole test, naming the step, when it fails or its output is not as expected. */
-function step(name, args, check = () => undefined, { failing = false, live = false } = {}) {
+function step(name, args, check = () => undefined, { failing = false, live = false, quiet = false } = {}) {
   process.stdout.write(`\n▶ ${name}: mcp-twake-ai ${args.join(' ')}\n`);
   let out = '';
   let failed = false;
@@ -29,7 +29,8 @@ function step(name, args, check = () => undefined, { failing = false, live = fal
     failed = true;
     out = `${error.stdout ?? ''}${error.stderr ?? ''}`;
   }
-  process.stdout.write(out);
+  // a token never reaches the terminal: steps that print one show a summary instead
+  if (!quiet) process.stdout.write(out);
   const problem = failed !== failing ? (failing ? 'it should have failed' : 'it failed') : check(out);
   if (problem) {
     console.error(`\n✗ ${name}: ${problem}`);
@@ -37,17 +38,43 @@ function step(name, args, check = () => undefined, { failing = false, live = fal
     process.exit(1);
   }
   console.log(`✓ ${name}`);
+  return out;
 }
 
 const token = (out) => {
   const parsed = JSON.parse(out);
   if (typeof parsed.access_token !== 'string' || !parsed.access_token) return 'no access_token';
   if (!(parsed.expires_at > Date.now() / 1000)) return 'expires_at is not in the future';
+  // what the token is for, never the token itself
+  const claims = JSON.parse(Buffer.from(parsed.access_token.split('.')[1] ?? '', 'base64url').toString() || '{}');
+  console.log(`  access_token ****, expires_at ${new Date(parsed.expires_at * 1000).toISOString()}, aud ${JSON.stringify(claims.aud ?? '?')}`);
   return undefined;
 };
 
+/** One light authenticated call per backend: does it accept the token (its audience)? */
+async function backend(service, url, accessToken) {
+  const auth = { authorization: `Bearer ${accessToken}` };
+  const base = url.replace(/\/+$/, '');
+  const request =
+    service === 'mail' ? fetch(url, { headers: { ...auth, accept: 'application/json' } })
+    : service === 'dav' ? fetch(url, { method: 'PROPFIND', headers: { ...auth, depth: '0' } })
+    : fetch(`${base}/api/${service === 'space' ? 'spaces' : 'projects'}`, { headers: { ...auth, accept: 'application/json' } });
+  try {
+    const answer = await request;
+    return { service, ok: answer.status >= 200 && answer.status < 300, status: answer.status };
+  } catch (error) {
+    return { service, ok: false, status: String(error.cause?.code ?? error.message) };
+  }
+}
+
 step('sign in', ['login', '--email', email, ...(process.env.LIVE_NO_BROWSER === '1' ? ['--no-browser'] : [])], undefined, { live: true });
-for (const service of ['mail', 'dav', 'space', 'project']) step(`token ${service}`, ['token', service], token);
+const services = JSON.parse(readFileSync(join(home, 'config', 'config.json'), 'utf8')).environment.services;
+const backends = [];
+for (const service of ['mail', 'dav', 'space', 'project']) {
+  const out = step(`token ${service}`, ['token', service], token, { quiet: true });
+  if (services[service]?.url) backends.push(await backend(service, services[service].url, JSON.parse(out).access_token));
+}
+for (const check of backends) console.log(`${check.ok ? '✓' : '✗'} ${check.service} backend: HTTP ${check.status}${check.ok ? ', token accepted' : ', token refused (audience or rights?)'}`);
 step('status', ['status', '--no-start'], (out) => (out.includes('✓ Twake session') ? undefined : 'the session is not ✓'));
 // the refresh token before logout, to check afterwards that the identity provider itself refuses it (spec §13.5)
 const config = JSON.parse(readFileSync(join(home, 'config', 'config.json'), 'utf8'));
@@ -68,4 +95,9 @@ if (answer.ok || body.error !== 'invalid_grant') {
 console.log('✓ the identity provider refuses the revoked refresh token (invalid_grant)');
 step('token after logout', ['token', 'mail'], (out) => (out.includes('mcp-twake-ai login') ? undefined : 'it does not ask to sign in again'), { failing: true });
 rmSync(home, { recursive: true, force: true });
+const refused = backends.filter((check) => !check.ok);
+if (refused.length > 0) {
+  console.error(`\n✗ the token was refused by: ${refused.map((check) => `${check.service} (HTTP ${check.status})`).join(', ')}`);
+  process.exit(1);
+}
 console.log('\nAll live steps passed.');
