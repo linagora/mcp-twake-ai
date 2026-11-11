@@ -58,6 +58,18 @@ describe('Cursor', () => {
   });
 });
 
+describe('a JSON file with a byte order mark', () => {
+  it('is read and keeps its mark, as editors on Windows write it', async () => {
+    const cursor = cursorAgent(await place(), now);
+    await mkdir(dirname(cursor.target), { recursive: true });
+    await writeFile(cursor.target, '\uFEFF{ "mcpServers": { "other": { "command": "x" } } }\n');
+    expect(Object.keys(await cursor.read())).toEqual(['other']);
+    await cursor.write({ set: { 'twake-mail': mail }, remove: [] });
+    expect((await readFile(cursor.target, 'utf8')).startsWith('\uFEFF')).toBe(true);
+    expect(Object.keys(await cursor.read())).toEqual(['other', 'twake-mail']);
+  });
+});
+
 describe('Claude Desktop', () => {
   it('keeps its own settings and the servers configured by hand', async () => {
     const desktop = claudeDesktopAgent(await place(), now);
