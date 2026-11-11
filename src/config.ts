@@ -18,6 +18,8 @@ export const ConfigSchema = z.object({
   drive: z.object({ clientId: z.string(), apps: z.array(z.string()) }).optional(),
   /** Twake Chat: one Matrix device per agent */
   chat: z.record(z.string(), z.object({ userId: z.string(), deviceId: z.string() })).optional(),
+  /** what mcp-twake-ai wrote into each agent: entry name → fingerprint (spec §10.1, it only touches its own entries) */
+  agents: z.record(z.string(), z.object({ entries: z.record(z.string(), z.string()) })).optional(),
 });
 export type TwakeAiConfig = z.infer<typeof ConfigSchema>;
 
