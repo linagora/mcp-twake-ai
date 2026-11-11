@@ -14,6 +14,10 @@ export const ConfigSchema = z.object({
   vault: z.enum(['keyring', 'file']),
   oidc: z.object({ clientId: z.string(), scope: z.string() }),
   environment: TwakeEnvironmentSchema,
+  /** Twake Drive: the OAuth client registered on the instance (secrets in the vault) and the apps of the organization */
+  drive: z.object({ clientId: z.string(), apps: z.array(z.string()) }).optional(),
+  /** Twake Chat: one Matrix device per agent */
+  chat: z.record(z.string(), z.object({ userId: z.string(), deviceId: z.string() })).optional(),
 });
 export type TwakeAiConfig = z.infer<typeof ConfigSchema>;
 

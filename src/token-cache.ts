@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readPrivateJson, writePrivateFile } from './files.js';
 import type { AppPaths } from './paths.js';
@@ -27,4 +28,8 @@ export async function readCachedToken(paths: AppPaths, grant: string): Promise<C
 
 export async function writeCachedToken(paths: AppPaths, grant: string, token: CachedToken): Promise<void> {
   await writePrivateFile(file(paths, grant), JSON.stringify(token));
+}
+
+export async function deleteCachedToken(paths: AppPaths, grant: string): Promise<void> {
+  await rm(file(paths, grant), { force: true });
 }

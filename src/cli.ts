@@ -9,6 +9,11 @@ import { hostOf, HttpError } from './http.js';
 import { chooseLoginMode, loginOidc } from './login.js';
 import { appPaths, type AppPaths } from './paths.js';
 import { chooseVault, openVault, type Vault } from './vault.js';
+import { createInterface } from 'node:readline/promises';
+import { checkAgentId } from './grants.js';
+import { loginChat } from './login-chat.js';
+import { loginDrive } from './login-drive.js';
+import { LOOPBACK_PORTS } from './loopback.js';
 
 export interface Io {
   stdout(text: string): void;
@@ -35,6 +40,8 @@ export interface CliDeps {
   /** epoch seconds */
   now(): number;
   sleep(ms: number): Promise<void>;
+  /** reads one line typed by the user (the address pasted back when there is no browser) */
+  readLine(question: string): Promise<string>;
   loopbackPorts?: number[];
 }
 
@@ -52,7 +59,27 @@ export function defaultDeps(): CliDeps {
     chooseVault: (paths) => chooseVault(paths),
     now: () => Math.floor(Date.now() / 1000),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    readLine: (question) => readLineFrom(process.stdin, process.stdout, question),
   };
+}
+
+/** One line from `input`; refuses, instead of hanging, when the input closes first (no terminal, `< /dev/null`). */
+export function readLineFrom(input: NodeJS.ReadableStream, output: NodeJS.WritableStream, question: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const rl = createInterface({ input, output });
+    let answered = false;
+    // 'line' and 'close' are synchronous events: a line followed at once by the end of the input still counts
+    rl.once('line', (line) => {
+      answered = true;
+      rl.close();
+      resolve(line);
+    });
+    rl.once('close', () => {
+      if (!answered) reject(new TwakeAiError('login_cancelled', 'No address was pasted (the input closed): run the command again in a terminal.'));
+    });
+    rl.setPrompt(question);
+    rl.prompt();
+  });
 }
 
 export function packageVersion(): string {
@@ -62,7 +89,9 @@ export function packageVersion(): string {
 
 const USAGE = `usage:
   twake-ai login [--email <address>] [--no-browser] [--client-id <id>] [--scope <scopes>]
-  twake-ai token <${SERVICE_IDS.join('|')}>
+  twake-ai login --drive [--no-browser]
+  twake-ai login --chat --agent <id> [--no-browser]
+  twake-ai token <${SERVICE_IDS.join('|')}> [--agent <id>]
   twake-ai --version
 `;
 
@@ -114,10 +143,18 @@ async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number>
         'no-browser': { type: 'boolean' },
         'client-id': { type: 'string' },
         scope: { type: 'string' },
+        drive: { type: 'boolean' },
+        chat: { type: 'boolean' },
+        agent: { type: 'string' },
       },
       strict: true,
     }),
   );
+  if (values.agent !== undefined && !values.chat) throw new TwakeAiError('usage', `--agent goes with --chat.\n\n${USAGE}`);
+  if ((values.drive || values.chat) && (values.email !== undefined || values['client-id'] !== undefined || values.scope !== undefined)) {
+    throw new TwakeAiError('usage', `--email, --client-id and --scope belong to the Twake sign-in, not to --drive or --chat.\n\n${USAGE}`);
+  }
+  if (values.drive || values.chat) return connectService(values, io, d);
   // a damaged configuration must not stop the sign-in that repairs it
   const saved = await loadConfig(d.paths).catch(() => undefined);
   const email = values.email ?? saved?.email;
@@ -154,10 +191,45 @@ async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number>
   return 0;
 }
 
+/** login --drive / login --chat --agent <id>: connects one service on top of the Twake session. */
+async function connectService(
+  values: { drive?: boolean; chat?: boolean; agent?: string; 'no-browser'?: boolean },
+  io: Io,
+  d: CliDeps,
+): Promise<number> {
+  if (values.drive && values.chat) throw new TwakeAiError('usage', `Connect one service at a time.\n\n${USAGE}`);
+  if (values.chat && values.agent === undefined) throw new TwakeAiError('usage', `Twake Chat is connected for one agent: add --agent <id>.\n\n${USAGE}`);
+  if (values.agent !== undefined) checkAgentId(values.agent);
+  const config = await loadConfig(d.paths);
+  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `twake-ai login --email <address>`.');
+  const vault = await openVault(config.vault, d.paths);
+  const http = { fetch: d.fetch, now: d.now, sleep: d.sleep };
+  const mode = chooseLoginMode({ noBrowser: values['no-browser'] ?? false, env: d.env, platform: d.platform }) === 'browser' ? 'browser' : 'paste';
+  const common = { paths: d.paths, vault, http, openUrl: d.openUrl, print: (line: string) => io.stdout(`${line}\n`), readLine: d.readLine };
+  const ports = d.loopbackPorts ?? LOOPBACK_PORTS;
+  if (values.drive) {
+    const oidcToken = async () => (await getToken('mail', { paths: d.paths, config, vault, http: { fetch: d.fetch }, now: d.now })).access_token;
+    const updated = await loginDrive(config, mode, { ...common, oidcToken }, ports);
+    io.stdout(`Twake Drive connected: ${updated.environment.cozy.instance}\n`);
+    return 0;
+  }
+  const agent = values.agent ?? '';
+  const updated = await loginChat(config, agent, mode, common, ports);
+  const device = updated.chat?.[agent];
+  io.stdout(`Twake Chat connected for ${agent} as ${device?.userId} (device ${device?.deviceId}).\n`);
+  return 0;
+}
+
 async function tokenCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
-  const { positionals } = usageErrors(() => parseArgs({ args, options: {}, allowPositionals: true, strict: true }));
+  const { positionals, values } = usageErrors(() =>
+    parseArgs({ args, options: { agent: { type: 'string' } }, allowPositionals: true, strict: true }),
+  );
+  if (values.agent !== undefined) checkAgentId(values.agent);
   const [service, ...extra] = positionals;
   if (!service || !isServiceId(service) || extra.length > 0) throw new TwakeAiError('usage', USAGE);
+  if (service === 'chat' && values.agent === undefined) {
+    throw new TwakeAiError('usage', `A Twake Chat token belongs to an agent: add --agent <id>.\n\n${USAGE}`);
+  }
   const config = await loadConfig(d.paths);
   if (!config) throw new TwakeAiError('login_required', 'twake-ai is not set up on this computer: run `twake-ai login --email <address>`.');
   const token = await getToken(service, {
@@ -166,7 +238,7 @@ async function tokenCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     vault: await openVault(config.vault, d.paths),
     http: { fetch: d.fetch },
     now: d.now,
-  });
+  }, values.agent);
   io.stdout(`${JSON.stringify(token)}\n`);
   return 0;
 }

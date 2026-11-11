@@ -3,10 +3,11 @@ import { loadConfig } from '../src/config.js';
 import type { TwakeEnvironment } from '../src/discovery.js';
 import { chooseLoginMode, loginOidc, OIDC_REFRESH_KEY, type LoginDeps } from '../src/login.js';
 import { fetchOidcMetadata } from '../src/oidc.js';
-import { readCachedToken } from '../src/token-cache.js';
+import { readCachedToken, writeCachedToken } from '../src/token-cache.js';
 import { MemoryVault } from '../src/vault.js';
 import { startFakeIdp, type FakeIdp } from './helpers/fake-idp.js';
 import { tempPaths } from './helpers/tmp.js';
+import { saveConfig } from '../src/config.js';
 
 let idp: FakeIdp;
 let environment: TwakeEnvironment;
@@ -106,5 +107,56 @@ describe('chooseLoginMode', () => {
     expect(chooseLoginMode({ noBrowser: false, env: { SSH_CONNECTION: '1.2.3.4 5 6.7.8.9 22', DISPLAY: ':0' }, platform: 'linux' })).toBe('device');
     expect(chooseLoginMode({ noBrowser: false, env: {}, platform: 'linux' })).toBe('device');
     expect(chooseLoginMode({ noBrowser: true, env: {}, platform: 'darwin' })).toBe('device');
+  });
+});
+
+describe('signing in again', () => {
+  it('keeps the Drive and Chat connections', async () => {
+    const d = await deps();
+    const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    await saveConfig(d.paths, { ...first, drive: { clientId: 'client-1', apps: ['mail'] }, chat: { hermes: { userId: '@alice:example.com', deviceId: 'D1' } } });
+    const again = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    expect(again.drive).toEqual({ clientId: 'client-1', apps: ['mail'] });
+    expect(again.chat).toEqual({ hermes: { userId: '@alice:example.com', deviceId: 'D1' } });
+  });
+
+  it('drops them when signing in to another domain', async () => {
+    const d = await deps();
+    const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    await saveConfig(d.paths, { ...first, drive: { clientId: 'client-1', apps: [] } });
+    const other = await loginOidc({ email: 'alice@other.example', environment: { ...environment, domain: 'other.example' }, client, mode: 'browser', ports: [0] }, d);
+    expect(other.drive).toBeUndefined();
+  });
+});
+
+describe('signing in again with another account or vault', () => {
+  it('drops Drive and Chat for another account, with their cached tokens', async () => {
+    const d = await deps();
+    const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    await saveConfig(d.paths, { ...first, drive: { clientId: 'client-1', apps: [] }, chat: { hermes: { userId: '@alice:example.com', deviceId: 'D1' } } });
+    await writeCachedToken(d.paths, 'cozy', { accessToken: 'alice-drive', expiresAt: 9_000_000_000 });
+    await writeCachedToken(d.paths, 'matrix-hermes', { accessToken: 'alice-chat', expiresAt: 9_000_000_000 });
+    const bob = await loginOidc({ email: 'bob@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    expect(bob.drive).toBeUndefined();
+    expect(bob.chat).toBeUndefined();
+    expect(await readCachedToken(d.paths, 'cozy')).toBeUndefined();
+    expect(await readCachedToken(d.paths, 'matrix-hermes')).toBeUndefined();
+  });
+
+  it('keeps them for the same account typed with capitals', async () => {
+    const d = await deps();
+    const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    await saveConfig(d.paths, { ...first, drive: { clientId: 'client-1', apps: [] } });
+    const again = await loginOidc({ email: 'Alice@Example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    expect(again.drive).toEqual({ clientId: 'client-1', apps: [] });
+  });
+
+  it('drops them when the session moves to another vault', async () => {
+    const d = await deps();
+    const first = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    await saveConfig(d.paths, { ...first, vault: 'keyring', drive: { clientId: 'client-1', apps: [] } });
+    const again = await loginOidc({ email: 'alice@example.com', environment, client, mode: 'browser', ports: [0] }, d);
+    expect(again.vault).toBe('file');
+    expect(again.drive).toBeUndefined();
   });
 });

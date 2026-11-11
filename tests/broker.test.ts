@@ -12,6 +12,12 @@ import { readCachedToken, writeCachedToken } from '../src/token-cache.js';
 import { FileVault } from '../src/vault.js';
 import { startFakeIdp, type FakeIdp } from './helpers/fake-idp.js';
 import { tempPaths } from './helpers/tmp.js';
+import { COZY_KEYS, matrixKey, NEVER_EXPIRES } from '../src/grants.js';
+import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
+import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
+import { createPkce } from '../src/oidc.js';
+import { cozyAuthorizeUrl, exchangeCozyCode, registerCozyClient } from '../src/cozy.js';
+import { loginWithToken, ssoRedirectUrl } from '../src/matrix.js';
 
 const run = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -91,11 +97,6 @@ describe('getToken', () => {
     await expect(getToken('mail', d)).rejects.toMatchObject({ code: 'login_required' });
   });
 
-  it('does not serve Drive and Chat tokens yet', async () => {
-    const d = await signedIn();
-    await expect(getToken('drive', d)).rejects.toMatchObject({ code: 'unsupported' });
-    await expect(getToken('chat', d)).rejects.toMatchObject({ code: 'unsupported' });
-  });
 
   it('refreshes once when eight processes ask at the same moment', { timeout: 60_000 }, async () => {
     const d = await signedIn();
@@ -108,5 +109,86 @@ describe('getToken', () => {
     const tokens = outputs.map(({ stdout }) => (JSON.parse(stdout) as { access_token: string }).access_token);
     expect(new Set(tokens).size).toBe(1);
     expect(idp.refreshCount).toBe(1);
+  });
+});
+
+describe('getToken for Drive and Chat', () => {
+  let cozy: FakeCozy;
+  let synapse: FakeSynapse;
+  beforeEach(async () => {
+    cozy = await startFakeCozy();
+    synapse = await startFakeSynapse();
+  });
+  afterEach(async () => {
+    await cozy.close();
+    await synapse.close();
+  });
+
+  /** signedIn() plus a connected Twake Drive whose cached token is gone. */
+  async function withDrive(): Promise<BrokerDeps> {
+    const d = await signedIn();
+    const client = await registerCozyClient(cozy.url, ['http://127.0.0.1:8765/callback']);
+    const pkce = createPkce();
+    const atCozy = await fetch(cozyAuthorizeUrl(cozy.url, { clientId: client.clientId, redirectUri: 'http://127.0.0.1:8765/callback', state: 's', challenge: pkce.challenge }), { redirect: 'manual' });
+    const code = new URL(atCozy.headers.get('location') ?? '').searchParams.get('code') ?? '';
+    const tokens = await exchangeCozyCode(cozy.url, client, { code, verifier: pkce.verifier });
+    await d.vault.set(COZY_KEYS.clientSecret, client.clientSecret);
+    await d.vault.set(COZY_KEYS.registrationToken, client.registrationToken);
+    await d.vault.set(COZY_KEYS.refreshToken, tokens.refreshToken ?? '');
+    const config = { ...d.config, environment: { ...d.config.environment, cozy: { instance: cozy.url } }, drive: { clientId: client.clientId, apps: [] } };
+    await saveConfig(d.paths, config);
+    return { ...d, config };
+  }
+
+  /** signedIn() plus a Chat device for hermes. */
+  async function withChat(refreshable: boolean): Promise<BrokerDeps> {
+    const d = await signedIn();
+    synapse.refreshableTokens = refreshable;
+    const atSynapse = await fetch(ssoRedirectUrl(synapse.url, 'oidc-twake', 'http://127.0.0.1:8765/callback?state=S'), { redirect: 'manual' });
+    const loginToken = new URL(atSynapse.headers.get('location') ?? '').searchParams.get('loginToken') ?? '';
+    const session = await loginWithToken(synapse.url, loginToken, 'Twake AI · hermes');
+    await d.vault.set(matrixKey('hermes', 'access_token'), session.accessToken);
+    if (session.refreshToken) await d.vault.set(matrixKey('hermes', 'refresh_token'), session.refreshToken);
+    const config = {
+      ...d.config,
+      environment: { ...d.config.environment, matrix: { homeserver: synapse.url } },
+      chat: { hermes: { userId: session.userId, deviceId: session.deviceId } },
+    };
+    await saveConfig(d.paths, config);
+    return { ...d, config };
+  }
+
+  it('renews the Drive token once and announces it for one hour at most', async () => {
+    const d = await withDrive();
+    const token = await getToken('drive', d);
+    expect(token).toEqual({ access_token: expect.stringMatching(/^cozy-access/), expires_at: NOW + 3600 });
+    expect(await getToken('drive', d)).toEqual(token);
+    expect(cozy.refreshCount).toBe(1);
+  });
+
+  it('asks to connect Drive when it is not', async () => {
+    const d = await signedIn();
+    await expect(getToken('drive', d)).rejects.toMatchObject({ code: 'login_required', message: expect.stringContaining('twake-ai login --drive') });
+  });
+
+  it('serves the Chat token of an agent with its device and user', async () => {
+    const d = await withChat(true);
+    const token = await getToken('chat', d, 'hermes');
+    expect(token).toEqual({ access_token: expect.stringMatching(/^syt-/), expires_at: NOW + 300, device_id: 'DEVICE1', user_id: '@alice:example.com' });
+    expect(synapse.refreshCount).toBe(1);
+  });
+
+  it('serves a Chat token without expiry, announced for one hour, when Synapse gives no refresh token', async () => {
+    const d = await withChat(false);
+    const token = await getToken('chat', d, 'hermes');
+    expect(token).toMatchObject({ expires_at: NOW + 3600, device_id: 'DEVICE1' });
+    expect(await readCachedToken(d.paths, 'matrix-hermes')).toEqual({ accessToken: token.access_token, expiresAt: NEVER_EXPIRES });
+  });
+
+  it('needs the agent for a Chat token, and a connected one', async () => {
+    const d = await withChat(true);
+    await expect(getToken('chat', d)).rejects.toMatchObject({ code: 'usage' });
+    await expect(getToken('chat', d, 'cursor')).rejects.toMatchObject({ code: 'login_required', message: expect.stringContaining('--agent cursor') });
+    await expect(getToken('chat', d, '../x')).rejects.toMatchObject({ code: 'usage' });
   });
 });

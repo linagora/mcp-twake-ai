@@ -3,11 +3,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { main, type CliDeps, type Io } from '../src/cli.js';
+import { PassThrough, Readable } from 'node:stream';
+import { main, readLineFrom, type CliDeps, type Io } from '../src/cli.js';
 import { writePrivateFile } from '../src/files.js';
 import { chooseVault } from '../src/vault.js';
 import { startFakeIdp, type FakeIdp } from './helpers/fake-idp.js';
 import { tempPaths } from './helpers/tmp.js';
+import { loadConfig, saveConfig } from '../src/config.js';
+import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
+import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 
 const run = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -46,7 +50,7 @@ async function testDeps(): Promise<CliDeps & { clock: { t: number } }> {
     fetch: (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (url === 'https://example.com/.well-known/matrix/client') return Response.json(discovery);
-      if (url.startsWith(idp.url)) return fetch(input, init);
+      if (url.startsWith('http://127.0.0.1:')) return fetch(input, init);
       throw new TypeError('fetch failed');
     }) as typeof fetch,
     resolveSrv: async () => {
@@ -60,6 +64,7 @@ async function testDeps(): Promise<CliDeps & { clock: { t: number } }> {
     now: () => clock.t,
     sleep: async (ms) => void (clock.t += ms / 1000),
     loopbackPorts: [0],
+    readLine: async () => '',
   };
 }
 
@@ -184,5 +189,101 @@ describe('main: second sign-in and failures', () => {
     const io = captureIo();
     expect(await main(['login', '--email', 'alice@example.com'], io, deps)).toBe(1);
     expect(io.err).toBe('twake-ai: unexpected error: first line\n');
+  });
+});
+
+describe('main: Twake Drive and Twake Chat', () => {
+  let cozy: FakeCozy;
+  let synapse: FakeSynapse;
+  beforeEach(async () => {
+    cozy = await startFakeCozy();
+    synapse = await startFakeSynapse();
+  });
+  afterEach(async () => {
+    await cozy.close();
+    await synapse.close();
+  });
+
+  /** Signed in, with the Drive instance and the homeserver pointing at the fakes. */
+  async function signedIn(): Promise<CliDeps & { clock: { t: number } }> {
+    const deps = await testDeps();
+    expect(await main(['login', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
+    const config = (await loadConfig(deps.paths))!;
+    await saveConfig(deps.paths, {
+      ...config,
+      environment: { ...config.environment, cozy: { ...config.environment.cozy, instance: cozy.url }, matrix: { homeserver: synapse.url } },
+    });
+    return deps;
+  }
+
+  it('connects Twake Drive in the browser, then serves Drive tokens', async () => {
+    const deps = await signedIn();
+    const io = captureIo();
+    expect(await main(['login', '--drive'], io, deps)).toBe(0);
+    expect(io.out).toContain(`Twake Drive connected: ${cozy.url}`);
+    const token = captureIo();
+    expect(await main(['token', 'drive'], token, deps)).toBe(0);
+    expect(JSON.parse(token.out)).toMatchObject({ access_token: expect.stringMatching(/^cozy-access/) });
+  });
+
+  it('connects Twake Chat for an agent from another device, then serves its token with the device', async () => {
+    const deps = await signedIn();
+    deps.platform = 'linux';
+    const io = captureIo();
+    deps.readLine = async () => {
+      const url = /(http:\/\/127\.0\.0\.1:\d+\/_matrix\S+)/.exec(io.out)?.[1] ?? '';
+      const atSynapse = await fetch(url, { redirect: 'manual' });
+      return atSynapse.headers.get('location') ?? '';
+    };
+    expect(await main(['login', '--chat', '--agent', 'hermes'], io, deps)).toBe(0);
+    expect(io.out).toContain('Twake Chat connected for hermes as @alice:example.com (device DEVICE1)');
+    const token = captureIo();
+    expect(await main(['token', 'chat', '--agent', 'hermes'], token, deps)).toBe(0);
+    expect(JSON.parse(token.out)).toMatchObject({ device_id: 'DEVICE1', user_id: '@alice:example.com' });
+  });
+
+  it('asks to sign in before connecting a service', async () => {
+    const io = captureIo();
+    expect(await main(['login', '--drive'], io, await testDeps())).toBe(1);
+    expect(io.err).toContain('twake-ai login --email');
+  });
+
+  it('needs an agent for Chat, a valid one, and one service at a time', async () => {
+    const deps = await signedIn();
+    for (const argv of [['login', '--chat'], ['token', 'chat'], ['token', 'chat', '--agent', '../x'], ['login', '--drive', '--chat', '--agent', 'hermes']]) {
+      const io = captureIo();
+      expect(await main(argv, io, deps)).toBe(2);
+      expect(io.out).toBe('');
+    }
+  });
+
+  it('reports a missing --agent for Chat before anything else, even when nothing is set up', async () => {
+    const io = captureIo();
+    expect(await main(['token', 'chat'], io, await testDeps())).toBe(2);
+    expect(io.err).toContain('--agent');
+    expect(io.out).toBe('');
+  });
+
+  it('refuses flags that do not go together', async () => {
+    const deps = await signedIn();
+    for (const argv of [['login', '--agent', 'hermes'], ['login', '--drive', '--email', 'bob@example.com'], ['login', '--chat', '--agent', 'hermes', '--client-id', 'x']]) {
+      const io = captureIo();
+      expect(await main(argv, io, deps)).toBe(2);
+      expect(io.out).toBe('');
+    }
+  });
+
+  it('gives up cleanly when the input closes before an address is pasted', async () => {
+    await expect(readLineFrom(Readable.from([]), new PassThrough(), 'Address: ')).rejects.toMatchObject({ code: 'login_cancelled' });
+    expect(await readLineFrom(Readable.from(['http://127.0.0.1:8765/callback?x=1\n']), new PassThrough(), 'Address: ')).toBe(
+      'http://127.0.0.1:8765/callback?x=1',
+    );
+  });
+
+  it('asks to connect Drive before serving its tokens', async () => {
+    const deps = await signedIn();
+    const io = captureIo();
+    expect(await main(['token', 'drive'], io, deps)).toBe(1);
+    expect(io.err).toContain('twake-ai login --drive');
   });
 });
