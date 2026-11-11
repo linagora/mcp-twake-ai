@@ -600,6 +600,16 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await stat(prefixDir(deps.paths)).then(() => true, () => false)).toBe(false);
     expect(await stat(deps.paths.configFile).then(() => true, () => false)).toBe(false);
   });
+
+  it('signs in first with --email when there is no session yet', async () => {
+    const deps = await testDeps();
+    await mkdir(join(deps.home, '.cursor'), { recursive: true });
+    deps.runInstall = fakeNpm(deps.paths);
+    const io = captureIo();
+    expect(await main(['setup', '--email', 'alice@example.com', '--agents', 'cursor', '--services', 'chat'], io, deps)).toBe(0);
+    expect(io.out).toContain('Signed in as alice@example.com');
+    expect(io.out).toContain('Nothing was changed');
+  });
 });
 
 describe('main: run', () => {
