@@ -473,6 +473,8 @@ describe('main: Twake Drive and Twake Chat', () => {
 
   it('shows the health of the session, Drive, Chat and every entry', async () => {
     const { deps } = await readyForSetup();
+    // an entry is only in place when its node exists: the real one, wherever this machine keeps it
+    deps.nodePath = process.execPath;
     expect(await main(['login', '--drive'], captureIo(), deps)).toBe(0);
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
     const io = captureIo();
