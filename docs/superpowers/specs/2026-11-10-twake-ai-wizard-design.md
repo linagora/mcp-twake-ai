@@ -194,25 +194,30 @@ Client OIDC « twake-ai-agents » :
 
 ## 8. Parcours `setup`
 
-Au lancement, une bannière s'affiche :
+Au lancement, une bannière s'affiche, toujours dans cette disposition, quelle que soit la largeur du terminal :
 
 ```
-  ███╗   ███╗ ██████╗██████╗    ████████╗██╗    ██╗ █████╗ ██╗  ██╗███████╗    █████╗ ██╗
-  ████╗ ████║██╔════╝██╔══██╗   ╚══██╔══╝██║    ██║██╔══██╗██║ ██╔╝██╔════╝   ██╔══██╗██║
-  ██╔████╔██║██║     ██████╔╝      ██║   ██║ █╗ ██║███████║█████╔╝ █████╗     ███████║██║
-  ██║╚██╔╝██║██║     ██╔═══╝       ██║   ██║███╗██║██╔══██║██╔═██╗ ██╔══╝     ██╔══██║██║
-  ██║ ╚═╝ ██║╚██████╗██║           ██║   ╚███╔███╔╝██║  ██║██║  ██╗███████╗██╗██║  ██║██║
-  ╚═╝     ╚═╝ ╚═════╝╚═╝           ╚═╝    ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝╚═╝  ╚═╝╚═╝
+  ███╗   ███╗ ██████╗██████╗
+  ████╗ ████║██╔════╝██╔══██╗
+  ██╔████╔██║██║     ██████╔╝
+  ██║╚██╔╝██║██║     ██╔═══╝
+  ██║ ╚═╝ ██║╚██████╗██║
+  ╚═╝     ╚═╝ ╚═════╝╚═╝
+
+  ████████╗██╗    ██╗ █████╗ ██╗  ██╗███████╗    █████╗ ██╗
+  ╚══██╔══╝██║    ██║██╔══██╗██║ ██╔╝██╔════╝   ██╔══██╗██║
+     ██║   ██║ █╗ ██║███████║█████╔╝ █████╗     ███████║██║
+     ██║   ██║███╗██║██╔══██║██╔═██╗ ██╔══╝     ██╔══██║██║
+     ██║   ╚███╔███╔╝██║  ██║██║  ██╗███████╗██╗██║  ██║██║
+     ╚═╝    ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝╚═╝  ╚═╝╚═╝
 
   Your sovereign Digital Workplace, connected to your AI agent
   Sets up the MCP servers of the Twake.ai platform in your AI agents.
   Mail · Calendar · Drive · Chat · Space · Project        v1.0.0
 ```
 
-- « MCP TWAKE.AI » tient sur une rangée à partir de 89 colonnes. De 60 à 88 colonnes (le terminal courant de 80), « MCP » est au-dessus de « TWAKE.AI ».
 - Dégradé horizontal truecolor du bleu Twake (`#2F6BFF`) vers le cyan (`#00D1C1`), sous-titre en gris (`#9AA4B5`).
 - Pas de couleur si `NO_COLOR` est défini ou si la sortie n'est pas un terminal.
-- Moins de 60 colonnes : une ligne compacte `MCP Twake.ai` à la place.
 - Pas de bannière en mode non interactif.
 - Le parcours est en anglais (décision du 2026-11-11). `TWAKE_AI_LANGUAGE=fr` le passe en français. La langue des serveurs MCP (`USER_LANGUAGE`) suit toujours celle du système.
 

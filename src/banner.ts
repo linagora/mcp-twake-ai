@@ -10,7 +10,6 @@ const GLYPHS: Record<string, string[]> = {
   E: ['███████╗', '██╔════╝', '█████╗  ', '██╔══╝  ', '███████╗', '╚══════╝'],
   '.': ['   ', '   ', '   ', '   ', '██╗', '╚═╝'],
   I: ['██╗', '██║', '██║', '██║', '██║', '╚═╝'],
-  ' ': ['   ', '   ', '   ', '   ', '   ', '   '],
 };
 
 const word = (text: string) => GLYPHS.M!.map((_, row) => [...text].map((letter) => GLYPHS[letter]![row]).join('').trimEnd());
@@ -39,16 +38,10 @@ function gradient(line: string, width: number): string {
   );
 }
 
-/**
- * The banner of setup (spec §8): MCP TWAKE.AI in a blue-to-cyan gradient — on one row when the terminal is wide enough,
- * MCP above TWAKE.AI on an 80-column one, a single line under 60 columns.
- */
-export function renderBanner(o: { version: string; columns: number; color: boolean }): string {
-  if (o.columns < 60) return `\n${INDENT}${o.color ? gradient('MCP Twake.ai', 12) : 'MCP Twake.ai'}  v${o.version}\n\n`;
-  const wide = word('MCP TWAKE.AI');
-  const fits = INDENT.length + [...wide[0]!].length <= o.columns;
-  const blocks = fits ? [wide] : [word('MCP'), word('TWAKE.AI')];
-  // one gradient for every block, so that the colors line up from one block to the next
+/** The banner of setup (spec §8): MCP above TWAKE.AI in a blue-to-cyan gradient, whatever the width of the terminal. */
+export function renderBanner(o: { version: string; color: boolean }): string {
+  const blocks = [word('MCP'), word('TWAKE.AI')];
+  // one gradient for both blocks, so that the colors line up from one block to the next
   const width = Math.max(...blocks.map((block) => [...block[0]!].length));
   const art = blocks.map((block) => block.map((line) => `${INDENT}${o.color ? gradient(line, width) : line}`).join('\n')).join('\n\n');
   const grey = (text: string) => (o.color ? `${GREY}${text}${RESET}` : text);
