@@ -9,13 +9,20 @@ import { TwakeAiError } from './errors.js';
 import { describeError } from './describe.js';
 import { journal } from './journal.js';
 import { logout } from './logout.js';
+import { renderBanner, wantsColor } from './banner.js';
+import { clackPrompter, type Prompter } from './prompter.js';
+import { runWizard, type WizardKit } from './wizard.js';
+import { isNpxCache, removeShortcut, selfInstall, selfInstalledCli, writeShortcut } from './self-install.js';
 import { forgetSecrets, removeFiles, uninstallPlan } from './uninstall.js';
 import { checkChat, checkDrive, checkSession, entryStates, handshake, type Check, type EntryState } from './status.js';
 import { chooseLoginMode, loginOidc } from './login.js';
 import { appPaths, type AppPaths } from './paths.js';
 import { chooseVault, openVault, type Vault } from './vault.js';
 import { createInterface } from 'node:readline/promises';
-import { checkAgentId } from './grants.js';
+import { checkAgentId, OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
+import { revokeToken } from './oidc.js';
+import { deleteCachedToken } from './token-cache.js';
+import { rm } from 'node:fs/promises';
 import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
@@ -27,7 +34,7 @@ import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/
 import { runService } from './launcher.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
 import { ensureInstalled, prefixDir, type Runner } from './installer.js';
-import { join, resolve as resolvePath } from 'node:path';
+import { join, posix, resolve as resolvePath, win32 } from 'node:path';
 
 export interface Io {
   stdout(text: string): void;
@@ -60,6 +67,10 @@ export interface CliDeps {
   readLine(question: string): Promise<string>;
   /** npm, replaceable in tests */
   runInstall?: Runner;
+  /** the questions of the guided setup; undefined: clack on the terminal */
+  prompter?: Prompter;
+  /** stdin and stdout are a terminal: setup without --agents guides the user */
+  interactive: boolean;
   /** absolute paths of node and of mcp-twake-ai's command, written into agent configurations and token commands */
   nodePath: string;
   cliPath: string;
@@ -70,6 +81,7 @@ export function defaultDeps(): CliDeps {
   return {
     paths: appPaths(),
     home: homedir(),
+    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     env: process.env,
     platform: process.platform,
     fetch: globalThis.fetch,
@@ -112,7 +124,7 @@ export function packageVersion(): string {
 }
 
 const USAGE = `usage:
-  mcp-twake-ai setup --agents <ids|detected> [--services <list>] [--yes] [--force] [--no-browser]
+  mcp-twake-ai setup [--email <address>] --agents <ids|detected> [--services <list>] [--yes] [--force] [--no-browser]
   mcp-twake-ai login [--email <address>] [--no-browser] [--client-id <id>] [--scope <scopes>]
   mcp-twake-ai login --drive [--no-browser]
   mcp-twake-ai login --chat --agent <id> [--no-browser]
@@ -337,6 +349,7 @@ async function exportCommand(args: string[], io: Io, d: CliDeps): Promise<number
     config = (await loadConfig(d.paths)) ?? config;
   }
   const ctx = catalogContext(config, d);
+  if (isNpxCache(d.cliPath)) await selfInstall(d.paths, packageVersion(), d.runInstall);
   await ensureInstalled(d.paths, chosen, { run: d.runInstall, print: (line) => io.stdout(`${line}\n`) });
   const files = await exportFiles({ agent, services: chosen, raw: values.raw ?? false, twakeAiHome: d.env.TWAKE_AI_HOME }, ctx);
   const out = resolvePath(values.out ?? 'twake-ai-export');
@@ -345,8 +358,13 @@ async function exportCommand(args: string[], io: Io, d: CliDeps): Promise<number
   return 0;
 }
 
+/** The command agents and token commands run: under npx, the copy installed in the prefix, never npx's cache (spec §5.3). */
+function agentCliPath(d: CliDeps): string {
+  return isNpxCache(d.cliPath) ? selfInstalledCli(d.paths) : d.cliPath;
+}
+
 function catalogContext(config: TwakeAiConfig, d: CliDeps): CatalogContext {
-  return { config, paths: d.paths, nodePath: d.nodePath, cliPath: d.cliPath, platform: d.platform, language: detectLanguage(d.env), timezone: systemTimezone() };
+  return { config, paths: d.paths, nodePath: d.nodePath, cliPath: agentCliPath(d), platform: d.platform, language: detectLanguage(d.env), timezone: systemTimezone() };
 }
 
 const PLAN_LINE: Record<ActionKind, [string, string]> = {
@@ -360,49 +378,99 @@ const PLAN_LINE: Record<ActionKind, [string, string]> = {
   'remove-modified': ['!', 'removes an entry changed by hand since mcp-twake-ai wrote it'],
 };
 
-function printPlan(io: Io, adapter: AgentAdapter, actions: EntryAction[], force: boolean): void {
+function printPlan(io: Io, adapter: AgentAdapter, actions: EntryAction[], consent: (action: EntryAction) => boolean): void {
   io.stdout(`${adapter.label} (${adapter.target})\n`);
   for (const action of actions) {
     const [symbol, words] = PLAN_LINE[action.kind];
-    io.stdout(`  ${symbol} ${action.name.padEnd(14)} ${words}${needsConsent(action) && !force ? ': add --force to do it' : ''}\n`);
+    io.stdout(`  ${symbol} ${action.name.padEnd(14)} ${words}${needsConsent(action) && !consent(action) ? ': add --force to do it' : ''}\n`);
   }
   if (!adapter.capabilities.elicitation) io.stdout(`  ${adapter.label} cannot show approval requests: reads work, and every write is refused.\n`);
 }
 
 /** setup --agents …: writes the Twake.ai servers into the agents (spec §8, non-interactive; §10). */
+interface SetupRequest {
+  agents: AgentId[];
+  /** undefined: the services found for the account */
+  services?: ServiceId[];
+  apply: boolean;
+  /** an entry mcp-twake-ai did not write, or one changed since, is replaced or removed only with consent */
+  consent(agent: AgentId, action: EntryAction): boolean;
+  noBrowser?: boolean;
+  /** no "run with --yes" hint: the guided setup asks instead */
+  quiet?: boolean;
+}
+
+/** setup --agents …: the non-interactive setup (spec §8). */
 async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
   const { values } = usageErrors(() =>
     parseArgs({
       args,
-      options: { agents: { type: 'string' }, services: { type: 'string' }, yes: { type: 'boolean' }, force: { type: 'boolean' }, 'no-browser': { type: 'boolean' } },
+      options: {
+        agents: { type: 'string' },
+        services: { type: 'string' },
+        yes: { type: 'boolean' },
+        force: { type: 'boolean' },
+        'no-browser': { type: 'boolean' },
+        email: { type: 'string' },
+      },
       strict: true,
     }),
   );
+  const guided = values.agents === undefined && !values.yes && d.interactive;
+  if (guided && (values.services !== undefined || values.force)) {
+    throw new TwakeAiError('usage', `--services and --force go with --agents: without them, setup asks.\n\n${USAGE}`);
+  }
+  if (guided) {
+    const kit = wizardKit(io, d, { noBrowser: values['no-browser'] });
+    return runWizard(kit, d.prompter ?? clackPrompter(), process.versions.node, { email: values.email?.trim() });
+  }
+  if (values.email !== undefined) {
+    // config.json outlives a logout: only a refresh token in the vault is a session, and it must be this account's
+    const session = await currentSession(d);
+    if (!session || session.email.toLowerCase() !== values.email.trim().toLowerCase()) {
+      const code = await loginCommand(['--email', values.email, ...(values['no-browser'] ? ['--no-browser'] : [])], io, d);
+      if (code !== 0) return code;
+    }
+  }
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
   const detected = await detectAgents(adapters);
   if (values.agents === undefined) {
-    throw new TwakeAiError('usage', `setup needs --agents: ${AGENT_IDS.join(', ')}, or "detected" (found here: ${detected.join(', ') || 'none'}).\n\n${USAGE}`);
+    throw new TwakeAiError(
+      'usage',
+      `setup needs --agents: ${AGENT_IDS.join(', ')}, or "detected" (found here: ${detected.join(', ') || 'none'}) — or run it in a terminal for the guided setup.\n\n${USAGE}`,
+    );
   }
   const names = values.agents === 'detected' ? detected : [...new Set(values.agents.split(',').map((name) => name.trim()))];
   for (const name of names) {
     if (!isAgentId(name)) throw new TwakeAiError('usage', `"${name}" is not an agent mcp-twake-ai configures (${AGENT_IDS.join(', ')}): for any other one, use export.\n\n${USAGE}`);
   }
   if (names.length === 0) throw new TwakeAiError('usage', `No agent was found on this computer: name them with --agents.\n\n${USAGE}`);
-  const config = await loadConfig(d.paths);
-  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `mcp-twake-ai login --email <address>`.');
-  const services = values.services === undefined ? defaultServices(config) : values.services.split(',').map((s) => s.trim());
-  for (const service of services) {
+  const services = values.services === undefined ? undefined : values.services.split(',').map((service) => service.trim());
+  for (const service of services ?? []) {
     if (!isServiceId(service)) throw new TwakeAiError('usage', `"${service}" is not a Twake.ai service (${SERVICE_IDS.join(', ')}).\n\n${USAGE}`);
   }
-  const chosen = services as ServiceId[];
+  const force = values.force ?? false;
+  const request = { agents: names as AgentId[], services: services as ServiceId[] | undefined, apply: values.yes ?? false, consent: () => force, noBrowser: values['no-browser'] };
+  return (await runSetup(request, io, d)).code;
+}
+
+/** Plans, and with apply connects, installs and writes, the agents of a setup; shared by both setups. */
+async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ code: number; conflicts: { agent: AgentId; action: EntryAction }[]; written: AgentId[] }> {
+  const config = await loadConfig(d.paths);
+  if (!config) throw new TwakeAiError('login_required', 'Sign in first: run `mcp-twake-ai login --email <address>`.');
+  const chosen = request.services ?? defaultServices(config);
+  const names = request.agents;
+  const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  // under npx the entries must not point into npx's cache: mcp-twake-ai installs itself into the prefix (spec §5.3)
+  const fromNpx = isNpxCache(d.cliPath);
+  const cliPath = agentCliPath(d);
   const ctx = catalogContext(config, d);
   // what needs no new connection is checked before anything changes
   for (const agent of names) for (const service of chosen) if (service !== 'drive' && service !== 'chat') serviceEnv(service, agent, ctx);
   const env: Record<string, string> = d.env.TWAKE_AI_HOME ? { TWAKE_AI_HOME: d.env.TWAKE_AI_HOME } : {};
-  const force = values.force ?? false;
   let failed = false;
   const plans: { adapter: AgentAdapter; owned: Record<string, string>; actions: EntryAction[] }[] = [];
-  for (const agent of names as AgentId[]) {
+  for (const agent of names) {
     const adapter = adapters[agent];
     const owned = config.agents?.[agent]?.entries ?? {};
     // one agent's problem (unreadable file, broken entry) never stops the others
@@ -413,7 +481,7 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
       }
       const actions = planEntries(await adapter.read(), wantedEntries(adapter, chosen, ctx, env), owned);
       plans.push({ adapter, owned, actions });
-      printPlan(io, adapter, actions, force);
+      printPlan(io, adapter, actions, (action) => request.consent(adapter.id, action));
     } catch (error) {
       failed = true;
       io.stdout(`${adapter.label}: ${describeError(error)}\n`);
@@ -423,16 +491,20 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
   const chatFor = chosen.includes('chat') ? plans.map((plan) => plan.adapter.id).filter((agent) => !config.chat?.[agent]) : [];
   if (driveFirst) io.stdout('Twake Drive is connected first, in the browser.\n');
   if (chatFor.length > 0) io.stdout(`Twake Chat gets a device for: ${chatFor.join(', ')}.\n`);
-  if (!values.yes) {
-    io.stdout('Nothing was changed: run the same command with --yes to apply it.\n');
-    return failed ? 1 : 0;
+  const conflicts = plans.flatMap((plan) => plan.actions.filter(needsConsent).map((action) => ({ agent: plan.adapter.id, action })));
+  const written: AgentId[] = [];
+  const result = (code: number) => ({ code, conflicts, written });
+  if (!request.apply) {
+    if (!request.quiet) io.stdout('Nothing was changed: run the same command with --yes to apply it.\n');
+    return result(failed ? 1 : 0);
   }
-  if (plans.length === 0) return failed ? 1 : 0;
-  if (driveFirst) await connectService({ drive: true, 'no-browser': values['no-browser'] }, io, d);
-  for (const agent of chatFor) await connectService({ chat: true, agent, 'no-browser': values['no-browser'] }, io, d);
+  if (plans.length === 0) return result(failed ? 1 : 0);
+  if (driveFirst) await connectService({ drive: true, 'no-browser': request.noBrowser }, io, d);
+  for (const agent of chatFor) await connectService({ chat: true, agent, 'no-browser': request.noBrowser }, io, d);
+  if (fromNpx) await selfInstall(d.paths, packageVersion(), d.runInstall);
   await ensureInstalled(d.paths, chosen, { run: d.runInstall, print: (line) => io.stdout(`${line}\n`) });
   for (const { adapter, owned, actions } of plans) {
-    const result = await applyAgent(adapter, actions, owned, () => force);
+    const result = await applyAgent(adapter, actions, owned, (action) => request.consent(adapter.id, action));
     if (result.status === 'failed') {
       failed = true;
       io.stdout(`${adapter.label}: not changed, ${result.error}\n`);
@@ -445,11 +517,22 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
       io.stdout(`${adapter.label}: written, but ${d.paths.configFile} could not record it: ${describeError(error)}\n`);
       continue;
     }
+    written.push(adapter.id);
     if (result.status === 'unchanged') io.stdout(`${adapter.label}: already up to date.\n`);
     else io.stdout(`${adapter.label}: done${result.backup ? ` (previous file kept as ${result.backup})` : ''}. ${adapter.capabilities.reload}\n`);
     if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);
   }
-  return failed ? 1 : 0;
+  if (fromNpx && written.length > 0) {
+    // a convenience: its failure never fails the setup
+    try {
+      const shortcut = await writeShortcut({ platform: d.platform, env: d.env, home: d.home }, d.nodePath, cliPath);
+      if (!shortcut.written) io.stdout(`${shortcut.path} is not mcp-twake-ai's: it is left as it is.\n`);
+      else io.stdout(`The mcp-twake-ai command is in ${shortcut.path}.${shortcut.inPath ? '' : ` Add ${pathOfPlatform(d.platform).dirname(shortcut.path)} to your PATH to type it from anywhere.`}\n`);
+    } catch (error) {
+      io.stdout(`${describeError(error)}\n`);
+    }
+  }
+  return result(failed ? 1 : 0);
 }
 
 const STATE_LINE: Record<EntryState['state'], [string, string]> = {
@@ -559,7 +642,7 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   }
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
   const plans = config ? await uninstallPlan(config, adapters) : [];
-  for (const { adapter, actions } of plans) printPlan(io, adapter, actions, force);
+  for (const { adapter, actions } of plans) printPlan(io, adapter, actions, () => force);
   const chat = join(d.paths.dataDir, 'chat');
   io.stdout(`${config ? 'Sign out of Twake.ai, then remove' : 'Remove'} ${prefixDir(d.paths)}, the configuration, the cache and the journal.\n`);
   io.stdout(values['delete-chat-stores'] ? `Delete the Twake Chat stores in ${chat}.\n` : `Twake Chat stores kept in ${chat} (add --delete-chat-stores to delete them).\n`);
@@ -594,6 +677,7 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     if (remaining) await saveConfig(d.paths, { ...remaining, agents: left });
   }
   await removeFiles(d.paths, values['delete-chat-stores'] ?? false, keepConfig);
+  await removeShortcut({ platform: d.platform, env: d.env, home: d.home });
   if (keepConfig) {
     io.stdout(`Some entries are still in place and recorded in ${d.paths.configFile}: run uninstall --yes --force to remove them, or remove them by hand.\n`);
     return 1;
@@ -601,3 +685,127 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`} Remove the command itself with: npm uninstall -g mcp-twake-ai\n`);
   return 0;
 }
+
+const SERVICE_LABELS: Record<ServiceId, string> = { mail: 'Mail', dav: 'Calendar & contacts', drive: 'Drive', chat: 'Chat', space: 'Space', project: 'Project' };
+
+/** What the guided setup uses: signing in, planning and writing go through the very code of the commands. */
+/** The signed-in account, only when the vault still holds its refresh token (config.json outlives a logout). */
+async function currentSession(d: CliDeps): Promise<TwakeAiConfig | undefined> {
+  const config = await loadConfig(d.paths).catch(() => undefined);
+  if (!config) return undefined;
+  try {
+    return (await (await openVault(config.vault, d.paths)).get(OIDC_REFRESH_KEY)) ? config : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function wizardKit(io: Io, d: CliDeps, options: { noBrowser?: boolean } = {}): WizardKit {
+  // what was there before this setup signed in: giving up puts it back
+  let before: { config?: TwakeAiConfig; refresh?: string } | undefined;
+  const adaptersOf = () => createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  const capture = (): Io & { text: string } => {
+    const captured = {
+      text: '',
+      stdout: (text: string) => {
+        captured.text += text;
+      },
+      stderr: (text: string) => {
+        captured.text += text;
+      },
+    };
+    return captured;
+  };
+  return {
+    // setup speaks English; French only when asked for (the servers still follow the system's language)
+    lang: d.env.TWAKE_AI_LANGUAGE === 'fr' ? 'fr' : 'en',
+    banner: () => renderBanner({ version: packageVersion(), color: wantsColor(d.env, Boolean(process.stdout.isTTY)) }),
+    session: async () => {
+      const config = await currentSession(d);
+      return config ? { email: config.email } : undefined;
+    },
+    signIn: async (email) => {
+      if (!before) {
+        const config = await loadConfig(d.paths).catch(() => undefined);
+        const refresh = config ? await openVault(config.vault, d.paths).then((vault) => vault.get(OIDC_REFRESH_KEY)).catch(() => undefined) : undefined;
+        before = { config, refresh };
+      }
+      const code = await loginCommand(['--email', email, ...(options.noBrowser ? ['--no-browser'] : [])], io, d);
+      const config = await loadConfig(d.paths);
+      if (code !== 0 || !config) throw new TwakeAiError('login_cancelled', `The sign-in of ${email} did not complete.`);
+      return { email: config.email };
+    },
+    agents: async () => {
+      const adapters = await adaptersOf();
+      const detected = new Set(await detectAgents(adapters));
+      return AGENT_IDS.map((id) => ({ id, label: adapters[id].label, detected: detected.has(id), elicitation: adapters[id].capabilities.elicitation }));
+    },
+    services: async () => {
+      const config = await loadConfig(d.paths);
+      const preselected = new Set<ServiceId>(config ? defaultServices(config) : []);
+      const found = config?.environment.services ?? {};
+      // only what exists for the account: Mail, Calendar, Space and Project once found, Drive with an instance, Chat always
+      const available = SERVICE_IDS.filter((id) => {
+        if (id === 'chat') return true;
+        if (id === 'drive') return Boolean(config?.environment.cozy.instance);
+        return found[id] !== undefined;
+      });
+      if (config?.environment.cozy.instance) preselected.add('drive');
+      return available.map((id) => ({ id, label: SERVICE_LABELS[id], preselected: preselected.has(id) }));
+    },
+    plan: async (agents, services) => {
+      const out = capture();
+      const planned = await runSetup({ agents, services, apply: false, consent: () => false, quiet: true }, out, d);
+      const adapters = await adaptersOf();
+      const conflicts = planned.conflicts.map(({ agent, action }) => ({ agent, label: adapters[agent].label, name: action.name, key: `${agent}/${action.name}` }));
+      return { text: out.text.trimEnd(), conflicts };
+    },
+    apply: async (agents, services, accepted) => {
+      const applied = await runSetup({ agents, services, apply: true, consent: (agent, action) => accepted.has(`${agent}/${action.name}`), noBrowser: options.noBrowser }, io, d);
+      const adapters = await adaptersOf();
+      return { code: applied.code, reload: applied.written.map((agent) => `${adapters[agent].label}: ${adapters[agent].capabilities.reload}`) };
+    },
+    check: async (agents) => {
+      const config = await loadConfig(d.paths);
+      const adapters = await adaptersOf();
+      const lines: { ok: boolean; line: string }[] = [];
+      for (const agent of agents) {
+        const adapter = adapters[agent];
+        let states: EntryState[];
+        try {
+          states = await entryStates(adapter, config?.agents?.[agent]?.entries ?? {});
+        } catch (error) {
+          lines.push({ ok: false, line: `✗ ${adapter.label}: ${describeError(error)}` });
+          continue;
+        }
+        for (const state of states.filter((candidate) => candidate.state === 'ok')) {
+          const started = await handshake(state.entry as { command: string; args: string[]; env?: Record<string, string> }, d.env);
+          lines.push({ ok: started.ok, line: `${started.ok ? '✓' : '✗'} ${adapter.label} · ${state.name} ${started.ok ? `starts, ${started.detail}` : started.detail}` });
+        }
+      }
+      return lines;
+    },
+    revoke: async () => {
+      // only the sign-in made by this setup: the session, Drive client and Chat devices from before stay as they were
+      const config = await loadConfig(d.paths).catch(() => undefined);
+      if (!config) return;
+      const vault = await openVault(config.vault, d.paths);
+      const minted = await vault.get(OIDC_REFRESH_KEY);
+      if (minted && minted !== before?.refresh) await revokeToken(config.environment.oidc, config.oidc, minted, { fetch: d.fetch }).catch(() => undefined);
+      await deleteCachedToken(d.paths, OIDC_GRANT);
+      if (before?.config) {
+        await saveConfig(d.paths, before.config);
+        if (before.config.vault !== config.vault) await vault.delete(OIDC_REFRESH_KEY).catch(() => undefined);
+        const previous = await openVault(before.config.vault, d.paths);
+        if (before.refresh) await previous.set(OIDC_REFRESH_KEY, before.refresh);
+        else await previous.delete(OIDC_REFRESH_KEY).catch(() => undefined);
+      } else {
+        await vault.delete(OIDC_REFRESH_KEY).catch(() => undefined);
+        await rm(d.paths.configFile, { force: true });
+      }
+    },
+    describe: describeError,
+  };
+}
+
+const pathOfPlatform = (platform: NodeJS.Platform) => (platform === 'win32' ? win32 : posix);

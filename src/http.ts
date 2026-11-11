@@ -16,6 +16,16 @@ export class HttpError extends Error {
     this.name = 'HttpError';
   }
 
+  /** The OAuth `error_description` of the body, if any: what the server says went wrong. */
+  get description(): string | undefined {
+    try {
+      const parsed = JSON.parse(this.body) as { error_description?: unknown };
+      return typeof parsed.error_description === 'string' ? parsed.error_description : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The OAuth `error` code of the body (RFC 6749 §5.2), if any. */
   get oauthError(): string | undefined {
     try {

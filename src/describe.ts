@@ -5,7 +5,8 @@ import { hostOf, HttpError } from './http.js';
 export function describeError(error: unknown): string {
   if (error instanceof TwakeAiError) return error.message;
   if (error instanceof HttpError) {
-    return `${hostOf(error.url)} refused the request (HTTP ${error.status}${error.oauthError ? `, ${error.oauthError}` : ''}).`;
+    const reason = error.oauthError ? `, ${error.oauthError}${error.description ? `: ${error.description}` : ''}` : '';
+    return `${hostOf(error.url)} refused the request (HTTP ${error.status}${reason}).`;
   }
   return `unexpected error: ${String((error as Error)?.message ?? error).split('\n')[0]}`;
 }

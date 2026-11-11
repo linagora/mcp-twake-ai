@@ -6,18 +6,22 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PassThrough, Readable } from 'node:stream';
 import { main, readLineFrom, type CliDeps, type Io } from '../src/cli.js';
 import { writePrivateFile } from '../src/files.js';
-import { chooseVault } from '../src/vault.js';
+import { chooseVault, openVault } from '../src/vault.js';
+import { OIDC_REFRESH_KEY } from '../src/grants.js';
+import { CANCEL } from './helpers/scripted-prompter.js';
 import { startFakeIdp, type FakeIdp } from './helpers/fake-idp.js';
 import { tempPaths } from './helpers/tmp.js';
 import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { fakeNpm } from './helpers/fake-mcp.js';
-import { prefixDir } from '../src/installer.js';
+import { prefixDir, serverDir } from '../src/installer.js';
+import { shortcutPath } from '../src/self-install.js';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readText } from '../src/agents/config-file.js';
 import { journalFile } from '../src/journal.js';
+import { scriptedPrompter } from './helpers/scripted-prompter.js';
 import { cursorConfig, vscodeConfig } from '../src/agents/locations.js';
 
 const run = promisify(execFile);
@@ -53,6 +57,7 @@ async function testDeps(): Promise<CliDeps & { clock: { t: number } }> {
     clock,
     paths,
     home: join(root, 'home'),
+    interactive: false,
     env: {},
     platform: 'darwin',
     fetch: (async (input: string | URL | Request, init?: RequestInit) => {
@@ -147,6 +152,27 @@ describe('the mcp-twake-ai process', () => {
 });
 
 describe('main: second sign-in and failures', () => {
+  it('guides in English, even on a French system', async () => {
+    const deps = await testDeps();
+    deps.interactive = true;
+    deps.env = { LANG: 'fr_FR.UTF-8' };
+    deps.prompter = scriptedPrompter(['alice@example.com', []]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(0);
+    const prompter = deps.prompter as ReturnType<typeof scriptedPrompter>;
+    expect(prompter.asked).toEqual(['Your Twake.ai email address', 'Which agents should get the Twake.ai servers?']);
+    expect(prompter.shown.join('\n')).toContain('Your sovereign Digital Workplace');
+  });
+
+  it('runs the guided setup on a terminal when no agent is named', async () => {
+    const deps = await testDeps();
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter(['alice@example.com', [], ['mail']]);
+    const io = captureIo();
+    expect(await main(['setup'], io, deps)).toBe(0);
+    expect((deps.prompter as ReturnType<typeof scriptedPrompter>).shown.join('\n')).toContain('No agent chosen: nothing to do.');
+    expect(idp.revoked).toHaveLength(1);
+  });
+
   it('keeps a journal of commands and errors, without tokens', async () => {
     const deps = await testDeps();
     expect(await main(['login', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
@@ -599,6 +625,130 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await main(['uninstall', '--yes', '--force'], captureIo(), deps)).toBe(0);
     expect(await stat(prefixDir(deps.paths)).then(() => true, () => false)).toBe(false);
     expect(await stat(deps.paths.configFile).then(() => true, () => false)).toBe(false);
+  });
+
+  it('signs in first with --email when there is no session yet', async () => {
+    const deps = await testDeps();
+    await mkdir(join(deps.home, '.cursor'), { recursive: true });
+    deps.runInstall = fakeNpm(deps.paths);
+    const io = captureIo();
+    expect(await main(['setup', '--email', 'alice@example.com', '--agents', 'cursor', '--services', 'chat'], io, deps)).toBe(0);
+    expect(io.out).toContain('Signed in as alice@example.com');
+    expect(io.out).toContain('Nothing was changed');
+  });
+
+  /** As if run by npx: the CLI sits in npx's cache, and npm installs mcp-twake-ai itself into the prefix. */
+  function underNpx(deps: CliDeps): string {
+    deps.cliPath = join(deps.home, '.npm', '_npx', 'abc', 'node_modules', 'mcp-twake-ai', 'build', 'bin.js');
+    const npm = fakeNpm(deps.paths);
+    const installed = join(serverDir(deps.paths, 'mcp-twake-ai'), 'node_modules', 'mcp-twake-ai');
+    deps.runInstall = async (command, args) => {
+      const self = args.find((arg) => arg.startsWith('mcp-twake-ai@'));
+      if (!self) return npm(command, args);
+      await mkdir(join(installed, 'build'), { recursive: true });
+      await writeFile(join(installed, 'package.json'), JSON.stringify({ name: 'mcp-twake-ai', version: self.split('@')[1], bin: { 'mcp-twake-ai': 'build/bin.js' } }));
+      await writeFile(join(installed, 'build', 'bin.js'), '');
+    };
+    return installed;
+  }
+
+  it('under npx, export too points to the copy installed in the prefix', async () => {
+    const { deps } = await readyForSetup();
+    const installed = underNpx(deps);
+    const out = join(deps.paths.dataDir, '..', 'export-npx');
+    expect(await main(['export', '--agent', 'zed', '--services', 'mail', '--out', out], captureIo(), deps)).toBe(0);
+    expect(JSON.parse(await readFile(join(out, 'mcpServers.json'), 'utf8')).mcpServers['twake-mail'].args[0]).toBe(join(installed, 'build', 'bin.js'));
+    expect(await readText(join(installed, 'package.json'))).toBeDefined();
+    const env = captureIo();
+    expect(await main(['status', '--env', 'mail'], env, deps)).toBe(0);
+    expect(env.out).not.toContain('_npx');
+  });
+
+  it('under npx, installs itself into the prefix, points the entries there and adds a shortcut', async () => {
+    const { deps, cursor } = await readyForSetup();
+    const installed = underNpx(deps);
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail'].args[0]).toBe(join(installed, 'build', 'bin.js'));
+    const shortcut = shortcutPath({ platform: deps.platform, env: deps.env, home: deps.home });
+    expect(await readText(shortcut)).toContain(join(installed, 'build', 'bin.js'));
+    expect(io.out).toContain('to your PATH');
+    expect(await main(['uninstall', '--yes'], captureIo(), deps)).toBe(0);
+    expect(await readText(shortcut)).toBeUndefined();
+  });
+
+  it('giving up after signing in again keeps the session, Drive and Chat that were there before', async () => {
+    const deps = await signedIn();
+    expect(await main(['login', '--drive'], captureIo(), deps)).toBe(0);
+    expect(await main(['login', '--chat', '--agent', 'hermes'], captureIo(), deps)).toBe(0);
+    const before = await (await openVault('file', deps.paths)).get(OIDC_REFRESH_KEY);
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([false, 'alice@example.com', CANCEL]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(1);
+    expect(cozy.deleted).toEqual([]);
+    expect(synapse.loggedOut).toEqual([]);
+    expect(idp.revoked).toHaveLength(1);
+    expect(idp.revoked).not.toContain(before);
+    expect(await (await openVault('file', deps.paths)).get(OIDC_REFRESH_KEY)).toBe(before);
+    expect((await loadConfig(deps.paths))?.drive).toBeDefined();
+    expect(await main(['token', 'mail'], captureIo(), deps)).toBe(0);
+    expect(await main(['token', 'chat', '--agent', 'hermes'], captureIo(), deps)).toBe(0);
+  });
+
+  it('asks for the email again after a logout, the configuration being still there', async () => {
+    const deps = await signedIn();
+    expect(await main(['logout'], captureIo(), deps)).toBe(0);
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter(['alice@example.com', []]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(0);
+    expect((deps.prompter as ReturnType<typeof scriptedPrompter>).asked[0]).toBe('Your Twake.ai email address');
+  });
+
+  it('signs in again with --email after a logout, or for another account', async () => {
+    const deps = await signedIn();
+    await mkdir(join(deps.home, '.cursor'), { recursive: true });
+    expect(await main(['logout'], captureIo(), deps)).toBe(0);
+    const again = captureIo();
+    expect(await main(['setup', '--email', 'alice@example.com', '--agents', 'cursor', '--services', 'chat'], again, deps)).toBe(0);
+    expect(again.out).toContain('Signed in as alice@example.com');
+    const other = captureIo();
+    expect(await main(['setup', '--email', 'bob@example.com', '--agents', 'cursor', '--services', 'chat'], other, deps)).toBe(0);
+    expect(other.out).toContain('Signed in as bob@example.com');
+  });
+
+  it('on a terminal, setup --email starts the guided setup without asking the email', async () => {
+    const deps = await testDeps();
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([[]]);
+    expect(await main(['setup', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
+    const prompter = deps.prompter as ReturnType<typeof scriptedPrompter>;
+    expect(prompter.asked).toEqual(['Which agents should get the Twake.ai servers?']);
+    // the sign-in was made by this setup: giving up revokes it
+    expect(idp.revoked).toHaveLength(1);
+  });
+
+  it('offers only the services found for the account', async () => {
+    const deps = await signedIn();
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([true, ['cursor'], CANCEL]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(1);
+    // the account has a Drive instance and no Mail, Calendar, Space or Project found
+    expect((deps.prompter as ReturnType<typeof scriptedPrompter>).offered['Which services?']).toEqual(['drive', 'chat']);
+  });
+
+  it('says that the guided setup needs a terminal when there is none', async () => {
+    const deps = await testDeps();
+    const io = captureIo();
+    expect(await main(['setup'], io, deps)).toBe(2);
+    expect(io.err).toContain('run it in a terminal for the guided setup');
+  });
+
+  it('refuses --services or --force without --agents on a terminal', async () => {
+    const deps = await testDeps();
+    deps.interactive = true;
+    const io = captureIo();
+    expect(await main(['setup', '--services', 'mail'], io, deps)).toBe(2);
+    expect(io.err).toContain('--agents');
   });
 });
 

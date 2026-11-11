@@ -145,14 +145,18 @@ const DeviceAuthorizationSchema = z.object({
   expires_in: z.number(),
   interval: z.number().optional(),
 });
-export type DeviceAuthorization = z.infer<typeof DeviceAuthorizationSchema>;
+/** What the identity provider answered, and the PKCE verifier to present when polling. */
+export type DeviceAuthorization = z.infer<typeof DeviceAuthorizationSchema> & { verifier: string };
 
 export async function startDeviceAuthorization(meta: OidcMetadata, client: OidcClient, http: HttpOptions = {}): Promise<DeviceAuthorization> {
   if (!meta.device_authorization_endpoint) {
     throw new TwakeAiError('unsupported', `${meta.issuer} does not offer sign-in from another device: run mcp-twake-ai login on a computer with a browser.`);
   }
   const url = meta.device_authorization_endpoint;
-  const device = parseAnswer(DeviceAuthorizationSchema, await postForm(url, { client_id: client.clientId, scope: client.scope }, http), url);
+  // PKCE here too: LemonLDAP::NG requires it of a public client in the device flow, as in the browser one
+  const pkce = createPkce();
+  const answer = await postForm(url, { client_id: client.clientId, scope: client.scope, code_challenge: pkce.challenge, code_challenge_method: 'S256' }, http);
+  const device = { ...parseAnswer(DeviceAuthorizationSchema, answer, url), verifier: pkce.verifier };
   requireSecureUrl(device.verification_uri, 'The sign-in page');
   if (device.verification_uri_complete) requireSecureUrl(device.verification_uri_complete, 'The sign-in page');
   return device;
@@ -170,7 +174,7 @@ export async function pollDeviceToken(meta: OidcMetadata, client: OidcClient, de
     try {
       const raw = await postForm(
         meta.token_endpoint,
-        { grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: device.device_code, client_id: client.clientId },
+        { grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: device.device_code, client_id: client.clientId, code_verifier: device.verifier },
         http,
       );
       return toTokenSet(raw, now(), meta.token_endpoint);

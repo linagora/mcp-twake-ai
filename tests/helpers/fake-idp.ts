@@ -53,6 +53,7 @@ export async function startFakeIdp(): Promise<FakeIdp> {
   const refreshTokens = new Set<string>();
   const accessTokens = new Set<string>();
   let devicePolls = 0;
+  let deviceChallenge = '';
   const token = (prefix: string) => `${prefix}-${randomBytes(6).toString('hex')}`;
 
   const idp: FakeIdp = {
@@ -130,6 +131,9 @@ export async function startFakeIdp(): Promise<FakeIdp> {
         return res.end();
       }
       case '/device': {
+        // as LemonLDAP::NG does for a public client: the device flow needs PKCE too
+        if (!form.get('code_challenge') || form.get('code_challenge_method') !== 'S256') return json(400, { error: 'invalid_request', error_description: 'code_challenge is required' });
+        deviceChallenge = form.get('code_challenge') ?? '';
         devicePolls = 0;
         idp.lastClientId = form.get('client_id') ?? undefined;
         idp.lastScope = form.get('scope') ?? undefined;
@@ -170,6 +174,7 @@ export async function startFakeIdp(): Promise<FakeIdp> {
           return json(200, issue(idp.rotateRefreshTokens));
         }
         if (grant === 'urn:ietf:params:oauth:grant-type:device_code') {
+          if (createHash('sha256').update(form.get('code_verifier') ?? '').digest('base64url') !== deviceChallenge) return json(400, { error: 'invalid_grant', error_description: 'code_verifier does not match' });
           devicePolls++;
           if (idp.deviceDenied) return json(400, { error: 'access_denied' });
           if (idp.deviceSlowDownFirst && devicePolls === 1) return json(400, { error: 'slow_down' });
