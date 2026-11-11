@@ -13,7 +13,8 @@ import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { fakeNpm } from './helpers/fake-mcp.js';
-import { prefixDir } from '../src/installer.js';
+import { prefixDir, serverDir } from '../src/installer.js';
+import { shortcutPath } from '../src/self-install.js';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readText } from '../src/agents/config-file.js';
@@ -621,6 +622,28 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await main(['setup', '--email', 'alice@example.com', '--agents', 'cursor', '--services', 'chat'], io, deps)).toBe(0);
     expect(io.out).toContain('Signed in as alice@example.com');
     expect(io.out).toContain('Nothing was changed');
+  });
+
+  it('under npx, installs itself into the prefix, points the entries there and adds a shortcut', async () => {
+    const { deps, cursor } = await readyForSetup();
+    deps.cliPath = join(deps.home, '.npm', '_npx', 'abc', 'node_modules', 'mcp-twake-ai', 'build', 'bin.js');
+    const npm = fakeNpm(deps.paths);
+    const installed = join(serverDir(deps.paths, 'mcp-twake-ai'), 'node_modules', 'mcp-twake-ai');
+    deps.runInstall = async (command, args) => {
+      const self = args.find((arg) => arg.startsWith('mcp-twake-ai@'));
+      if (!self) return npm(command, args);
+      await mkdir(join(installed, 'build'), { recursive: true });
+      await writeFile(join(installed, 'package.json'), JSON.stringify({ name: 'mcp-twake-ai', version: self.split('@')[1], bin: { 'mcp-twake-ai': 'build/bin.js' } }));
+      await writeFile(join(installed, 'build', 'bin.js'), '');
+    };
+    const io = captureIo();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], io, deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail'].args[0]).toBe(join(installed, 'build', 'bin.js'));
+    const shortcut = shortcutPath({ platform: deps.platform, env: deps.env, home: deps.home });
+    expect(await readText(shortcut)).toContain(join(installed, 'build', 'bin.js'));
+    expect(io.out).toContain('to your PATH');
+    expect(await main(['uninstall', '--yes'], captureIo(), deps)).toBe(0);
+    expect(await readText(shortcut)).toBeUndefined();
   });
 });
 

@@ -12,6 +12,7 @@ import { logout } from './logout.js';
 import { renderBanner, wantsColor } from './banner.js';
 import { clackPrompter, type Prompter } from './prompter.js';
 import { runWizard, type WizardKit } from './wizard.js';
+import { isNpxCache, removeShortcut, selfInstall, selfInstalledCli, writeShortcut } from './self-install.js';
 import { forgetSecrets, removeFiles, uninstallPlan } from './uninstall.js';
 import { checkChat, checkDrive, checkSession, entryStates, handshake, type Check, type EntryState } from './status.js';
 import { chooseLoginMode, loginOidc } from './login.js';
@@ -30,7 +31,7 @@ import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/
 import { runService } from './launcher.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
 import { ensureInstalled, prefixDir, type Runner } from './installer.js';
-import { join, resolve as resolvePath } from 'node:path';
+import { join, posix, resolve as resolvePath, win32 } from 'node:path';
 
 export interface Io {
   stdout(text: string): void;
@@ -437,7 +438,10 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
   const chosen = request.services ?? defaultServices(config);
   const names = request.agents;
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
-  const ctx = catalogContext(config, d);
+  // under npx the entries must not point into npx's cache: mcp-twake-ai installs itself into the prefix (spec §5.3)
+  const fromNpx = isNpxCache(d.cliPath);
+  const cliPath = fromNpx ? selfInstalledCli(d.paths) : d.cliPath;
+  const ctx = catalogContext(config, { ...d, cliPath });
   // what needs no new connection is checked before anything changes
   for (const agent of names) for (const service of chosen) if (service !== 'drive' && service !== 'chat') serviceEnv(service, agent, ctx);
   const env: Record<string, string> = d.env.TWAKE_AI_HOME ? { TWAKE_AI_HOME: d.env.TWAKE_AI_HOME } : {};
@@ -474,6 +478,7 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
   if (plans.length === 0) return result(failed ? 1 : 0);
   if (driveFirst) await connectService({ drive: true, 'no-browser': request.noBrowser }, io, d);
   for (const agent of chatFor) await connectService({ chat: true, agent, 'no-browser': request.noBrowser }, io, d);
+  if (fromNpx) await selfInstall(d.paths, packageVersion(), d.runInstall);
   await ensureInstalled(d.paths, chosen, { run: d.runInstall, print: (line) => io.stdout(`${line}\n`) });
   for (const { adapter, owned, actions } of plans) {
     const result = await applyAgent(adapter, actions, owned, (action) => request.consent(adapter.id, action));
@@ -493,6 +498,10 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
     if (result.status === 'unchanged') io.stdout(`${adapter.label}: already up to date.\n`);
     else io.stdout(`${adapter.label}: done${result.backup ? ` (previous file kept as ${result.backup})` : ''}. ${adapter.capabilities.reload}\n`);
     if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);
+  }
+  if (fromNpx && written.length > 0) {
+    const { path, inPath } = await writeShortcut({ platform: d.platform, env: d.env, home: d.home }, d.nodePath, cliPath);
+    io.stdout(`The mcp-twake-ai command is in ${path}.${inPath ? '' : ` Add ${pathOfPlatform(d.platform).dirname(path)} to your PATH to type it from anywhere.`}\n`);
   }
   return result(failed ? 1 : 0);
 }
@@ -639,6 +648,7 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     if (remaining) await saveConfig(d.paths, { ...remaining, agents: left });
   }
   await removeFiles(d.paths, values['delete-chat-stores'] ?? false, keepConfig);
+  await removeShortcut({ platform: d.platform, env: d.env, home: d.home });
   if (keepConfig) {
     io.stdout(`Some entries are still in place and recorded in ${d.paths.configFile}: run uninstall --yes --force to remove them, or remove them by hand.\n`);
     return 1;
@@ -727,3 +737,5 @@ function wizardKit(io: Io, d: CliDeps): WizardKit {
     },
   };
 }
+
+const pathOfPlatform = (platform: NodeJS.Platform) => (platform === 'win32' ? win32 : posix);
