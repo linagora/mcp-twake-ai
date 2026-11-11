@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Fixed
+
+- Twake Chat no longer dies when a second client starts it: two agents, two folders of the same IDE or a reload used to fight over the agent's Matrix device, whose store one process owns ("the Matrix device store … is already used by process …"). The first client now starts one shared server per agent on loopback HTTP — bearer token in a `0600` file, one MCP session per client, so an approval request still reaches the client that asked — and the last client leaving stops it. The entries the agents have do not change, and no secret is written into their files. `status` shows the shared server while one runs, and `logout` and `uninstall` stop it.
+
 ## [0.3.1] - 2026-11-12
 
 ### Fixed

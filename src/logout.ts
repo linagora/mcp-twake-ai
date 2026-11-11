@@ -1,9 +1,11 @@
 import { rm } from 'node:fs/promises';
+import { CATALOG } from './catalog.js';
 import { saveConfig, type TwakeAiConfig } from './config.js';
 import { deleteCozyClient } from './cozy.js';
 import { describeError } from './describe.js';
 import { COZY_GRANT, COZY_KEYS, matrixGrant, matrixKey, OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
 import { withLock } from './lock.js';
+import { runningBackends, stopShared } from './shared.js';
 import { deleteCachedToken, readCachedToken } from './token-cache.js';
 import { logoutDevice } from './matrix.js';
 import type { OidcHttp } from './oidc.js';
@@ -43,6 +45,12 @@ export async function logout(d: LogoutDeps): Promise<{ done: string[]; failed: s
       failed.push(`${what}: ${describeError(error)}`);
     }
   };
+  // a shared backend holds the Chat device and the session's tokens: it goes before anything is revoked
+  for (const { service, agent } of await runningBackends(d.paths)) {
+    await attempt(`${CATALOG[service].name} shared server of ${agent} stopped`, `Twake Chat (${agent})`, async () => {
+      await stopShared(d.paths, service, agent);
+    });
+  }
   await underLock(OIDC_GRANT, 'Twake session', async () => {
     const refresh = await vault.get(OIDC_REFRESH_KEY);
     if (refresh) await attempt('Twake session revoked', 'Twake session', () => revokeToken(config.environment.oidc, config.oidc, refresh, http));
