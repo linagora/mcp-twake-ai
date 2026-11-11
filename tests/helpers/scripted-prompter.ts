@@ -3,10 +3,11 @@ import { SetupCancelled, type Prompter } from '../../src/prompter.js';
 export const CANCEL = Symbol('cancel');
 
 /** Answers the questions in order; CANCEL acts as Escape. Records the questions asked and the notes shown. */
-export function scriptedPrompter(answers: unknown[]): Prompter & { asked: string[]; shown: string[] } {
+export function scriptedPrompter(answers: unknown[]): Prompter & { asked: string[]; shown: string[]; offered: Record<string, unknown[]> } {
   const queue = [...answers];
   const asked: string[] = [];
   const shown: string[] = [];
+  const offered: Record<string, unknown[]> = {};
   const next = <T>(message: string): T => {
     asked.push(message);
     if (queue.length === 0) throw new Error(`no scripted answer for: ${message}`);
@@ -17,6 +18,7 @@ export function scriptedPrompter(answers: unknown[]): Prompter & { asked: string
   return {
     asked,
     shown,
+    offered,
     intro: (title) => void shown.push(title),
     note: (message, title) => void shown.push(title ? `${title}: ${message}` : message),
     outro: (message) => void shown.push(message),
@@ -27,6 +29,9 @@ export function scriptedPrompter(answers: unknown[]): Prompter & { asked: string
       return value;
     },
     confirm: async (o) => next<boolean>(o.message),
-    multiselect: async (o) => next(o.message),
+    multiselect: async (o) => {
+      offered[o.message] = o.options.map((option) => option.value);
+      return next(o.message);
+    },
   };
 }

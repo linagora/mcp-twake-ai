@@ -31,6 +31,7 @@ function fakeKit(o: { signedIn?: boolean; conflicts?: boolean } = {}) {
     },
     check: async () => [{ ok: true, line: '✓ Claude Code · twake-mail starts, 12 tools' }],
     revoke: async () => void calls.push('revoke'),
+    describe: (error) => (error as Error).message,
   };
   return { kit, calls };
 }
@@ -74,6 +75,48 @@ describe('the guided setup', () => {
     const { kit, calls } = fakeKit({ signedIn: true });
     expect(await runWizard(kit, scriptedPrompter([true, CANCEL]), '24.22.1')).toBe(1);
     expect(calls).toEqual([]);
+  });
+
+  it('says why a sign-in failed and asks the email again', async () => {
+    const { kit, calls } = fakeKit();
+    let tries = 0;
+    const flaky: WizardKit = {
+      ...kit,
+      signIn: async (email) => {
+        if (tries++ === 0) throw new Error('example.con is not a Twake.ai domain');
+        calls.push(`signIn ${email}`);
+        return { email };
+      },
+    };
+    const prompter = scriptedPrompter(['jdoe@example.con', 'jdoe@linagora.com', []]);
+    expect(await runWizard(flaky, prompter, '24.22.1')).toBe(0);
+    expect(prompter.shown).toContain('example.con is not a Twake.ai domain');
+    expect(calls[0]).toBe('signIn jdoe@linagora.com');
+  });
+
+  it('revokes its sign-in and says why when the plan fails', async () => {
+    const { kit, calls } = fakeKit();
+    const failing: WizardKit = { ...kit, plan: async () => { throw new Error('No Twake Project server was found'); } };
+    const prompter = scriptedPrompter(['jdoe@linagora.com', ['claude-code'], ['mail']]);
+    expect(await runWizard(failing, prompter, '24.22.1')).toBe(1);
+    expect(calls).toEqual(['signIn jdoe@linagora.com', 'revoke']);
+    expect(prompter.shown.at(-1)).toBe('Setup stopped: No Twake Project server was found');
+  });
+
+  it('keeps the session when writing the agents fails, as entries may already use it', async () => {
+    const { kit, calls } = fakeKit();
+    const failing: WizardKit = { ...kit, apply: async () => { throw new Error('npm could not install'); } };
+    const prompter = scriptedPrompter(['jdoe@linagora.com', ['claude-code'], ['mail'], true]);
+    expect(await runWizard(failing, prompter, '24.22.1')).toBe(1);
+    expect(calls).not.toContain('revoke');
+  });
+
+  it('signs in with the address given on the command line, without asking it', async () => {
+    const { kit, calls } = fakeKit({ signedIn: true });
+    const prompter = scriptedPrompter([[]]);
+    expect(await runWizard(kit, prompter, '24.22.1', { email: 'jdoe@linagora.com' })).toBe(0);
+    expect(prompter.asked).toEqual(['Which agents should get the Twake.ai servers?']);
+    expect(calls).toEqual(['signIn jdoe@linagora.com', 'revoke']);
   });
 
   it('stops on an old Node, saying how to fix it', async () => {

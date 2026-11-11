@@ -25,6 +25,7 @@ const EN = {
   example3: 'Find the latest version of the budget file in my Drive.',
   shortcutNotInPath: 'Add {dir} to your PATH to type mcp-twake-ai from anywhere.',
   nothingChosen: 'No agent chosen: nothing to do.',
+  failed: 'Setup stopped: {reason}',
 } as const;
 
 export type MessageKey = keyof typeof EN;
@@ -54,6 +55,7 @@ const FR: Record<MessageKey, string> = {
   example3: 'Trouve la dernière version du fichier de budget dans mon Drive.',
   shortcutNotInPath: 'Ajoutez {dir} à votre PATH pour taper mcp-twake-ai depuis n’importe où.',
   nothingChosen: 'Aucun agent choisi : rien à faire.',
+  failed: 'Setup arrêté : {reason}',
 };
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = { en: EN, fr: FR };

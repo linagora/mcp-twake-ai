@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PassThrough, Readable } from 'node:stream';
 import { main, readLineFrom, type CliDeps, type Io } from '../src/cli.js';
 import { writePrivateFile } from '../src/files.js';
-import { chooseVault } from '../src/vault.js';
+import { chooseVault, openVault } from '../src/vault.js';
+import { OIDC_REFRESH_KEY } from '../src/grants.js';
+import { CANCEL } from './helpers/scripted-prompter.js';
 import { startFakeIdp, type FakeIdp } from './helpers/fake-idp.js';
 import { tempPaths } from './helpers/tmp.js';
 import { loadConfig, saveConfig } from '../src/config.js';
@@ -655,6 +657,73 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toContain('to your PATH');
     expect(await main(['uninstall', '--yes'], captureIo(), deps)).toBe(0);
     expect(await readText(shortcut)).toBeUndefined();
+  });
+
+  it('giving up after signing in again keeps the session, Drive and Chat that were there before', async () => {
+    const deps = await signedIn();
+    expect(await main(['login', '--drive'], captureIo(), deps)).toBe(0);
+    expect(await main(['login', '--chat', '--agent', 'hermes'], captureIo(), deps)).toBe(0);
+    const before = await (await openVault('file', deps.paths)).get(OIDC_REFRESH_KEY);
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([false, 'alice@example.com', CANCEL]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(1);
+    expect(cozy.deleted).toEqual([]);
+    expect(synapse.loggedOut).toEqual([]);
+    expect(idp.revoked).toHaveLength(1);
+    expect(idp.revoked).not.toContain(before);
+    expect(await (await openVault('file', deps.paths)).get(OIDC_REFRESH_KEY)).toBe(before);
+    expect((await loadConfig(deps.paths))?.drive).toBeDefined();
+    expect(await main(['token', 'mail'], captureIo(), deps)).toBe(0);
+    expect(await main(['token', 'chat', '--agent', 'hermes'], captureIo(), deps)).toBe(0);
+  });
+
+  it('asks for the email again after a logout, the configuration being still there', async () => {
+    const deps = await signedIn();
+    expect(await main(['logout'], captureIo(), deps)).toBe(0);
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter(['alice@example.com', []]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(0);
+    expect((deps.prompter as ReturnType<typeof scriptedPrompter>).asked[0]).toBe('Your Twake.ai email address');
+  });
+
+  it('signs in again with --email after a logout, or for another account', async () => {
+    const deps = await signedIn();
+    await mkdir(join(deps.home, '.cursor'), { recursive: true });
+    expect(await main(['logout'], captureIo(), deps)).toBe(0);
+    const again = captureIo();
+    expect(await main(['setup', '--email', 'alice@example.com', '--agents', 'cursor', '--services', 'chat'], again, deps)).toBe(0);
+    expect(again.out).toContain('Signed in as alice@example.com');
+    const other = captureIo();
+    expect(await main(['setup', '--email', 'bob@example.com', '--agents', 'cursor', '--services', 'chat'], other, deps)).toBe(0);
+    expect(other.out).toContain('Signed in as bob@example.com');
+  });
+
+  it('on a terminal, setup --email starts the guided setup without asking the email', async () => {
+    const deps = await testDeps();
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([[]]);
+    expect(await main(['setup', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
+    const prompter = deps.prompter as ReturnType<typeof scriptedPrompter>;
+    expect(prompter.asked).toEqual(['Which agents should get the Twake.ai servers?']);
+    // the sign-in was made by this setup: giving up revokes it
+    expect(idp.revoked).toHaveLength(1);
+  });
+
+  it('offers only the services found for the account', async () => {
+    const deps = await signedIn();
+    deps.interactive = true;
+    deps.prompter = scriptedPrompter([true, ['cursor'], CANCEL]);
+    expect(await main(['setup'], captureIo(), deps)).toBe(1);
+    // the account has a Drive instance and no Mail, Calendar, Space or Project found
+    expect((deps.prompter as ReturnType<typeof scriptedPrompter>).offered['Which services?']).toEqual(['drive', 'chat']);
+  });
+
+  it('refuses --services or --force without --agents on a terminal', async () => {
+    const deps = await testDeps();
+    deps.interactive = true;
+    const io = captureIo();
+    expect(await main(['setup', '--services', 'mail'], io, deps)).toBe(2);
+    expect(io.err).toContain('--agents');
   });
 });
 

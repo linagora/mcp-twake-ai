@@ -17,6 +17,8 @@ export interface WizardKit {
   apply(agents: AgentId[], services: ServiceId[], accepted: Set<string>): Promise<{ code: number; reload: string[] }>;
   check(agents: AgentId[]): Promise<{ ok: boolean; line: string }[]>;
   revoke(): Promise<void>;
+  /** one line for the user */
+  describe(error: unknown): string;
 }
 
 const atLeast = (version: string, floor: string) => {
@@ -28,7 +30,7 @@ const atLeast = (version: string, floor: string) => {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** The guided setup (spec §8). Returns the exit code. */
-export async function runWizard(kit: WizardKit, prompter: Prompter, nodeVersion: string): Promise<number> {
+export async function runWizard(kit: WizardKit, prompter: Prompter, nodeVersion: string, options: { email?: string } = {}): Promise<number> {
   const say = (key: MessageKey, vars?: Record<string, string | number>) => t(kit.lang, key, vars);
   prompter.intro(kit.banner());
   if (!atLeast(nodeVersion, REQUIRED_NODE)) {
@@ -36,14 +38,23 @@ export async function runWizard(kit: WizardKit, prompter: Prompter, nodeVersion:
     return 1;
   }
   let signedInNow = false;
+  let applying = false;
   try {
-    let session = await kit.session();
+    let session = options.email === undefined ? await kit.session() : undefined;
     if (session && !(await prompter.confirm({ message: say('continueAs', { email: session.email }), initialValue: true }))) session = undefined;
-    if (!session) {
-      const email = await prompter.text({ message: say('askEmail'), placeholder: 'jane.doe@company.com', validate: (value) => (EMAIL.test(value.trim()) ? undefined : say('emailInvalid')) });
-      session = await kit.signIn(email.trim());
-      signedInNow = true;
-      prompter.note(say('signedInAs', { email: session.email }));
+    let email = options.email;
+    while (!session) {
+      email ??= (await prompter.text({ message: say('askEmail'), placeholder: 'jane.doe@company.com', validate: (value) => (EMAIL.test(value.trim()) ? undefined : say('emailInvalid')) })).trim();
+      try {
+        session = await kit.signIn(email);
+        signedInNow = true;
+        prompter.note(say('signedInAs', { email: session.email }));
+      } catch (error) {
+        if (error instanceof SetupCancelled) throw error;
+        // a mistyped address or a sign-in that did not complete: say why, and ask again
+        prompter.note(kit.describe(error));
+        email = undefined;
+      }
     }
     const agents = await kit.agents();
     const chosenAgents = await prompter.multiselect<AgentId>({
@@ -70,6 +81,7 @@ export async function runWizard(kit: WizardKit, prompter: Prompter, nodeVersion:
       if (await prompter.confirm({ message: say('replaceEntry', { agent: conflict.label, name: conflict.name }), initialValue: false })) accepted.add(conflict.key);
     }
     if (!(await prompter.confirm({ message: say('confirmApply'), initialValue: true }))) throw new SetupCancelled();
+    applying = true;
     const applied = await kit.apply(chosenAgents, chosenServices, accepted);
     prompter.note((await kit.check(chosenAgents)).map((check) => check.line).join('\n'), say('checking'));
     const quote = (example: string) => (kit.lang === 'fr' ? `  « ${example} »` : `  “${example}”`);
@@ -78,12 +90,12 @@ export async function runWizard(kit: WizardKit, prompter: Prompter, nodeVersion:
     prompter.outro(`${say('tryAsking')}:\n${examples}`);
     return applied.code;
   } catch (error) {
-    if (!(error instanceof SetupCancelled)) throw error;
-    if (signedInNow) {
+    // once agents are being written they may point at this session: it stays
+    if (signedInNow && !applying) {
       await kit.revoke().catch(() => undefined);
       prompter.note(say('revoked'));
     }
-    prompter.outro(say('cancelled'));
+    prompter.outro(error instanceof SetupCancelled ? say('cancelled') : say('failed', { reason: kit.describe(error) }));
     return 1;
   }
 }

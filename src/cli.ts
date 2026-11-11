@@ -19,7 +19,10 @@ import { chooseLoginMode, loginOidc } from './login.js';
 import { appPaths, type AppPaths } from './paths.js';
 import { chooseVault, openVault, type Vault } from './vault.js';
 import { createInterface } from 'node:readline/promises';
-import { checkAgentId } from './grants.js';
+import { checkAgentId, OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
+import { revokeToken } from './oidc.js';
+import { deleteCachedToken } from './token-cache.js';
+import { rm } from 'node:fs/promises';
 import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
@@ -407,12 +410,23 @@ async function setupCommand(args: string[], io: Io, d: CliDeps): Promise<number>
       strict: true,
     }),
   );
-  if (values.email !== undefined && !(await loadConfig(d.paths).catch(() => undefined))) {
-    const code = await loginCommand(['--email', values.email, ...(values['no-browser'] ? ['--no-browser'] : [])], io, d);
-    if (code !== 0) return code;
+  const guided = values.agents === undefined && !values.yes && d.interactive;
+  if (guided && (values.services !== undefined || values.force)) {
+    throw new TwakeAiError('usage', `--services and --force go with --agents: without them, setup asks.\n\n${USAGE}`);
+  }
+  if (guided) {
+    const kit = wizardKit(io, d, { noBrowser: values['no-browser'] });
+    return runWizard(kit, d.prompter ?? clackPrompter(), process.versions.node, { email: values.email?.trim() });
+  }
+  if (values.email !== undefined) {
+    // config.json outlives a logout: only a refresh token in the vault is a session, and it must be this account's
+    const session = await currentSession(d);
+    if (!session || session.email.toLowerCase() !== values.email.trim().toLowerCase()) {
+      const code = await loginCommand(['--email', values.email, ...(values['no-browser'] ? ['--no-browser'] : [])], io, d);
+      if (code !== 0) return code;
+    }
   }
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
-  if (values.agents === undefined && !values.yes && d.interactive) return runWizard(wizardKit(io, d), d.prompter ?? clackPrompter(), process.versions.node);
   const detected = await detectAgents(adapters);
   if (values.agents === undefined) {
     throw new TwakeAiError('usage', `setup needs --agents: ${AGENT_IDS.join(', ')}, or "detected" (found here: ${detected.join(', ') || 'none'}).\n\n${USAGE}`);
@@ -660,7 +674,20 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
 const SERVICE_LABELS: Record<ServiceId, string> = { mail: 'Mail', dav: 'Calendar & contacts', drive: 'Drive', chat: 'Chat', space: 'Space', project: 'Project' };
 
 /** What the guided setup uses: signing in, planning and writing go through the very code of the commands. */
-function wizardKit(io: Io, d: CliDeps): WizardKit {
+/** The signed-in account, only when the vault still holds its refresh token (config.json outlives a logout). */
+async function currentSession(d: CliDeps): Promise<TwakeAiConfig | undefined> {
+  const config = await loadConfig(d.paths).catch(() => undefined);
+  if (!config) return undefined;
+  try {
+    return (await (await openVault(config.vault, d.paths)).get(OIDC_REFRESH_KEY)) ? config : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function wizardKit(io: Io, d: CliDeps, options: { noBrowser?: boolean } = {}): WizardKit {
+  // what was there before this setup signed in: giving up puts it back
+  let before: { config?: TwakeAiConfig; refresh?: string } | undefined;
   const adaptersOf = () => createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
   const capture = (): Io & { text: string } => {
     const captured = {
@@ -679,11 +706,16 @@ function wizardKit(io: Io, d: CliDeps): WizardKit {
     lang: d.env.TWAKE_AI_LANGUAGE === 'fr' ? 'fr' : 'en',
     banner: () => renderBanner({ version: packageVersion(), color: wantsColor(d.env, Boolean(process.stdout.isTTY)) }),
     session: async () => {
-      const config = await loadConfig(d.paths).catch(() => undefined);
+      const config = await currentSession(d);
       return config ? { email: config.email } : undefined;
     },
     signIn: async (email) => {
-      const code = await loginCommand(['--email', email], io, d);
+      if (!before) {
+        const config = await loadConfig(d.paths).catch(() => undefined);
+        const refresh = config ? await openVault(config.vault, d.paths).then((vault) => vault.get(OIDC_REFRESH_KEY)).catch(() => undefined) : undefined;
+        before = { config, refresh };
+      }
+      const code = await loginCommand(['--email', email, ...(options.noBrowser ? ['--no-browser'] : [])], io, d);
       const config = await loadConfig(d.paths);
       if (code !== 0 || !config) throw new TwakeAiError('login_cancelled', `The sign-in of ${email} did not complete.`);
       return { email: config.email };
@@ -696,8 +728,15 @@ function wizardKit(io: Io, d: CliDeps): WizardKit {
     services: async () => {
       const config = await loadConfig(d.paths);
       const preselected = new Set<ServiceId>(config ? defaultServices(config) : []);
+      const found = config?.environment.services ?? {};
+      // only what exists for the account: Mail, Calendar, Space and Project once found, Drive with an instance, Chat always
+      const available = SERVICE_IDS.filter((id) => {
+        if (id === 'chat') return true;
+        if (id === 'drive') return Boolean(config?.environment.cozy.instance);
+        return found[id] !== undefined;
+      });
       if (config?.environment.cozy.instance) preselected.add('drive');
-      return SERVICE_IDS.map((id) => ({ id, label: SERVICE_LABELS[id], preselected: preselected.has(id) }));
+      return available.map((id) => ({ id, label: SERVICE_LABELS[id], preselected: preselected.has(id) }));
     },
     plan: async (agents, services) => {
       const out = capture();
@@ -707,7 +746,7 @@ function wizardKit(io: Io, d: CliDeps): WizardKit {
       return { text: out.text.trimEnd(), conflicts };
     },
     apply: async (agents, services, accepted) => {
-      const applied = await runSetup({ agents, services, apply: true, consent: (agent, action) => accepted.has(`${agent}/${action.name}`) }, io, d);
+      const applied = await runSetup({ agents, services, apply: true, consent: (agent, action) => accepted.has(`${agent}/${action.name}`), noBrowser: options.noBrowser }, io, d);
       const adapters = await adaptersOf();
       return { code: applied.code, reload: applied.written.map((agent) => `${adapters[agent].label}: ${adapters[agent].capabilities.reload}`) };
     },
@@ -732,10 +771,25 @@ function wizardKit(io: Io, d: CliDeps): WizardKit {
       return lines;
     },
     revoke: async () => {
-      const config = await loadConfig(d.paths);
+      // only the sign-in made by this setup: the session, Drive client and Chat devices from before stay as they were
+      const config = await loadConfig(d.paths).catch(() => undefined);
       if (!config) return;
-      await logout({ paths: d.paths, config, vault: await openVault(config.vault, d.paths), http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+      const vault = await openVault(config.vault, d.paths);
+      const minted = await vault.get(OIDC_REFRESH_KEY);
+      if (minted && minted !== before?.refresh) await revokeToken(config.environment.oidc, config.oidc, minted, { fetch: d.fetch }).catch(() => undefined);
+      await deleteCachedToken(d.paths, OIDC_GRANT);
+      if (before?.config) {
+        await saveConfig(d.paths, before.config);
+        if (before.config.vault !== config.vault) await vault.delete(OIDC_REFRESH_KEY).catch(() => undefined);
+        const previous = await openVault(before.config.vault, d.paths);
+        if (before.refresh) await previous.set(OIDC_REFRESH_KEY, before.refresh);
+        else await previous.delete(OIDC_REFRESH_KEY).catch(() => undefined);
+      } else {
+        await vault.delete(OIDC_REFRESH_KEY).catch(() => undefined);
+        await rm(d.paths.configFile, { force: true });
+      }
     },
+    describe: describeError,
   };
 }
 
