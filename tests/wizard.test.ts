@@ -101,7 +101,8 @@ describe('the guided setup', () => {
     };
     const prompter = scriptedPrompter(['jdoe@example.con', 'jdoe@linagora.com', []]);
     expect(await runWizard(flaky, prompter, '24.22.1')).toBe(0);
-    expect(prompter.shown).toContain('example.con is not a Twake.ai domain');
+    // why, then the next step: the question that follows
+    expect(prompter.shown).toContain('example.con is not a Twake.ai domain\nEnter your address to sign in again.');
     expect(calls[0]).toBe('signIn jdoe@linagora.com');
   });
 

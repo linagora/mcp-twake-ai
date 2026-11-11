@@ -139,9 +139,10 @@ describe('device flow', () => {
   it('stops when the code expires', async () => {
     idp.devicePendingPolls = 1_000;
     const device = await startDeviceAuthorization(meta, client);
+    // no command in the message: login and the guided setup each say what comes next
     await expect(pollDeviceToken(meta, client, device, virtualClock())).rejects.toMatchObject({
       code: 'login_cancelled',
-      message: expect.stringContaining('expired'),
+      message: 'The sign-in code expired before it was entered.',
     });
   });
 

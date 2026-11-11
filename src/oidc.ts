@@ -168,7 +168,7 @@ export async function startDeviceAuthorization(meta: OidcMetadata, client: OidcC
 export async function pollDeviceToken(meta: OidcMetadata, client: OidcClient, device: DeviceAuthorization, http: OidcHttp = {}): Promise<TokenSet> {
   const now = http.now ?? nowS;
   const sleep = http.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const expired = new TwakeAiError('login_cancelled', 'The sign-in code has expired: run mcp-twake-ai login again.');
+  const expired = new TwakeAiError('login_cancelled', 'The sign-in code expired before it was entered.');
   const deadline = now() + device.expires_in;
   let interval = device.interval ?? 5;
   while (now() < deadline) {
