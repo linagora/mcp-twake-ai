@@ -18,6 +18,8 @@ export interface FakeSynapse {
   deviceIdOverride: string | undefined;
   /** every access token issued so far expires (as refreshable Synapse tokens do after 5 minutes) */
   expireIssuedAccessTokens(): void;
+  /** a device signed in with refreshable tokens, as m.login.token would create it */
+  issueDevice(name: string): Promise<{ deviceId: string; accessToken: string; refreshToken: string }>;
   close(): Promise<void>;
 }
 
@@ -50,6 +52,12 @@ export async function startFakeSynapse(): Promise<FakeSynapse> {
     deviceIdOverride: undefined,
     expireIssuedAccessTokens() {
       for (const access of accessTokens.keys()) expired.add(access);
+    },
+    async issueDevice(name) {
+      const deviceId = `DEVICE${++devices}`;
+      synapse.deviceNames[deviceId] = name;
+      const issued = session(deviceId, true);
+      return { deviceId, accessToken: String(issued.access_token), refreshToken: String(issued.refresh_token) };
     },
     close: () =>
       new Promise((resolve) => {

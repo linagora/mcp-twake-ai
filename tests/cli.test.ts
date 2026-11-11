@@ -490,6 +490,20 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toContain('JMAP_SESSION_URL=https://jmap.example.com/jmap/session\n');
     expect(io.out).toContain("JMAP_TOKEN_COMMAND='/usr/bin/node' '/opt/twake-ai/build/bin.js' 'token' 'mail'\n");
   });
+
+  it('logs out of everything, then token asks to sign in again', async () => {
+    const deps = await signedIn();
+    expect(await main(['login', '--drive'], captureIo(), deps)).toBe(0);
+    expect(await main(['login', '--chat', '--agent', 'hermes'], captureIo(), deps)).toBe(0);
+    const io = captureIo();
+    expect(await main(['logout'], io, deps)).toBe(0);
+    expect(io.out).toContain('✓ Twake session revoked');
+    expect(io.out).toContain('✓ Twake Chat device of hermes signed out');
+    expect(cozy.deleted).toHaveLength(1);
+    const token = captureIo();
+    expect(await main(['token', 'mail'], token, deps)).toBe(1);
+    expect(token.err).toContain('mcp-twake-ai login');
+  });
 });
 
 describe('main: run', () => {

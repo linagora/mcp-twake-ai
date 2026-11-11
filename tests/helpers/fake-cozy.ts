@@ -19,6 +19,8 @@ export interface FakeCozy {
   oidcTokens: string[];
   /** exp claim of the JWT access tokens it issues */
   tokenExp: number;
+  /** registers a client as POST /auth/register would, for tests that start signed in */
+  registerClient(): Promise<{ clientId: string; clientSecret: string; registrationToken: string }>;
   close(): Promise<void>;
 }
 
@@ -45,6 +47,13 @@ export async function startFakeCozy(): Promise<FakeCozy> {
     registrations: 0,
     deleted: [],
     apps: ['mail', 'chat', 'space', 'project'],
+    async registerClient() {
+      const clientId = id('client');
+      const entry = { secret: id('secret'), registration: id('registration') };
+      clients.set(clientId, entry);
+      cozy.registrations++;
+      return { clientId, clientSecret: entry.secret, registrationToken: entry.registration };
+    },
     oidcExchange: false,
     oidcMissing: false,
     oidcExchangeFails: false,
