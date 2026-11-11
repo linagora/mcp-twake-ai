@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import { rm, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { planEntries, type EntryAction } from './agents/entries.js';
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
@@ -25,9 +25,12 @@ export async function uninstallPlan(config: TwakeAiConfig, adapters: Record<Agen
  * keepConfig: entries left in agents stay recorded, so that uninstall --force can still remove them.
  */
 export async function removeFiles(paths: AppPaths, deleteChatStores: boolean, keepConfig = false): Promise<string[]> {
-  const targets = [prefixDir(paths), ...(keepConfig ? [] : [paths.configFile]), paths.vaultFile, paths.cacheDir, journalFile(paths), `${journalFile(paths)}.1`, paths.locksDir];
+  // only what mcp-twake-ai put there: the cache or state folder may be shared (XDG_CACHE_HOME = XDG_DATA_HOME, TWAKE_AI_HOME=$HOME)
+  const targets = [prefixDir(paths), ...(keepConfig ? [] : [paths.configFile]), paths.vaultFile, paths.tokensDir, journalFile(paths), `${journalFile(paths)}.1`, paths.locksDir];
   if (deleteChatStores) targets.push(join(paths.dataDir, 'chat'));
   for (const target of targets) await rm(target, { recursive: true, force: true });
+  // then its own folders, once empty
+  for (const dir of [paths.cacheDir, paths.stateDir, paths.dataDir, paths.configDir]) await rmdir(dir).catch(() => undefined);
   return targets;
 }
 

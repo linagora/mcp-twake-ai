@@ -657,6 +657,7 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   }
   // the entries an agent still has (skipped, or its write failed) stay recorded
   const left: Record<string, { entries: Record<string, string> }> = {};
+  let revocationFailed = false;
   for (const { adapter, owned, actions } of plans) {
     const result = await applyAgent(adapter, actions, owned, () => force);
     if (result.status === 'failed') {
@@ -672,8 +673,10 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   }
   if (config) {
     const vault = await openVault(config.vault, d.paths);
-    const { failed: notRevoked } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    const { done: revoked, failed: notRevoked } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    for (const line of revoked) io.stdout(`✓ ${line}\n`);
     for (const line of notRevoked) io.stdout(`✗ ${line}\n`);
+    revocationFailed = notRevoked.length > 0;
   }
   if (unreadable) await forgetSecrets(d.paths);
   const keepConfig = Object.keys(left).length > 0;
@@ -688,7 +691,8 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     return 1;
   }
   io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`} Remove the command itself with: npm uninstall -g mcp-twake-ai\n`);
-  return 0;
+  // the files are gone, but an authorization may still be alive at the server: say so with the exit code
+  return revocationFailed ? 1 : 0;
 }
 
 const SERVICE_LABELS: Record<ServiceId, string> = { mail: 'Mail', dav: 'Calendar & contacts', drive: 'Drive', chat: 'Chat', space: 'Space', project: 'Project' };

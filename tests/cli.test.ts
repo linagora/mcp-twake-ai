@@ -774,6 +774,32 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await main(['setup', '--agents', 'claude-desktop', '--services', 'mail'], io, deps)).toBe(1);
     expect(io.out).not.toContain('--yes');
   });
+
+  it('keeps the Chat stores and other files when the cache and data folders are one', async () => {
+    const { deps } = await readyForSetup();
+    const shared = join(deps.home, 'shared');
+    deps.paths = { ...deps.paths, cacheDir: shared, tokensDir: join(shared, 'tokens'), dataDir: shared };
+    await mkdir(join(shared, 'chat', 'cursor'), { recursive: true });
+    await writeFile(join(shared, 'someone-else.txt'), 'keep');
+    expect(await main(['uninstall', '--yes'], captureIo(), deps)).toBe(0);
+    expect(await readText(join(shared, 'someone-else.txt'))).toBe('keep');
+    expect(await stat(join(shared, 'chat', 'cursor')).then(() => true, () => false)).toBe(true);
+  });
+
+  it('shows what uninstall revoked, and exits with 1 when a revocation failed', async () => {
+    const { deps } = await readyForSetup();
+    const ok = captureIo();
+    idp.close();
+    expect(await main(['uninstall', '--yes'], ok, deps)).toBe(1);
+    expect(ok.out).toMatch(/✗ Twake session: /);
+  });
+
+  it('shows the revocations uninstall made', async () => {
+    const { deps } = await readyForSetup();
+    const io = captureIo();
+    expect(await main(['uninstall', '--yes'], io, deps)).toBe(0);
+    expect(io.out).toContain('✓ Twake session revoked');
+  });
 });
 
 describe('main: run', () => {
