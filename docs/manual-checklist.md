@@ -1,54 +1,54 @@
-# Recette manuelle par agent
+# Manual checklist, agent by agent
 
-À faire avec un vrai compte Twake.ai, après `scripts/live.mjs` (`LIVE_EMAIL=… node scripts/live.mjs`). Pour chaque agent, cocher les cinq points.
+Run it with a real Twake.ai account, after `scripts/live.mjs` (`LIVE_EMAIL=… node scripts/live.mjs`). Tick the five points for each agent.
 
-## Avant de commencer
+## Before you start
 
-- [ ] `npx mcp-twake-ai setup` affiche la bannière, puis se connecte (navigateur, ou code avec `--no-browser` en SSH).
-- [ ] Les agents installés sont pré-cochés, et les services trouvés pour le compte aussi.
-- [ ] Le plan liste les entrées `twake-*` (`twake_*` pour Hermes) ; après confirmation, chaque serveur écrit est marqué `✓ … starts`.
+- [ ] `npx mcp-twake-ai setup` (from any folder but this repository) shows the banner, then signs in (in the browser, or with a code over SSH or with `--no-browser`).
+- [ ] The installed agents are ticked in advance, and so are the services found for the account.
+- [ ] The plan lists the `twake-*` entries (`twake_*` for Hermes); once confirmed, every server written is marked `✓ … starts`.
 
 ## Claude Code
 
-- [ ] `mcp-twake-ai setup` avec Claude Code coché.
-- [ ] Nouvelle session `claude` ; `/mcp` liste les serveurs `twake-*` connectés.
-- [ ] Lecture : « Qu'y a-t-il dans mon agenda demain ? »
-- [ ] Écriture approuvée par élicitation : « Crée un brouillon d'email à moi-même avec pour sujet Test » ; la demande d'approbation s'affiche dans le terminal, l'accepter, vérifier le brouillon dans Twake Mail.
-- [ ] `mcp-twake-ai status` : tout est `✓`.
+- [ ] `mcp-twake-ai setup` with Claude Code ticked.
+- [ ] A new `claude` session; `/mcp` lists the `twake-*` servers as connected.
+- [ ] A read: "What is on my calendar tomorrow?"
+- [ ] A write approved through elicitation: "Create a draft email to myself with the subject Test". The approval request shows in the terminal: accept it, then check the draft in Twake Mail.
+- [ ] `mcp-twake-ai status`: everything is `✓`.
 
 ## Hermes
 
-- [ ] `mcp-twake-ai setup` avec Hermes coché ; `config.yaml` est inchangé hors de `mcp_servers` (comparer avec la copie `config.yaml.bak-<date>`).
-- [ ] `/reload-mcp` dans Hermes, ou redémarrage.
-- [ ] Lecture : « Qu'y a-t-il dans mon agenda demain ? »
-- [ ] Écriture approuvée par élicitation (brouillon d'email), avec la demande d'approbation de Hermes.
-- [ ] `mcp-twake-ai status` : tout est `✓`.
+- [ ] `mcp-twake-ai setup` with Hermes ticked; `config.yaml` is unchanged outside `mcp_servers` (compare it with the copy `config.yaml.bak-<date>`).
+- [ ] `/reload-mcp` in Hermes, or a restart.
+- [ ] A read: "What is on my calendar tomorrow?"
+- [ ] A write approved through elicitation (a draft email), with Hermes' approval request.
+- [ ] `mcp-twake-ai status`: everything is `✓`.
 
 ## Claude Desktop
 
-- [ ] `mcp-twake-ai setup` avec Claude Desktop coché ; le parcours prévient qu'il ne sait pas afficher les demandes d'approbation.
-- [ ] Quitter complètement Claude Desktop, puis le relancer ; les serveurs `twake-*` apparaissent dans les réglages des connecteurs.
-- [ ] Lecture : « Qu'y a-t-il dans mon agenda demain ? »
-- [ ] Écriture : la demande est refusée avec un message clair, sans rien créer.
-- [ ] `mcp-twake-ai status` : tout est `✓`.
+- [ ] `mcp-twake-ai setup` with Claude Desktop ticked; the guided setup warns that it cannot show approval requests.
+- [ ] Quit Claude Desktop completely, then start it again; the `twake-*` servers appear in the connector settings.
+- [ ] A read: "What is on my calendar tomorrow?"
+- [ ] A write: it is refused with a clear message, and nothing is created.
+- [ ] `mcp-twake-ai status`: everything is `✓`.
 
 ## Cursor
 
-- [ ] `mcp-twake-ai setup` avec Cursor coché ; `~/.cursor/mcp.json` garde les autres serveurs.
-- [ ] Les serveurs `twake-*` apparaissent dans Settings > MCP (sinon, quitter et relancer Cursor).
-- [ ] Lecture : « Qu'y a-t-il dans mon agenda demain ? »
-- [ ] Écriture approuvée par élicitation (brouillon d'email).
-- [ ] `mcp-twake-ai status` : tout est `✓`.
+- [ ] `mcp-twake-ai setup` with Cursor ticked; `~/.cursor/mcp.json` keeps the other servers.
+- [ ] The `twake-*` servers appear in Settings > MCP (otherwise, quit Cursor and start it again).
+- [ ] A read: "What is on my calendar tomorrow?"
+- [ ] A write approved through elicitation (a draft email).
+- [ ] `mcp-twake-ai status`: everything is `✓`.
 
 ## VS Code
 
-- [ ] `mcp-twake-ai setup` avec VS Code coché ; `User/mcp.json` garde ses commentaires, les autres serveurs et `inputs`.
-- [ ] Vue MCP Servers : les serveurs `twake-*` démarrent au premier message de chat.
-- [ ] Lecture : « Qu'y a-t-il dans mon agenda demain ? »
-- [ ] Écriture approuvée par élicitation (brouillon d'email).
-- [ ] `mcp-twake-ai status` : tout est `✓`.
+- [ ] `mcp-twake-ai setup` with VS Code ticked; `User/mcp.json` keeps its comments, the other servers and `inputs`.
+- [ ] MCP Servers view: the `twake-*` servers start at the first chat message.
+- [ ] A read: "What is on my calendar tomorrow?"
+- [ ] A write approved through elicitation (a draft email).
+- [ ] `mcp-twake-ai status`: everything is `✓`.
 
-## Pour finir
+## To finish
 
-- [ ] `mcp-twake-ai uninstall` montre ce qu'il retirerait ; `mcp-twake-ai uninstall --yes` retire les entrées, révoque les autorisations et supprime les fichiers ; les stores Chat restent (sauf `--delete-chat-stores`).
-- [ ] « Twake AI » n'apparaît plus dans les appareils connectés de Twake Drive, ni les devices « Twake AI · <agent> » dans Twake Chat.
+- [ ] `mcp-twake-ai uninstall` shows what it would remove; `mcp-twake-ai uninstall --yes` removes the entries, revokes the authorizations and deletes the files; the Chat stores stay (unless `--delete-chat-stores`).
+- [ ] "Twake AI" no longer appears in the connected devices of Twake Drive, nor do the "Twake AI · <agent>" devices in Twake Chat.
