@@ -85,9 +85,9 @@ export function systemTimezone(): string {
 export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContext): Record<string, string> {
   checkAgentId(agent);
   const extra = ctx.config.env?.[service] ?? {};
-  // a config.json edited by hand must not send a token to another server
+  // a config.json edited by hand must not send a token to another server, nor run code in the server
   for (const name of Object.keys(extra)) {
-    const refusal = envNameRefusal(name);
+    const refusal = EXTRA_ENV_NAME.test(name) ? envNameRefusal(name, service) : `${name} is not an upper-case variable name`;
     if (refusal) {
       throw new TwakeAiError('unsupported', `${ctx.paths.configFile} sets ${name} for ${service}: ${refusal}. Remove it from ${ctx.paths.configFile}.`);
     }
@@ -169,13 +169,31 @@ const SECRET_ENV_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|(^|_)KEYS?($|_)
 /** A variable a user may not set: Node.js reads it before the server, and it can run code or redirect its traffic */
 const RUNTIME_ENV_NAME = /^NODE_|(^|_)PROXY($|_)/;
 
+/** A variable mcp-twake-ai manages itself for the agent: one encryption store per device */
+const MANAGED_ENV_NAME = /^MATRIX_STORE_DIR$/;
+
+/** The prefix of a service's own variables: DAV_ for Twake Calendar, JMAP_ for Twake Mail… */
+export function serviceEnvPrefix(service: ServiceId): string {
+  return `${CATALOG[service].approval}_`;
+}
+
 /**
  * Why a variable name may not be set, if it may not
  *
+ * Only the variables of the server itself (`DAV_…` for Twake Calendar) and the `USER_…` ones are
+ * accepted: listing the dangerous names of a process environment is a losing game (LD_PRELOAD,
+ * DYLD_INSERT_LIBRARIES, COMSPEC, TWAKE_AI_HOME…), and a server has no business with NODE_OPTIONS.
+ *
  * @param name - the variable name, as it would be given to a server
+ * @param service - the service whose environment receives it
  * @returns the reason, or undefined when the name is free
  */
-export function envNameRefusal(name: string): string | undefined {
+export function envNameRefusal(name: string, service: ServiceId): string | undefined {
+  const prefix = serviceEnvPrefix(service);
+  if (!name.startsWith(prefix) && !name.startsWith('USER_')) {
+    return `${name} is not a variable of ${CATALOG[service].name}: only ${prefix}… and USER_… may be set`;
+  }
+  if (MANAGED_ENV_NAME.test(name)) return `${name} is managed by mcp-twake-ai, which keeps one store per device`;
   if (RUNTIME_ENV_NAME.test(name)) return `${name} is read by Node.js itself, before the server: it could run code or redirect its traffic`;
   if (SERVER_ENV_NAME.test(name)) return `${name} names a server or how to sign in to it: those come from the account, not from the user`;
   if (SECRET_ENV_NAME.test(name)) return `${name} may carry a secret: secrets stay in the keychain, and every server gets its own token command`;
@@ -218,7 +236,7 @@ export function parseEnvOption(values: string[]): EnvOptionChange {
       continue;
     }
     if (/[\r\n\0]/.test(value)) throw new TwakeAiError('usage', `--env ${service}.${name}: a value cannot hold a line break.`);
-    const refusal = envNameRefusal(name);
+    const refusal = envNameRefusal(name, service);
     if (refusal) throw new TwakeAiError('usage', `--env ${service}.${name}: ${refusal}.`);
     decisions.set(`${service}.${name}`, { service, name, value });
   }

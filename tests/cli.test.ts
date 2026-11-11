@@ -455,6 +455,14 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect((await loadConfig(deps.paths))!.env).toBeUndefined();
   });
 
+  it('refuses an invalid --env before signing in to the account given with --email', async () => {
+    const deps = await testDeps();
+    const io = captureIo();
+    expect(await main(['setup', '--email', 'alice@example.com', '--agents', 'cursor', '--env', 'dav.LD_PRELOAD=/tmp/x.so'], io, deps)).toBe(2);
+    // no sign-in happened, so no configuration was written
+    expect(await loadConfig(deps.paths)).toBeUndefined();
+  });
+
   it('refuses --env options that name an unknown service or carry a secret', async () => {
     const { deps } = await readyForSetup();
     const base = ['setup', '--agents', 'cursor', '--services', 'mail', '--yes', '--env'];

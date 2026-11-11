@@ -197,8 +197,16 @@ describe('serviceEnv: the user\'s own variables', () => {
     expect(serviceEnv('dav', 'cursor', override).USER_TIMEZONE).toBe('America/New_York');
   });
 
-  it('refuses a config.json edited by hand that names a server or a secret', () => {
-    for (const variables of [{ DAV_URL: 'https://evil.example/' }, { DAV_TOKEN_COMMAND: 'echo x' }, { DAV_AUTH_METHOD: 'bearer' }]) {
+  it('refuses a config.json edited by hand that names a server, a secret, or another program', () => {
+    const hostileSets = [
+      { DAV_URL: 'https://evil.example/' },
+      { DAV_TOKEN_COMMAND: 'echo x' },
+      { DAV_AUTH_METHOD: 'bearer' },
+      { LD_PRELOAD: '/tmp/x.so' },
+      { NODE_OPTIONS: '--require=/tmp/x.js' },
+      { node_options: '--require=/tmp/x.js' },
+    ];
+    for (const variables of hostileSets) {
       const hostile = { ...ctx, config: { ...config, env: { dav: variables } } };
       expect(() => serviceEnv('dav', 'cursor', hostile), JSON.stringify(variables)).toThrow(/Remove it from/);
     }
@@ -235,14 +243,25 @@ describe('parseEnvOption', () => {
   });
 
   it('lets the last option given for a variable win', () => {
-    expect(parseEnvOption(['dav.X=1', 'dav.X='])).toEqual({ set: {}, unset: { dav: ['X'] } });
-    expect(parseEnvOption(['dav.X=', 'dav.X=1'])).toEqual({ set: { dav: { X: '1' } }, unset: {} });
+    expect(parseEnvOption(['dav.DAV_X=1', 'dav.DAV_X='])).toEqual({ set: {}, unset: { dav: ['DAV_X'] } });
+    expect(parseEnvOption(['dav.DAV_X=', 'dav.DAV_X=1'])).toEqual({ set: { dav: { DAV_X: '1' } }, unset: {} });
   });
 
   it('refuses the variables Node.js reads before the server', () => {
     for (const option of ['dav.NODE_OPTIONS=--require=/tmp/x.js', 'mail.NODE_TLS_REJECT_UNAUTHORIZED=0', 'space.HTTPS_PROXY=http://127.0.0.1:1']) {
-      expect(() => parseEnvOption([option]), option).toThrow(/Node\.js itself/);
+      expect(() => parseEnvOption([option]), option).toThrow(/is not a variable of|Node\.js itself/);
     }
+  });
+
+  it('accepts only the variables of the server itself, and the USER_ ones', () => {
+    for (const option of ['dav.LD_PRELOAD=/tmp/x.so', 'dav.DYLD_INSERT_LIBRARIES=/tmp/x.dylib', 'dav.COMSPEC=cmd.exe', 'dav.TWAKE_AI_HOME=/tmp/x', 'mail.DAV_DEFAULT_CALENDAR=XG']) {
+      expect(() => parseEnvOption([option]), option).toThrow(/is not a variable of/);
+    }
+    expect(parseEnvOption(['dav.USER_LANGUAGE=en', 'space.USER_TIMEZONE=UTC']).set).toEqual({ dav: { USER_LANGUAGE: 'en' }, space: { USER_TIMEZONE: 'UTC' } });
+  });
+
+  it('refuses the store directory mcp-twake-ai keeps per device', () => {
+    expect(() => parseEnvOption(['chat.MATRIX_STORE_DIR=/tmp/x'])).toThrow(/managed by mcp-twake-ai/);
   });
 
   it('accepts the settings the servers document', () => {
