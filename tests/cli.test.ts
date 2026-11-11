@@ -590,6 +590,8 @@ describe('main: Twake Drive and Twake Chat', () => {
     const io = captureIo();
     expect(await main(['status', '--print-env', 'mail', '--env', 'dav'], io, deps)).toBe(0);
     expect(io.out).toContain('JMAP_SESSION_URL=');
+    // the dav environment was not printed as well
+    expect(io.out).not.toContain('DAV_');
     expect(io.err).toContain('ignored');
   });
 

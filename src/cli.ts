@@ -571,7 +571,7 @@ async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number
     // said on stderr: what a script reads on stdout stays the environment itself
     io.stderr(
       values['print-env'] === undefined
-        ? 'status --env is deprecated: use --print-env (setup --env sets a variable, status --print-env shows one).\n'
+        ? 'status --env is deprecated: use --print-env.\n'
         : 'status --env is ignored: --print-env was given.\n',
     );
   }
