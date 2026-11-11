@@ -393,7 +393,7 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 
 | Demande | Équipe | Bloquant ? |
 |---|---|---|
-| Client OIDC « twake-ai-agents » (section 7.4) | IdP / exploitation SaaS | **oui** |
+| ~~Client OIDC « twake-ai-agents » (section 7.4)~~ : créé le 2026-11-11 sur sso.linagora.com (client public, PKCE, redirection loopback, scopes `openid profile email offline_access workplaceFqdn`). Audiences du jeton : `twake-ai-agents`, `twake-projects`, `twake-space`, `tmail`, `tcalendar`. userinfo donne `email`, `name`, `org_id`, `preferred_username`, `sid`, `sub`, `uuid`, `workplaceFqdn`. **À vérifier** : le README de mcp-twake-space annonce l'audience `twakespace`, l'IdP émet `twake-space` | IdP / exploitation SaaS | non (levé) |
 | ~~Les six MCP lancent `*_TOKEN_COMMAND` avec `execFile('/bin/sh', ['-c', …])`~~ : corrigé le 2026-11-11 (mail#22, dav#25, drive#12, chat#10, space#8, project#9). Ils passent par `exec`, donc par `cmd.exe /d /s /c` sous Windows, et un job `windows-latest` le vérifie. Versions 4.1.1, 4.2.1, 0.4.1, 0.6.1, 0.2.2 et 0.2.2 | dépôts MCP | **oui pour Windows**, jusqu'à leur publication sur npm |
 | Ajouter les URL de Space et Project dans `.well-known/matrix/client` (par exemple sous une clé `app.twake.ai`) | exploitation SaaS | non : la convention `<service>.<domaine>` sert de repli |
 | Activer `allow_oauth_token` sur les contextes cozy du SaaS, avec `userinfo_url` vers l'IdP | exploitation cozy | non : sert à Drive sans redirection ni navigateur |

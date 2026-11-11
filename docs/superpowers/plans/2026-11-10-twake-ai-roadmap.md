@@ -62,6 +62,6 @@ La spec est découpée en quatre plans. Chacun livre un logiciel qui fonctionne 
 ## Après le plan 4b
 
 Le code de la spec est en place. Ce qui reste dépend de l'extérieur :
-- le client OIDC `twake-ai-agents` sur le LemonLDAP du SaaS, puis `scripts/live.mjs` et `docs/manual-checklist.md` ;
+- ~~le client OIDC `twake-ai-agents`~~ (créé le 2026-11-11) : reste à lancer `scripts/live.mjs` et `docs/manual-checklist.md`, et à vérifier l'audience de Space (`twake-space` émise, `twakespace` dans le README du MCP) ;
 - la publication npm des six MCP corrigés pour Windows (4.1.1, 4.2.1, 0.4.1, 0.6.1, 0.2.2, 0.2.2), puis celle de `mcp-twake-ai` ;
 - dans les six README, `mcp-twake-ai` à la place de `my-token-broker`.
