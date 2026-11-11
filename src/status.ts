@@ -76,7 +76,12 @@ export function handshake(entry: { command: string; args: string[]; env?: Record
     });
     child.stdin.on('error', () => undefined);
     child.once('error', (error) => finish({ ok: false, detail: error.message }));
-    child.once('exit', (code) => finish({ ok: false, detail: lastUsefulLine(stderr) || `the server stopped (exit code ${code})` }));
+    // close, not exit: the launcher's stderr is shared with the server it started, which may write last
+    child.once('close', (code) => {
+      // mcp-twake-chat locks its device store: an agent running it already is not a failure
+      if (/already used by process/.test(stderr)) return finish({ ok: true, detail: 'running in the agent (its device store is in use)' });
+      finish({ ok: false, detail: lastUsefulLine(stderr) || `the server stopped (exit code ${code})` });
+    });
     const send = (message: object) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
     createInterface({ input: child.stdout }).on('line', (line) => {
       let message: { id?: unknown; error?: { message?: string }; result?: { tools?: unknown[] } };

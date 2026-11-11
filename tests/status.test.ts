@@ -35,6 +35,19 @@ describe('handshake', () => {
     expect(await handshake({ command: process.execPath, args: [crashing] }, process.env)).toEqual({ ok: false, detail: 'Error: Cannot find module /opt/x/bin.js' });
   });
 
+  it('reads all of stderr before reporting a server that stopped, even what a child it started writes last', async () => {
+    // as the launcher does: the server it starts shares its stderr, and may write after the launcher itself has exited
+    const launcher = await script(
+      "require('node:child_process').spawn(process.execPath, ['-e', \"setTimeout(() => process.stderr.write('token command failed: No Twake session\\\\n'), 200)\"], { stdio: ['ignore', 'ignore', 'inherit'] }); process.exit(1);",
+    );
+    expect(await handshake({ command: process.execPath, args: [launcher] }, process.env)).toEqual({ ok: false, detail: 'token command failed: No Twake session' });
+  });
+
+  it('counts a Chat server whose store is held by a running agent as running there', async () => {
+    const busy = await script("process.stderr.write('mcp-twake-chat: the Matrix device store /x is already used by process 4242 (use the HTTP transport to share it)\\n'); process.exit(1);");
+    expect(await handshake({ command: process.execPath, args: [busy] }, process.env)).toEqual({ ok: true, detail: 'running in the agent (its device store is in use)' });
+  });
+
   it('gives up on a server that never answers', async () => {
     const mute = await script('setInterval(() => {}, 1000);');
     expect(await handshake({ command: process.execPath, args: [mute] }, process.env, 300)).toEqual({ ok: false, detail: 'no answer within 0.3 s' });
