@@ -46,7 +46,7 @@ export async function runWizard(kit: WizardKit, prompter: Prompter, nodeVersion:
       } catch (error) {
         if (error instanceof SetupCancelled) throw error;
         // a mistyped address or a sign-in that did not complete: say why, and ask again
-        prompter.note(kit.describe(error));
+        prompter.note(`${kit.describe(error)}\n${say('signInAgain')}`);
         email = undefined;
       }
     }
