@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathOf, type Place } from './agents/locations.js';
 import { TwakeAiError } from './errors.js';
@@ -44,22 +44,43 @@ export function shortcutPath(place: Place): string {
   return path.join(place.home, '.local', 'bin', PACKAGE);
 }
 
-/** A command at a stable path for the user (the agents always use absolute paths). */
-export async function writeShortcut(place: Place, nodePath: string, cliPath: string): Promise<{ path: string; inPath: boolean }> {
+const MARK = 'mcp-twake-ai shortcut';
+
+/** What is at the shortcut path: nothing, the shortcut mcp-twake-ai wrote (marked), or a file or link someone else put there. */
+async function shortcutState(path: string): Promise<'none' | 'ours' | 'foreign'> {
+  try {
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || !info.isFile()) return 'foreign';
+    return (await readFile(path, 'utf8')).includes(MARK) ? 'ours' : 'foreign';
+  } catch {
+    return 'none';
+  }
+}
+
+/** A command at a stable path for the user (the agents always use absolute paths). Another file there is left alone. */
+export async function writeShortcut(place: Place, nodePath: string, cliPath: string): Promise<{ path: string; inPath: boolean; written: boolean }> {
   const path = shortcutPath(place);
   const p = pathOf(place);
   // inside double quotes, sh still expands $ and `, and cmd.exe %: such a path is refused rather than changed
   if (/["%$`\r\n]/.test(nodePath + cliPath)) throw new TwakeAiError('unsupported', `${cliPath} cannot be written into a shortcut: install mcp-twake-ai under another folder.`);
-  await mkdir(p.dirname(path), { recursive: true });
-  if (place.platform === 'win32') await writeFile(path, `@"${nodePath}" "${cliPath}" %*\r\n`);
-  else {
-    await writeFile(path, `#!/bin/sh\nexec "${nodePath}" "${cliPath}" "$@"\n`);
-    await chmod(path, 0o755);
+  // cmd.exe reads a .cmd in the OEM code page (accents come out wrong) and may expand !…!
+  if (place.platform === 'win32' && /[^\x20-\x7e]|!/.test(nodePath + cliPath)) {
+    throw new TwakeAiError('unsupported', `${cliPath} has characters cmd.exe would misread (accents or !): no shortcut is written; run mcp-twake-ai with its full path.`);
   }
   const dirs = (Object.entries(place.env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '').split(p.delimiter);
-  return { path, inPath: dirs.some((dir) => dir && p.resolve(dir) === p.resolve(p.dirname(path))) };
+  const inPath = dirs.some((dir) => dir && p.resolve(dir) === p.resolve(p.dirname(path)));
+  if ((await shortcutState(path)) === 'foreign') return { path, inPath, written: false };
+  await mkdir(p.dirname(path), { recursive: true });
+  if (place.platform === 'win32') await writeFile(path, `@rem ${MARK}\r\n@"${nodePath}" "${cliPath}" %*\r\n`);
+  else {
+    await writeFile(path, `#!/bin/sh\n# ${MARK}\nexec "${nodePath}" "${cliPath}" "$@"\n`);
+    await chmod(path, 0o755);
+  }
+  return { path, inPath, written: true };
 }
 
+/** Removes the shortcut mcp-twake-ai wrote, never a file someone else put at that path. */
 export async function removeShortcut(place: Place): Promise<void> {
-  await rm(shortcutPath(place), { force: true });
+  const path = shortcutPath(place);
+  if ((await shortcutState(path)) === 'ours') await rm(path, { force: true });
 }

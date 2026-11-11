@@ -520,8 +520,14 @@ async function runSetup(request: SetupRequest, io: Io, d: CliDeps): Promise<{ co
     if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to change them)\n`);
   }
   if (fromNpx && written.length > 0) {
-    const { path, inPath } = await writeShortcut({ platform: d.platform, env: d.env, home: d.home }, d.nodePath, cliPath);
-    io.stdout(`The mcp-twake-ai command is in ${path}.${inPath ? '' : ` Add ${pathOfPlatform(d.platform).dirname(path)} to your PATH to type it from anywhere.`}\n`);
+    // a convenience: its failure never fails the setup
+    try {
+      const shortcut = await writeShortcut({ platform: d.platform, env: d.env, home: d.home }, d.nodePath, cliPath);
+      if (!shortcut.written) io.stdout(`${shortcut.path} is not mcp-twake-ai's: it is left as it is.\n`);
+      else io.stdout(`The mcp-twake-ai command is in ${shortcut.path}.${shortcut.inPath ? '' : ` Add ${pathOfPlatform(d.platform).dirname(shortcut.path)} to your PATH to type it from anywhere.`}\n`);
+    } catch (error) {
+      io.stdout(`${describeError(error)}\n`);
+    }
   }
   return result(failed ? 1 : 0);
 }

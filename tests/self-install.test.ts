@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isNpxCache, removeShortcut, selfInstall, shortcutPath, writeShortcut } from '../src/self-install.js';
@@ -42,5 +42,36 @@ describe('self-install', () => {
     expect(again.inPath).toBe(true);
     await removeShortcut(place);
     await expect(stat(path)).rejects.toThrow();
+  });
+  it('on Windows, refuses a path cmd.exe would misread (accents, !) rather than write a broken shortcut', async () => {
+    const place = { platform: 'win32' as const, env: { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' }, home: 'C:\\Users\\x' };
+    for (const cli of ['C:\\Users\\Frédéric\\bin.js', 'C:\\Users\\a!b\\bin.js']) {
+      await expect(writeShortcut(place, 'C:\\node.exe', cli)).rejects.toMatchObject({ code: 'unsupported' });
+    }
+  });
+
+  it('leaves alone a file it did not write, and does not remove it', async () => {
+    const home = await tempDir();
+    const place = { platform: process.platform, env: { LOCALAPPDATA: join(home, 'AppData', 'Local'), PATH: '' }, home };
+    const path = shortcutPath(place);
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, 'someone else');
+    expect((await writeShortcut(place, '/usr/bin/node', '/x.js')).written).toBe(false);
+    await removeShortcut(place);
+    expect(await readFile(path, 'utf8')).toBe('someone else');
+  });
+
+  it.skipIf(process.platform === 'win32')('never writes through a link at the shortcut path (npm link, a global prefix in ~/.local)', async () => {
+    const home = await tempDir();
+    const place = { platform: process.platform, env: { PATH: '' }, home };
+    const path = shortcutPath(place);
+    const target = join(home, 'lib', 'bin.js');
+    await mkdir(join(home, 'lib'), { recursive: true });
+    await writeFile(target, '#!/usr/bin/env node\n');
+    await mkdir(join(path, '..'), { recursive: true });
+    await symlink(target, path);
+    expect((await writeShortcut(place, '/usr/bin/node', '/x.js')).written).toBe(false);
+    expect((await lstat(path)).isSymbolicLink()).toBe(true);
+    expect(await readFile(target, 'utf8')).toBe('#!/usr/bin/env node\n');
   });
 });
