@@ -14,8 +14,35 @@ const GLYPHS: Record<string, string[]> = {
 
 const word = (text: string) => GLYPHS.M!.map((_, row) => [...text].map((letter) => GLYPHS[letter]![row]).join('').trimEnd());
 
-const FROM = [0x2f, 0x6b, 0xff];
-const TO = [0x00, 0xd1, 0xc1];
+type Rgb = [number, number, number];
+const rgb = (hex: string): Rgb => [0, 2, 4].map((i) => parseInt(hex.slice(1 + i, 3 + i), 16)) as Rgb;
+const mix = (a: Rgb, b: Rgb, t: number): Rgb => a.map((value, k) => value + (b[k]! - value) * t) as Rgb;
+const clamp = (t: number) => Math.min(1, Math.max(0, t));
+/** Where a point falls along a gradient line from `from` to `to` (0 at from, 1 at to), as SVG measures it. */
+const along = (x: number, y: number, from: [number, number], to: [number, number]) =>
+  ((x - from[0]) * (to[0] - from[0]) + (y - from[1]) * (to[1] - from[1])) / ((to[0] - from[0]) ** 2 + (to[1] - from[1]) ** 2);
+
+const GREEN = rgb('#4FB500');
+const BLUE = rgb('#0094FF');
+const PURPLE = rgb('#A033FF');
+
+/**
+ * The color of the Twake logo at (u, v), both from 0 to 1 across its square (assets/twake-logo.svg, 96×96): a base
+ * gradient purple → blue → green from right to left, a yellow veil rising from the bottom left, a red one from the
+ * bottom right, painted in that order.
+ */
+export function logoColor(u: number, v: number): Rgb {
+  const x = u * 96;
+  const y = v * 96;
+  const t = clamp(along(x, y, [96, 56], [0, 56]));
+  let color = t <= 0.12998 ? PURPLE : t <= 0.610381 ? mix(PURPLE, BLUE, (t - 0.12998) / (0.610381 - 0.12998)) : mix(BLUE, GREEN, (t - 0.610381) / (1 - 0.610381));
+  const yellow = clamp(along(x, y, [44, 30], [14, 90]) / 0.563347);
+  color = mix(color, mix(rgb('#FFD600'), rgb('#FFC700'), yellow), yellow);
+  const red = clamp((along(x, y, [52, 56], [86, 92]) - 0.0297327) / (0.842824 - 0.0297327));
+  color = mix(color, mix(rgb('#FF3B30'), rgb('#E73B2D'), red), red);
+  return color.map(Math.round) as Rgb;
+}
+
 const GREY = '\x1b[38;2;154;164;181m';
 const RESET = '\x1b[0m';
 const INDENT = '  ';
@@ -25,25 +52,20 @@ export function wantsColor(env: NodeJS.ProcessEnv, isTTY: boolean): boolean {
   return isTTY && !env.NO_COLOR;
 }
 
-function gradient(line: string, width: number): string {
-  return (
-    [...line]
-      .map((char, i) => {
-        if (char === ' ') return char;
-        const t = width > 1 ? i / (width - 1) : 0;
-        const [r, g, b] = FROM.map((from, k) => Math.round(from + (TO[k]! - from) * t));
-        return `\x1b[38;2;${r};${g};${b}m${char}`;
-      })
-      .join('') + RESET
-  );
-}
 
-/** The banner of setup (spec §8): MCP above TWAKE.AI in a blue-to-cyan gradient, whatever the width of the terminal. */
+/** The banner of setup (spec §8): MCP above TWAKE.AI, each letter in the color of the Twake logo at the same place. */
 export function renderBanner(o: { version: string; color: boolean }): string {
-  const blocks = [word('MCP'), word('TWAKE.AI')];
-  // one gradient for both blocks, so that the colors line up from one block to the next
-  const width = Math.max(...blocks.map((block) => [...block[0]!].length));
-  const art = blocks.map((block) => block.map((line) => `${INDENT}${o.color ? gradient(line, width) : line}`).join('\n')).join('\n\n');
+  const rows = [...word('MCP'), '', ...word('TWAKE.AI')];
+  const width = Math.max(...rows.map((row) => [...row].length));
+  const paint = (row: string, r: number) =>
+    [...row]
+      .map((char, c) => {
+        if (char === ' ') return char;
+        const [red, green, blue] = logoColor(c / (width - 1), r / (rows.length - 1));
+        return `\x1b[38;2;${red};${green};${blue}m${char}`;
+      })
+      .join('') + RESET;
+  const art = rows.map((row, r) => (row === '' ? '' : `${INDENT}${o.color ? paint(row, r) : row}`)).join('\n');
   const grey = (text: string) => (o.color ? `${GREY}${text}${RESET}` : text);
   return [
     '',

@@ -216,7 +216,7 @@ Au lancement, une bannière s'affiche, toujours dans cette disposition, quelle q
   Mail · Calendar · Drive · Chat · Space · Project        v1.0.0
 ```
 
-- Dégradé horizontal truecolor du bleu Twake (`#2F6BFF`) vers le cyan (`#00D1C1`), sous-titre en gris (`#9AA4B5`).
+- Couleurs du logo Twake (son SVG officiel) : chaque lettre prend la couleur du logo au même endroit, vert `#4FB500`, bleu `#0094FF` et violet `#A033FF` en haut, jaune `#FFC700` en bas à gauche, rouge `#E73B2D` en bas à droite (truecolor). Sous-titre en gris (`#9AA4B5`).
 - Pas de couleur si `NO_COLOR` est défini ou si la sortie n'est pas un terminal.
 - Pas de bannière en mode non interactif.
 - Le parcours est en anglais (décision du 2026-11-11). `TWAKE_AI_LANGUAGE=fr` le passe en français. La langue des serveurs MCP (`USER_LANGUAGE`) suit toujours celle du système.
