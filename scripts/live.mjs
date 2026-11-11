@@ -75,6 +75,25 @@ for (const service of ['mail', 'dav', 'space', 'project']) {
   if (services[service]?.url) backends.push(await backend(service, services[service].url, JSON.parse(out).access_token));
 }
 for (const check of backends) console.log(`${check.ok ? '✓' : '✗'} ${check.service} backend: HTTP ${check.status}${check.ok ? ', token accepted' : ', token refused (audience or rights?)'}`);
+// where else the calendar may take the token: the Twake Calendar side service, which publishes DAV under /dav/
+// (LIVE_DAV_CANDIDATES=url,url to try others)
+if (backends.some((check) => check.service === 'dav' && !check.ok)) {
+  const domain = email.slice(email.lastIndexOf('@') + 1).toLowerCase();
+  const candidates = (process.env.LIVE_DAV_CANDIDATES ?? `https://twcalendar.${domain}/dav/`).split(',').filter(Boolean);
+  const accessToken = JSON.parse(step('token dav (candidates)', ['token', 'dav'], token, { quiet: true })).access_token;
+  for (const candidate of candidates) {
+    const base = candidate.replace(/\/+$/, '');
+    const probes = [
+      ['PROPFIND', `${base}/calendars/`],
+      ['GET', `${new URL(base).origin}/api/user`],
+    ];
+    for (const [method, url] of probes) {
+      const answer = await fetch(url, { method, headers: { authorization: `Bearer ${accessToken}`, depth: '0', accept: 'application/json' } }).catch((error) => ({ status: String(error.cause?.code ?? error.message) }));
+      void answer.body?.cancel?.();
+      console.log(`  ${typeof answer.status === 'number' && answer.status < 300 ? '✓' : '✗'} candidate ${method} ${url}: HTTP ${answer.status}`);
+    }
+  }
+}
 step('status', ['status', '--no-start'], (out) => (out.includes('✓ Twake session') ? undefined : 'the session is not ✓'));
 // the refresh token before logout, to check afterwards that the identity provider itself refuses it (spec §13.5)
 const config = JSON.parse(readFileSync(join(home, 'config', 'config.json'), 'utf8'));
