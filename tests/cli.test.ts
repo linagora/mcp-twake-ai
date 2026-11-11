@@ -13,7 +13,8 @@ import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { fakeNpm } from './helpers/fake-mcp.js';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { prefixDir } from '../src/installer.js';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readText } from '../src/agents/config-file.js';
 import { journalFile } from '../src/journal.js';
@@ -503,6 +504,38 @@ describe('main: Twake Drive and Twake Chat', () => {
     const token = captureIo();
     expect(await main(['token', 'mail'], token, deps)).toBe(1);
     expect(token.err).toContain('mcp-twake-ai login');
+  });
+
+  it('shows what uninstall removes, then removes it with --yes', async () => {
+    const { deps, cursor } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor,vscode', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
+    await mkdir(join(deps.paths.dataDir, 'chat', 'cursor', 'DEVICE1'), { recursive: true });
+    const plan = captureIo();
+    expect(await main(['uninstall'], plan, deps)).toBe(0);
+    expect(plan.out).toMatch(/- twake-mail\s+remove/);
+    expect(plan.out).toContain('Nothing was changed');
+    expect(JSON.parse((await readText(cursor))!).mcpServers).toHaveProperty('twake-mail');
+    const io = captureIo();
+    expect(await main(['uninstall', '--yes'], io, deps)).toBe(0);
+    expect(JSON.parse((await readText(cursor))!).mcpServers).toEqual({});
+    expect(await loadConfig(deps.paths)).toBeUndefined();
+    expect(await readText(join(prefixDir(deps.paths), 'mcp-twake-mail', 'package.json'))).toBeUndefined();
+    expect(io.out).toContain(`Twake Chat stores kept in ${join(deps.paths.dataDir, 'chat')}`);
+    expect(synapse.loggedOut).toHaveLength(2);
+  });
+
+  it('keeps an entry changed by hand unless --force, and the Chat stores unless asked', async () => {
+    const { deps, cursor } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
+    const servers = JSON.parse((await readText(cursor))!);
+    servers.mcpServers['twake-mail'].env = { DEBUG: '1' };
+    await writeFile(cursor, JSON.stringify(servers));
+    await mkdir(join(deps.paths.dataDir, 'chat', 'cursor'), { recursive: true });
+    const io = captureIo();
+    expect(await main(['uninstall', '--yes', '--delete-chat-stores'], io, deps)).toBe(0);
+    expect(io.out).toContain('left as they are: twake-mail');
+    expect(JSON.parse((await readText(cursor))!).mcpServers['twake-mail'].env).toEqual({ DEBUG: '1' });
+    expect(await stat(join(deps.paths.dataDir, 'chat')).then(() => true, () => false)).toBe(false);
   });
 });
 

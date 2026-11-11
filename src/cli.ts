@@ -9,6 +9,7 @@ import { TwakeAiError } from './errors.js';
 import { describeError } from './describe.js';
 import { journal } from './journal.js';
 import { logout } from './logout.js';
+import { removeFiles, uninstallPlan } from './uninstall.js';
 import { checkChat, checkDrive, checkSession, entryStates, handshake, type Check, type EntryState } from './status.js';
 import { chooseLoginMode, loginOidc } from './login.js';
 import { appPaths, type AppPaths } from './paths.js';
@@ -25,8 +26,8 @@ import { applyAgent, createAdapters, detectAgents, recordOwned } from './agents/
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
 import { runService } from './launcher.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
-import { ensureInstalled, type Runner } from './installer.js';
-import { resolve as resolvePath } from 'node:path';
+import { ensureInstalled, prefixDir, type Runner } from './installer.js';
+import { join, resolve as resolvePath } from 'node:path';
 
 export interface Io {
   stdout(text: string): void;
@@ -121,6 +122,7 @@ const USAGE = `usage:
   mcp-twake-ai status [--agents <ids>] [--no-start]
   mcp-twake-ai status --env <service> [--agent <id>]
   mcp-twake-ai logout
+  mcp-twake-ai uninstall [--yes] [--force] [--delete-chat-stores]
   mcp-twake-ai --version
 `;
 
@@ -162,6 +164,8 @@ async function dispatch(command: string | undefined, args: string[], io: Io, dep
       return await statusCommand(args, io, deps);
     case 'logout':
       return await logoutCommand(io, deps);
+    case 'uninstall':
+      return await uninstallCommand(args, io, deps);
     case 'login':
       return await loginCommand(args, io, deps);
     case 'token':
@@ -523,4 +527,42 @@ async function logoutCommand(io: Io, d: CliDeps): Promise<number> {
   for (const line of failed) io.stdout(`✗ ${line}\n`);
   io.stdout(failed.length ? 'The secrets are forgotten here; what could not be revoked expires on its own, or can be removed from your Twake account.\n' : 'Signed out. Run mcp-twake-ai login to sign in again.\n');
   return failed.length ? 1 : 0;
+}
+
+/** uninstall: removes the entries written, signs out, deletes what mcp-twake-ai installed (spec §12.3). */
+async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
+  const { values } = usageErrors(() =>
+    parseArgs({ args, options: { yes: { type: 'boolean' }, force: { type: 'boolean' }, 'delete-chat-stores': { type: 'boolean' } }, strict: true }),
+  );
+  const config = await loadConfig(d.paths).catch(() => undefined);
+  const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  const force = values.force ?? false;
+  const plans = config ? await uninstallPlan(config, adapters) : [];
+  for (const { adapter, actions } of plans) printPlan(io, adapter, actions, force);
+  const chat = join(d.paths.dataDir, 'chat');
+  io.stdout(`${config ? 'Sign out of Twake.ai, then remove' : 'Remove'} ${prefixDir(d.paths)}, the configuration, the cache and the journal.\n`);
+  io.stdout(values['delete-chat-stores'] ? `Delete the Twake Chat stores in ${chat}.\n` : `Twake Chat stores kept in ${chat} (add --delete-chat-stores to delete them).\n`);
+  if (!values.yes) {
+    io.stdout('Nothing was changed: run the same command with --yes to do it.\n');
+    return 0;
+  }
+  let failed = false;
+  for (const { adapter, owned, actions } of plans) {
+    const result = await applyAgent(adapter, actions, owned, () => force);
+    if (result.status === 'failed') {
+      failed = true;
+      io.stdout(`${adapter.label}: not changed, ${result.error}\n`);
+    } else {
+      io.stdout(`${adapter.label}: ${result.status === 'written' ? 'entries removed' : 'nothing to remove'}.\n`);
+      if (result.skipped.length > 0) io.stdout(`  left as they are: ${result.skipped.map((action) => action.name).join(', ')} (add --force to remove them)\n`);
+    }
+  }
+  if (config) {
+    const vault = await openVault(config.vault, d.paths);
+    const { failed: notRevoked } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    for (const line of notRevoked) io.stdout(`✗ ${line}\n`);
+  }
+  await removeFiles(d.paths, values['delete-chat-stores'] ?? false);
+  io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`} Remove the command itself with: npm uninstall -g mcp-twake-ai\n`);
+  return failed ? 1 : 0;
 }
