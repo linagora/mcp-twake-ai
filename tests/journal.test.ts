@@ -32,6 +32,14 @@ describe('mask, beyond snake_case', () => {
     expect(mask('a basic check failed')).toBe('a basic check failed');
   });
 
+  it('hides a secret written after a colon, and authorization schemes in any case', () => {
+    expect(mask('token: dGhpcyBpcyBhIHNlY3JldCB0b2tlbg')).toBe('token: ***');
+    expect(mask('password: correct-horse-battery-staple')).toBe('password: ***');
+    expect(mask('AUTHORIZATION: BASIC dHdha2U6c2VjcmV0')).toBe('AUTHORIZATION: BASIC ***');
+    expect(mask('authorization: BEARER abc.def-ghi')).toBe('authorization: BEARER ***');
+    expect(mask('the refresh token: client "x" may lack offline_access')).toBe('the refresh token: client "x" may lack offline_access');
+  });
+
   it('hides the other secrets a request may carry', () => {
     expect(mask('token=r-3&token_type_hint=refresh_token')).toBe('token=***&token_type_hint=refresh_token');
     expect(mask('password=hunter2 client_assertion=eyX.y.z')).toBe('password=*** client_assertion=***');

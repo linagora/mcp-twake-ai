@@ -17,6 +17,10 @@ const SECRET = new RegExp(
 );
 // everyday words that hold a secret only as a parameter (token=…) or a JSON key ("token": …), not in a sentence
 const BARE = new RegExp(String.raw`(\b(?:password|token|code)=|\\?["'](?:password|token|code)\\?["']\s*:\s*\\?["']?)` + VALUE, 'g');
+// the same words after a colon (token: …): a password always, a token or a code only when it looks like one, not prose
+const COLON = /\b(password\s*:\s*)[^\s"',}]+|\b((?:token|code)\s*:\s*)([\w.~+/=-]{16,})/gi;
+// an authorization header, whatever the case of its name and scheme
+const AUTHORIZATION = /\b(authorization\s*:\s*(?:bearer|basic)\s+)[\w.~+/=-]+/gi;
 const MATRIX = /\bsy[tr]_[\w-]+/g;
 
 /** Hides every token, code or secret a line may carry (spec §12.4). */
@@ -24,6 +28,8 @@ export function mask(text: string): string {
   return text
     .replace(SECRET, '$1$2***')
     .replace(BARE, '$1***')
+    .replace(COLON, (_, password: string | undefined, name: string | undefined) => `${password ?? name}***`)
+    .replace(AUTHORIZATION, '$1***')
     .replace(JWT, '***')
     .replace(BEARER, '$1***')
     .replace(MATRIX, '***');
