@@ -225,9 +225,15 @@ describe('serviceEnv: the user\'s own variables', () => {
       const hostile = { ...ctx, config: { ...config, env: { dav: variables } } };
       expect(() => serviceEnv('dav', 'cursor', hostile), JSON.stringify(variables)).toThrow(/Remove it from/);
     }
-    // nor widen the folder Mail reads attachments into
-    const widened = { ...ctx, config: { ...config, env: { mail: { JMAP_DOWNLOAD_DIR: '~' } } } };
-    expect(() => serviceEnv('mail', 'cursor', widened)).toThrow(/one folder for files.*Remove it from/);
+    // nor widen the folder Mail reads attachments into, nor point the signature at a private key
+    for (const [service, variables] of [
+      ['mail', { JMAP_DOWNLOAD_DIR: '~' }],
+      ['mail', { JMAP_SIGNATURE_PATH: '~/.ssh/id_ed25519' }],
+      ['chat', { MATRIX_USER_ID: '@someone:linagora.com' }],
+    ] as const) {
+      const widened = { ...ctx, config: { ...config, env: { [service]: variables } } };
+      expect(() => serviceEnv(service, 'cursor', widened), JSON.stringify(variables)).toThrow(/Remove it from/);
+    }
   });
 });
 
@@ -299,6 +305,14 @@ describe('parseEnvOption', () => {
       space: { USER_TIMEZONE: 'UTC' },
       mail: { LOG_LEVEL: 'debug' },
     });
+  });
+
+  it('refuses a signature file and the account identity', () => {
+    // a signature is read and appended to every mail: a wrong path would send that file to everyone
+    expect(() => parseEnvOption(['mail.JMAP_SIGNATURE_PATH=~/.ssh/id_ed25519'])).toThrow(/appended to every message/);
+    expect(() => parseEnvOption(['chat.MATRIX_USER_ID=@someone:linagora.com'])).toThrow(/identifies the account/);
+    // the cache index is not a folder of files: it stays settable
+    expect(parseEnvOption(['drive.TWAKE_DRIVE_CACHE_DIR=/tmp/cache']).set).toEqual({ drive: { TWAKE_DRIVE_CACHE_DIR: '/tmp/cache' } });
   });
 
   it('refuses the store directory mcp-twake-ai keeps per device', () => {
