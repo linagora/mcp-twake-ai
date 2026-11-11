@@ -29,6 +29,7 @@ La spec est découpée en quatre plans. Chacun livre un logiciel qui fonctionne 
 ## Plan 3 : lanceur, agents, export (périmètre)
 
 - **Installateur :** `npm install --prefix <dataDir>/prefix` avec les six MCP et `twake-ai` en versions figées ; chemin absolu de Node noté dans la configuration.
+- **URL issues de SRV (DNS non authentifié) :** avant de leur confier le jeton aux quatre audiences, les contraindre (cible dans le domaine de l'email, ou dans une liste connue du SaaS) ou les faire confirmer pendant `setup`. Décision reportée depuis la revue finale du plan 1.
 - **`catalog`, sous forme de données :** paquet, version, construction de l'environnement par service et par agent. `TOKEN_CMD` met les chemins entre apostrophes POSIX, car les MCP passent par `/bin/sh -c`.
 - **`twake-ai run <service> --agent X` :** environnement, lancement, relais de stdio et des signaux, propagation du code de sortie. Test de bout en bout avec une élicitation qui traverse le lanceur.
 - **Cinq adaptateurs :** Claude Code (`claude mcp add-json` / `remove`), Hermes (`yaml` Document API, sauvegarde horodatée), Claude Desktop, Cursor, VS Code. Chacun avec `detect`, `capabilities`, `plan`, `apply`, `remove`, l'empreinte des entrées, l'écriture atomique et la restauration en cas d'échec.

@@ -1,0 +1,18 @@
+{
+  "m.homeserver": { "base_url": "https://matrix.linagora.com/" },
+  "m.identity_server": { "base_url": "https://tom.linagora.com/" },
+  "t.server": { "base_url": "https://tom.linagora.com/", "server_name": "linagora.com" },
+  "m.federated_identity_services": { "base_urls": ["https://fed.stg.lin-saas.com/"] },
+  "app.twake.chat": {
+    "assistants": { "base_url": "https://matrix-rtc.linagora.com" },
+    "common_settings": {
+      "application_name": "settings",
+      "application_url": "https://{username}-settings.twake.linagora.com/",
+      "enabled": true
+    },
+    "enable_invitations": false,
+    "matrix_profile_updates_allowed": false,
+    "support_contact": "@support:twake.app"
+  },
+  "m.authentication": { "issuer": "https://sso.linagora.com/" }
+}

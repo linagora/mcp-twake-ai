@@ -1,0 +1,15 @@
+{
+  "issuer": "https://sso.linagora.com",
+  "authorization_endpoint": "https://sso.linagora.com/oauth2/authorize",
+  "token_endpoint": "https://sso.linagora.com/oauth2/token",
+  "userinfo_endpoint": "https://sso.linagora.com/oauth2/userinfo",
+  "revocation_endpoint": "https://sso.linagora.com/oauth2/revoke",
+  "introspection_endpoint": "https://sso.linagora.com/oauth2/introspect",
+  "end_session_endpoint": "https://sso.linagora.com/oauth2/logout",
+  "device_authorization_endpoint": "https://sso.linagora.com/oauth2/device",
+  "grant_types_supported": ["authorization_code", "password", "client_credentials", "refresh_token"],
+  "code_challenge_methods_supported": ["plain", "S256"],
+  "scopes_supported": ["openid", "profile", "email", "address", "phone", "workplaceFqdn"],
+  "claims_supported": ["sub", "iss", "auth_time", "acr", "sid", "workplaceFqdn"],
+  "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"]
+}

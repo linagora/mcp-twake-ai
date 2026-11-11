@@ -1,0 +1,188 @@
+import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { main, type CliDeps, type Io } from '../src/cli.js';
+import { writePrivateFile } from '../src/files.js';
+import { chooseVault } from '../src/vault.js';
+import { startFakeIdp, type FakeIdp } from './helpers/fake-idp.js';
+import { tempPaths } from './helpers/tmp.js';
+
+const run = promisify(execFile);
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+const version = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+
+function captureIo(): Io & { out: string; err: string } {
+  const io = {
+    out: '',
+    err: '',
+    stdout: (text: string) => {
+      io.out += text;
+    },
+    stderr: (text: string) => {
+      io.err += text;
+    },
+  };
+  return io;
+}
+
+let idp: FakeIdp;
+beforeEach(async () => {
+  idp = await startFakeIdp();
+});
+afterEach(() => idp.close());
+
+/** A desktop where example.com is a Twake.ai domain whose IdP is the fake one. */
+async function testDeps(): Promise<CliDeps & { clock: { t: number } }> {
+  const { paths } = await tempPaths();
+  const clock = { t: 3_000_000 };
+  const discovery = { 'm.homeserver': { base_url: 'https://matrix.example.com/' }, 'm.authentication': { issuer: idp.url } };
+  return {
+    clock,
+    paths,
+    env: {},
+    platform: 'darwin',
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === 'https://example.com/.well-known/matrix/client') return Response.json(discovery);
+      if (url.startsWith(idp.url)) return fetch(input, init);
+      throw new TypeError('fetch failed');
+    }) as typeof fetch,
+    resolveSrv: async () => {
+      throw new Error('ENOTFOUND');
+    },
+    openUrl: async (url) => {
+      const atIdp = await fetch(url, { redirect: 'manual' });
+      await fetch(atIdp.headers.get('location') ?? '');
+    },
+    chooseVault: (p) => chooseVault(p, { TWAKE_AI_VAULT: 'file' }),
+    now: () => clock.t,
+    sleep: async (ms) => void (clock.t += ms / 1000),
+    loopbackPorts: [0],
+  };
+}
+
+describe('main', () => {
+  it('prints the package version', async () => {
+    const io = captureIo();
+    expect(await main(['--version'], io, await testDeps())).toBe(0);
+    expect(io.out).toBe(`${version}\n`);
+  });
+
+  it('prints the usage on stderr and exits 2 for an unknown command or option', async () => {
+    for (const argv of [['frobnicate'], ['token'], ['token', 'calendar'], ['login', '--emial', 'x@example.com']]) {
+      const io = captureIo();
+      expect(await main(argv, io, await testDeps())).toBe(2);
+      expect(io.err).toMatch(/usage:/);
+      expect(io.out).toBe('');
+    }
+  });
+
+  it('asks to sign in first when twake-ai is not set up, with nothing on stdout', async () => {
+    const io = captureIo();
+    expect(await main(['token', 'mail'], io, await testDeps())).toBe(1);
+    expect(io.err).toMatch(/^twake-ai: .*twake-ai login/);
+    expect(io.out).toBe('');
+  });
+
+  it('signs in, then serves tokens and renews them once expired', async () => {
+    const deps = await testDeps();
+    const login = captureIo();
+    expect(await main(['login', '--email', 'alice@example.com'], login, deps)).toBe(0);
+    expect(login.out).toContain('Signed in as alice@example.com');
+    expect(login.out).toContain('https://alice.twake.example.com');
+
+    const first = captureIo();
+    expect(await main(['token', 'project'], first, deps)).toBe(0);
+    expect(JSON.parse(first.out)).toEqual({ access_token: expect.stringMatching(/^access-/), expires_at: 3_000_300 });
+    expect(first.out.endsWith('}\n')).toBe(true);
+    expect(idp.refreshCount).toBe(0);
+
+    deps.clock.t += 1_000;
+    const second = captureIo();
+    expect(await main(['token', 'mail'], second, deps)).toBe(0);
+    expect(JSON.parse(second.out).access_token).not.toBe(JSON.parse(first.out).access_token);
+    expect(idp.refreshCount).toBe(1);
+  });
+
+  it('signs in from another device with --no-browser', async () => {
+    const io = captureIo();
+    expect(await main(['login', '--email', 'alice@example.com', '--no-browser'], io, await testDeps())).toBe(0);
+    expect(io.out).toContain('ABCD-EFGH');
+  });
+
+  it('tells a foreign domain apart', async () => {
+    const io = captureIo();
+    expect(await main(['login', '--email', 'bob@example.org'], io, await testDeps())).toBe(1);
+    expect(io.err).toMatch(/example\.org/);
+  });
+});
+
+describe('the twake-ai process', () => {
+  it('exits 1 with the message on stderr and an empty stdout when not set up', { timeout: 30_000 }, async () => {
+    const { root } = await tempPaths();
+    const result = await run(process.execPath, ['--import', 'tsx', 'src/bin.ts', 'token', 'mail'], {
+      cwd: repoRoot,
+      env: { ...process.env, TWAKE_AI_HOME: root },
+    }).catch((error: { code: number; stdout: string; stderr: string }) => error);
+    expect(result).toMatchObject({ code: 1, stdout: '' });
+    expect((result as { stderr: string }).stderr).toContain('twake-ai login');
+  });
+});
+
+describe('main: second sign-in and failures', () => {
+  it('signs in again with the client and scope used the first time', async () => {
+    const deps = await testDeps();
+    expect(await main(['login', '--email', 'alice@example.com', '--client-id', 'my-test-client', '--scope', 'openid offline_access'], captureIo(), deps)).toBe(0);
+    idp.lastClientId = undefined;
+    idp.lastScope = undefined;
+    expect(await main(['login'], captureIo(), deps)).toBe(0);
+    expect(idp.lastClientId).toBe('my-test-client');
+    expect(idp.lastScope).toBe('openid offline_access');
+  });
+
+  it('says where the session is kept', async () => {
+    const deps = await testDeps();
+    const io = captureIo();
+    expect(await main(['login', '--email', 'alice@example.com'], io, deps)).toBe(0);
+    expect(io.out).toContain(deps.paths.vaultFile);
+  });
+
+  it('signs in even when the saved configuration is damaged', async () => {
+    const deps = await testDeps();
+    await writePrivateFile(deps.paths.configFile, '{"version":');
+    expect(await main(['login', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
+  });
+
+  it('names the damaged configuration when asked for a token', async () => {
+    const deps = await testDeps();
+    await writePrivateFile(deps.paths.configFile, '{"version":');
+    const io = captureIo();
+    expect(await main(['token', 'mail'], io, deps)).toBe(1);
+    expect(io.err).toContain(deps.paths.configFile);
+    expect(io.err).toContain('twake-ai login');
+  });
+
+  it('reports an identity provider outage on one line, with what to do', async () => {
+    const deps = await testDeps();
+    expect(await main(['login', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
+    idp.tokenFailureStatus = 503;
+    deps.clock.t += 1_000;
+    const io = captureIo();
+    expect(await main(['token', 'mail'], io, deps)).toBe(1);
+    expect(io.err).toMatch(/^twake-ai: .*127\.0\.0\.1.*try again.*\n$/);
+    expect(io.err.trim()).not.toContain('\n');
+    expect(io.out).toBe('');
+  });
+
+  it('prints an unexpected error on a single line', async () => {
+    const deps = await testDeps();
+    deps.chooseVault = async () => {
+      throw new Error('first line\nsecond line');
+    };
+    const io = captureIo();
+    expect(await main(['login', '--email', 'alice@example.com'], io, deps)).toBe(1);
+    expect(io.err).toBe('twake-ai: unexpected error: first line\n');
+  });
+});
