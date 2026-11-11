@@ -12,14 +12,17 @@ export interface McpPackage {
   approval: string;
 }
 
-/** The six Twake.ai MCP servers, pinned: an agent never starts a version nobody tested with mcp-twake-ai. */
+/**
+ * The six Twake.ai MCP servers, pinned: an agent never starts a version nobody tested with mcp-twake-ai.
+ * These versions run *_TOKEN_COMMAND through the system shell, so they work on Windows too.
+ */
 export const CATALOG: Record<ServiceId, McpPackage> = {
-  mail: { name: 'mcp-twake-mail', version: '4.1.0', approval: 'JMAP' },
-  dav: { name: 'mcp-twake-dav', version: '4.2.0', approval: 'DAV' },
-  drive: { name: 'mcp-twake-drive', version: '0.4.0', approval: 'TWAKE_DRIVE' },
-  chat: { name: 'mcp-twake-chat', version: '0.6.0', approval: 'MATRIX' },
-  space: { name: 'mcp-twake-space', version: '0.2.1', approval: 'TWAKE_SPACE' },
-  project: { name: 'mcp-twake-project', version: '0.2.1', approval: 'TWAKE_PROJECT' },
+  mail: { name: 'mcp-twake-mail', version: '4.1.1', approval: 'JMAP' },
+  dav: { name: 'mcp-twake-dav', version: '4.2.1', approval: 'DAV' },
+  drive: { name: 'mcp-twake-drive', version: '0.4.1', approval: 'TWAKE_DRIVE' },
+  chat: { name: 'mcp-twake-chat', version: '0.6.1', approval: 'MATRIX' },
+  space: { name: 'mcp-twake-space', version: '0.2.2', approval: 'TWAKE_SPACE' },
+  project: { name: 'mcp-twake-project', version: '0.2.2', approval: 'TWAKE_PROJECT' },
 };
 
 /** Hermes waits 300 s for an answer: the server waits a little longer, so that Hermes, not the server, gives up first. */
@@ -34,21 +37,40 @@ export interface CatalogContext {
   /** absolute paths of node and of mcp-twake-ai's command (build/bin.js) */
   nodePath: string;
   cliPath: string;
+  /** the token command is written for this OS's shell */
+  platform: NodeJS.Platform;
   language: 'en' | 'fr';
   timezone: string;
 }
 
-/** POSIX single quotes: the Twake.ai MCP servers run *_TOKEN_COMMAND through /bin/sh -c. */
+/** POSIX single quotes: the Twake.ai MCP servers run *_TOKEN_COMMAND through /bin/sh -c on macOS and Linux. */
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-export function tokenCommand(service: ServiceId, agent: string | undefined, ctx: CatalogContext): string {
-  return [ctx.nodePath, ctx.cliPath, 'token', service, ...(agent ? ['--agent', agent] : [])].map(shellQuote).join(' ');
+/**
+ * Double quotes for cmd.exe, which runs *_TOKEN_COMMAND on Windows. Inside them cmd.exe still expands %VAR% (and !VAR!
+ * when delayed expansion is on), and nothing can escape a double quote: such a path is refused rather than changed.
+ */
+export function windowsQuote(value: string): string {
+  if (/["%!\r\n]/.test(value)) {
+    throw new TwakeAiError('unsupported', `${value} contains a character that cmd.exe would change (" % ! or a line break): install Node and mcp-twake-ai under another folder.`);
+  }
+  return `"${value}"`;
 }
 
-export function detectLanguage(env: NodeJS.ProcessEnv): 'en' | 'fr' {
-  const tag = env.TWAKE_AI_LANGUAGE || env.LC_ALL || env.LC_MESSAGES || env.LANG || '';
+/** One command line for the shell of `platform`: cmd.exe on Windows, /bin/sh elsewhere. */
+export function commandLine(parts: string[], platform: NodeJS.Platform): string {
+  return parts.map(platform === 'win32' ? windowsQuote : shellQuote).join(' ');
+}
+
+export function tokenCommand(service: ServiceId, agent: string | undefined, ctx: CatalogContext): string {
+  return commandLine([ctx.nodePath, ctx.cliPath, 'token', service, ...(agent ? ['--agent', agent] : [])], ctx.platform);
+}
+
+/** The variables first, then the system locale: Windows sets no LANG. */
+export function detectLanguage(env: NodeJS.ProcessEnv, locale = Intl.DateTimeFormat().resolvedOptions().locale): 'en' | 'fr' {
+  const tag = env.TWAKE_AI_LANGUAGE || env.LC_ALL || env.LC_MESSAGES || env.LANG || locale || '';
   return tag.toLowerCase().startsWith('fr') ? 'fr' : 'en';
 }
 

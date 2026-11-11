@@ -1,5 +1,8 @@
-import { execFileSync } from 'node:child_process';
+import { exec, execFileSync } from 'node:child_process';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { CATALOG, detectLanguage, entryName, hermesEntryName, serviceEnv, shellQuote, tokenCommand, type CatalogContext } from '../src/catalog.js';
 import type { TwakeAiConfig } from '../src/config.js';
@@ -31,6 +34,7 @@ const ctx: CatalogContext = {
   paths: appPaths({ platform: 'linux', env: { TWAKE_AI_HOME: '/t' }, home: '/home/j' }),
   nodePath: '/usr/bin/node',
   cliPath: '/opt/twake-ai/build/bin.js',
+  platform: 'linux',
   language: 'fr',
   timezone: 'Europe/Paris',
 };
@@ -40,12 +44,12 @@ const cmd = (service: string, agent?: string) => `'/usr/bin/node' '/opt/twake-ai
 describe('catalog', () => {
   it('pins the six MCP servers', () => {
     expect(Object.fromEntries(Object.entries(CATALOG).map(([service, pkg]) => [service, `${pkg.name}@${pkg.version}`]))).toEqual({
-      mail: 'mcp-twake-mail@4.1.0',
-      dav: 'mcp-twake-dav@4.2.0',
-      drive: 'mcp-twake-drive@0.4.0',
-      chat: 'mcp-twake-chat@0.6.0',
-      space: 'mcp-twake-space@0.2.1',
-      project: 'mcp-twake-project@0.2.1',
+      mail: 'mcp-twake-mail@4.1.1',
+      dav: 'mcp-twake-dav@4.2.1',
+      drive: 'mcp-twake-drive@0.4.1',
+      chat: 'mcp-twake-chat@0.6.1',
+      space: 'mcp-twake-space@0.2.2',
+      project: 'mcp-twake-project@0.2.2',
     });
     expect(entryName('mail')).toBe('twake-mail');
     expect(hermesEntryName('project')).toBe('twake_project');
@@ -62,6 +66,33 @@ describe('tokenCommand', () => {
     const odd = { ...ctx, nodePath: '/opt/my node/bin/node', cliPath: "/home/o'brien/cli.js" };
     const printed = execFileSync('/bin/sh', ['-c', `printf '%s\\n' ${tokenCommand('mail', undefined, odd)}`], { encoding: 'utf8' });
     expect(printed.split('\n').slice(0, 4)).toEqual(['/opt/my node/bin/node', "/home/o'brien/cli.js", 'token', 'mail']);
+  });
+
+  it('puts every argument in double quotes for cmd.exe on Windows', () => {
+    const win = {
+      ...ctx,
+      platform: 'win32' as const,
+      nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+      cliPath: 'C:\\Users\\Al Ice\\AppData\\Roaming\\npm\\node_modules\\mcp-twake-ai\\build\\bin.js',
+    };
+    expect(tokenCommand('chat', 'hermes', win)).toBe(
+      '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\Al Ice\\AppData\\Roaming\\npm\\node_modules\\mcp-twake-ai\\build\\bin.js" "token" "chat" "--agent" "hermes"',
+    );
+  });
+
+  it('refuses on Windows a path that cmd.exe would change', () => {
+    for (const cliPath of ['C:\\Users\\100%\\bin.js', 'C:\\Users\\a!b\\bin.js', 'C:\\a"b\\bin.js', 'C:\\a\nb\\bin.js']) {
+      expect(() => tokenCommand('mail', undefined, { ...ctx, platform: 'win32', cliPath })).toThrow(expect.objectContaining({ code: 'unsupported' }));
+    }
+  });
+
+  it('runs through the system shell of this computer, as the Twake.ai servers do', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp twake ai '));
+    const cliPath = join(dir, 'bin.cjs');
+    await writeFile(cliPath, 'process.stdout.write(JSON.stringify(process.argv.slice(2)))');
+    const line = tokenCommand('chat', 'hermes', { ...ctx, platform: process.platform, nodePath: process.execPath, cliPath });
+    const { stdout } = await promisify(exec)(line, { windowsHide: true });
+    expect(JSON.parse(stdout)).toEqual(['token', 'chat', '--agent', 'hermes']);
   });
 });
 
@@ -127,7 +158,12 @@ describe('detectLanguage', () => {
     expect(detectLanguage({ TWAKE_AI_LANGUAGE: 'en', LANG: 'fr_FR.UTF-8' })).toBe('en');
     expect(detectLanguage({ LANG: 'fr_FR.UTF-8' })).toBe('fr');
     expect(detectLanguage({ LC_ALL: 'de_DE.UTF-8', LANG: 'fr_FR' })).toBe('en');
-    expect(detectLanguage({})).toBe('en');
+    expect(detectLanguage({}, 'en-US')).toBe('en');
+  });
+
+  it('falls back to the system locale when no variable is set, as on Windows', () => {
+    expect(detectLanguage({}, 'fr-FR')).toBe('fr');
+    expect(detectLanguage({ LANG: 'en_US.UTF-8' }, 'fr-FR')).toBe('en');
   });
 });
 

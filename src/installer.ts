@@ -1,8 +1,8 @@
-import { execFile } from 'node:child_process';
+import { exec, execFile, type ExecException } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ServiceId } from './broker.js';
-import { CATALOG, type McpPackage } from './catalog.js';
+import { CATALOG, commandLine, type McpPackage } from './catalog.js';
 import { TwakeAiError } from './errors.js';
 import type { AppPaths } from './paths.js';
 
@@ -68,13 +68,16 @@ async function allowSqliteBuild(dir: string): Promise<void> {
   await writeFile(file, `${JSON.stringify({ name: 'twake-ai-servers', ...manifest, private: true, allowScripts }, null, 2)}\n`);
 }
 
-const npmRunner: Runner = (command, args) =>
+export const npmRunner: Runner = (command, args) =>
   new Promise((resolve, reject) => {
-    // npm is npm.cmd on Windows, which Node only starts through a shell
-    execFile(command, args, { shell: process.platform === 'win32', maxBuffer: 16 * 1024 * 1024 }, (error, _stdout, stderr) => {
+    const done = (error: ExecException | null, _stdout: string, stderr: string) => {
       if (!error) return resolve();
       reject(new TwakeAiError('unavailable', `npm could not install the Twake.ai MCP servers: ${npmFailure(String(stderr)) || error.message}`));
-    });
+    };
+    const options = { maxBuffer: 16 * 1024 * 1024, windowsHide: true };
+    // npm is npm.cmd on Windows, which only starts through cmd.exe: one command line, each argument quoted
+    if (process.platform === 'win32') exec(commandLine([command, ...args], 'win32'), options, done);
+    else execFile(command, args, options, done);
   });
 
 /** Installs the pinned servers that are missing or at another version, and says what it installed. */
@@ -86,15 +89,14 @@ export async function ensureInstalled(paths: AppPaths, services: ServiceId[], de
   }
   if (missing.length === 0) return [];
   deps.print(`Installing ${missing.map((pkg) => `${pkg.name}@${pkg.version}`).join(', ')}…`);
-  const windows = process.platform === 'win32';
   for (const pkg of missing) {
     const dir = serverDir(paths, pkg.name);
     await mkdir(dir, { recursive: true });
     await allowSqliteBuild(dir);
-    await (deps.run ?? npmRunner)(windows ? 'npm.cmd' : 'npm', [
+    await (deps.run ?? npmRunner)(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
       'install',
       '--prefix',
-      windows ? `"${dir}"` : dir,
+      dir,
       '--no-audit',
       '--no-fund',
       '--save-exact',

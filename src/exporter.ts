@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { stringify as stringifyToml } from 'smol-toml';
 import { stringify as stringifyYaml } from 'yaml';
 import type { ServiceId } from './broker.js';
-import { CATALOG, entryName, HERMES_APPROVAL_TIMEOUT_MS, hermesEntryName, serviceEnv, shellQuote, type CatalogContext } from './catalog.js';
+import { CATALOG, commandLine, entryName, HERMES_APPROVAL_TIMEOUT_MS, hermesEntryName, serviceEnv, shellQuote, type CatalogContext } from './catalog.js';
 import type { TwakeAiConfig } from './config.js';
 import { entryPoint } from './installer.js';
 
@@ -81,7 +81,7 @@ export async function exportFiles(options: ExportOptions, ctx: CatalogContext): 
       '',
     ].join('\n'),
     'commands.txt': [...entries]
-      .map(([service, entry]) => `# ${entryName(service)} (environment: ${service}.env)\n${[entry.command, ...entry.args].map(shellQuote).join(' ')}\n`)
+      .map(([service, entry]) => `# ${entryName(service)} (environment: ${service}.env)\n${commandLine([entry.command, ...entry.args], ctx.platform)}\n`)
       .join('\n'),
     'README.md': readme(options),
   };

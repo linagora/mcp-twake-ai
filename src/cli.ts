@@ -250,7 +250,7 @@ async function tokenCommand(args: string[], io: Io, d: CliDeps): Promise<number>
     throw new TwakeAiError('usage', `A Twake Chat token belongs to an agent: add --agent <id>.\n\n${USAGE}`);
   }
   const config = await loadConfig(d.paths);
-  if (!config) throw new TwakeAiError('login_required', 'twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
+  if (!config) throw new TwakeAiError('login_required', 'mcp-twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
   const token = await getToken(service, {
     paths: d.paths,
     config,
@@ -275,6 +275,7 @@ async function runCommand(args: string[], d: CliDeps): Promise<number> {
     env: d.env,
     nodePath: d.nodePath,
     cliPath: d.cliPath,
+    platform: d.platform,
     language: detectLanguage(d.env),
     timezone: systemTimezone(),
   });
@@ -303,6 +304,7 @@ async function exportCommand(args: string[], io: Io, d: CliDeps): Promise<number
     paths: d.paths,
     nodePath: d.nodePath,
     cliPath: d.cliPath,
+    platform: d.platform,
     language: detectLanguage(d.env),
     timezone: systemTimezone(),
   });

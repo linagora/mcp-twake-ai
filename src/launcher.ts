@@ -13,6 +13,7 @@ export interface LaunchDeps {
   env: NodeJS.ProcessEnv;
   nodePath: string;
   cliPath: string;
+  platform: NodeJS.Platform;
   language: 'en' | 'fr';
   timezone: string;
 }
@@ -24,13 +25,13 @@ export interface LaunchDeps {
 export async function runService(service: ServiceId, agent: string, deps: LaunchDeps): Promise<number> {
   checkAgentId(agent);
   const config = await loadConfig(deps.paths);
-  if (!config) throw new TwakeAiError('login_required', 'twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
-  const built = serviceEnv(service, agent, { config, paths: deps.paths, nodePath: deps.nodePath, cliPath: deps.cliPath, language: deps.language, timezone: deps.timezone });
+  if (!config) throw new TwakeAiError('login_required', 'mcp-twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
+  const built = serviceEnv(service, agent, { config, paths: deps.paths, nodePath: deps.nodePath, cliPath: deps.cliPath, platform: deps.platform, language: deps.language, timezone: deps.timezone });
   // what the agent's environment already sets wins (spec §9)
   const env = { ...built, ...deps.env };
   const entry = await entryPoint(deps.paths, service);
   return new Promise((resolve, reject) => {
-    const child = spawn(deps.nodePath, [entry], { stdio: 'inherit', env });
+    const child = spawn(deps.nodePath, [entry], { stdio: 'inherit', env, windowsHide: true });
     const forwarded = (['SIGINT', 'SIGTERM', 'SIGHUP'] as const).map((signal) => [signal, () => child.kill(signal)] as const);
     for (const [signal, handler] of forwarded) process.on(signal, handler);
     const cleanup = () => {
