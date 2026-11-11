@@ -95,8 +95,10 @@ export function serviceEnv(service: ServiceId, agent: string, ctx: CatalogContex
     case 'dav': {
       const url = env.services.dav?.url;
       if (!url) throw notFound('Twake Calendar (CalDAV) server');
+      const prefix = env.services.dav?.hrefPrefix;
       return {
         DAV_URL: url,
+        ...(prefix ? { DAV_HREF_PREFIX: prefix } : {}),
         DAV_AUTH_METHOD: 'command',
         DAV_TOKEN_COMMAND: tokenCommand('dav', undefined, ctx),
         // required with an SSO token: the server cannot tell the user's address from it

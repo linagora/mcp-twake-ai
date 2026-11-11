@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { getToken, isServiceId, SERVICE_IDS, type ServiceId } from './broker.js';
 import { DEFAULT_CLIENT_ID, DEFAULT_SCOPE, loadConfig, saveConfig, type TwakeAiConfig } from './config.js';
-import { discover, type DiscoveryDeps } from './discovery.js';
+import { chooseDav, discover, type DiscoveryDeps } from './discovery.js';
 import { TwakeAiError } from './errors.js';
 import { describeError } from './describe.js';
 import { journal } from './journal.js';
@@ -244,6 +244,7 @@ async function loginCommand(args: string[], io: Io, d: CliDeps): Promise<number>
       http: { fetch: d.fetch, now: d.now, sleep: d.sleep },
       openUrl: d.openUrl,
       print: (line) => io.stdout(`${line}\n`),
+      findDav: (env, accessToken) => chooseDav(env, accessToken, { fetch: d.fetch }),
     },
   );
   const drive = config.environment.cozy.instance;

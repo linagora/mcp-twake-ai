@@ -128,7 +128,7 @@ Relevée le 2026-11-10 sur le SaaS LINAGORA (`prenom@linagora.com`) :
 | 1 | `https://<domaine>/.well-known/matrix/client` | `m.homeserver` (`matrix.linagora.com`), `t.server` (ToM, `tom.linagora.com`), `m.authentication.issuer` (`https://sso.linagora.com/`), `app.twake.chat.common_settings.application_url` (`https://{username}-settings.twake.linagora.com/`) |
 | 2 | `<issuer>/.well-known/openid-configuration` | endpoints authorize, token, userinfo, revoke ; PKCE S256 ; `device_authorization_endpoint` ; scope et claim `workplaceFqdn` |
 | 3 | DNS `SRV _jmap._tcp.<domaine>` | `jmap.linagora.com:443`, puis la session JMAP via `/.well-known/jmap` sur cet hôte (à défaut, `/jmap/session`) |
-| 4 | DNS `SRV _caldavs._tcp.<domaine>` | `dav.linagora.com:443` |
+| 4 | DNS `SRV _caldavs._tcp.<domaine>` ; après connexion, le premier serveur dont `calendars/` répond 207 à un PROPFIND avec le jeton : la cible SRV, sinon le side service de Twake Calendar `https://twcalendar.<domaine>/dav/` (`DAV_HREF_PREFIX=/dav`) | `dav.linagora.com:443` n'accepte que Basic (realm ESN) ; `twcalendar.linagora.com/dav/` accepte le jeton (vérifié le 2026-11-11) |
 | 5 | convention `space.<domaine>` et `projects.<domaine>`, vérifiée par une requête | `space.linagora.com`, `projects.linagora.com` (marquées « devinées » dans l'interface) |
 | 6 | après connexion : userinfo `workplaceFqdn` | instance cozy exacte (ex. `jdoe.twake.linagora.com`) ; le modèle `{username}` de l'étape 1 ne sert qu'en repli |
 | 7 | après connexion : `GET https://<instance>/settings/context` | `additional_platform_apps` : apps activées pour l'organisation (`mail`, `chat`, `space`, `project`, `calendar`…), utilisées pour pré-cocher les services |
@@ -256,7 +256,7 @@ Environnement construit par service. `TOKEN_CMD` désigne `"<node>" "<cli.js>" t
 | Service | Variables |
 |---|---|
 | `mail` | `JMAP_SESSION_URL`, `JMAP_AUTH_METHOD=command`, `JMAP_TOKEN_COMMAND` |
-| `dav` | `DAV_URL`, `DAV_AUTH_METHOD=command`, `DAV_TOKEN_COMMAND`, `DAV_ORGANIZER_EMAIL=<email>`, `DAV_HREF_PREFIX` si le serveur en a besoin |
+| `dav` | `DAV_URL`, `DAV_AUTH_METHOD=command`, `DAV_TOKEN_COMMAND`, `DAV_ORGANIZER_EMAIL=<email>`, `DAV_HREF_PREFIX=/dav` avec le side service de Twake Calendar |
 | `drive` | `TWAKE_DRIVE_URL=https://<workplaceFqdn>`, `TWAKE_DRIVE_TOKEN_COMMAND` |
 | `chat` | `MATRIX_USER_ID`, `MATRIX_TOKEN_COMMAND`, `MATRIX_HOMESERVER_URL`, `TOM_URL`, `MATRIX_E2EE_RECOVERY=tom`, `MATRIX_STORE_DIR=<data>/chat/<agent>` |
 | `space` | `TWAKE_SPACE_URL`, `TWAKE_SPACE_TOKEN_COMMAND`, `TWAKE_SPACE_OIDC_ISSUER` |
@@ -405,7 +405,7 @@ Ubuntu, macOS et Windows, avec Node 22.13 et la dernière LTS. Les coffres de se
 
 1. Prise en charge de l'élicitation par Claude Desktop et Cursor.
 2. ~~Comment chaque MCP exécute `*_TOKEN_COMMAND`~~ : vérifié le 2026-11-10, les six passaient par `/bin/sh -c`. Depuis le 2026-11-11, ils passent par le shell du système (section 14). Sous Linux et macOS, `TOKEN_CMD` met chaque chemin entre apostrophes POSIX. Sous Windows, il le met entre guillemets doubles pour `cmd.exe`, et refuse un chemin contenant `"`, `%`, `!` ou un saut de ligne, que `cmd.exe` modifierait.
-3. Les audiences acceptées par `jmap.linagora.com` et `dav.linagora.com` avec un jeton OIDC. (`dav.linagora.com` sert DAV à la racine : `/.well-known/caldav` redirige vers `/calendars`, donc pas de `DAV_HREF_PREFIX`. `jmap.linagora.com/.well-known/jmap` redirige vers `/jmap/session`.)
+3. ~~Les audiences acceptées par `jmap.linagora.com` et `dav.linagora.com` avec un jeton OIDC.~~ Vérifié le 2026-11-11 avec un vrai compte : `jmap.linagora.com` accepte le jeton (audience `tmail`). `dav.linagora.com` le refuse : il n'annonce que `Basic realm="ESN"`. Le side service de Twake Calendar, `twcalendar.linagora.com/dav/`, l'accepte (audience `tcalendar`), avec `DAV_HREF_PREFIX=/dav`. Le wizard choisit donc le serveur après la connexion (section 6, étape 4). Le SRV `_caldavs._tcp` gagnerait à pointer vers le side service.
 4. Si LemonLDAP fait tourner les refresh tokens, et quelle est la durée de la session hors ligne.
 5. Si Synapse renvoie un refresh token avec `refresh_token: true`, et si `login/get_token` est activé.
 6. L'URL de la session JMAP à partir de la cible SRV (`/.well-known/jmap`).

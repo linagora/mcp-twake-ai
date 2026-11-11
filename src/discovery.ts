@@ -14,7 +14,8 @@ export interface DiscoveryDeps extends HttpOptions {
   resolveSrv(hostname: string): Promise<SrvRecord[]>;
 }
 
-const EndpointSchema = z.object({ url: z.string(), source: z.enum(['discovered', 'convention', 'manual']) });
+// hrefPrefix: the path prefix a reverse proxy adds and the server's answers omit (DAV_HREF_PREFIX)
+const EndpointSchema = z.object({ url: z.string(), source: z.enum(['discovered', 'convention', 'manual']), hrefPrefix: z.string().optional() });
 export type Endpoint = z.infer<typeof EndpointSchema>;
 
 export const TwakeEnvironmentSchema = z.object({
@@ -150,6 +151,30 @@ async function discoverJmap(domain: string, deps: DiscoveryDeps): Promise<Endpoi
 async function discoverDav(domain: string, deps: DiscoveryDeps): Promise<Endpoint | undefined> {
   const base = await srvBase('_caldavs._tcp', domain, deps);
   return base ? { url: `${base}/`, source: 'discovered' } : undefined;
+}
+
+/**
+ * After sign-in: the calendar server that takes the Twake session, the first whose calendars answer a PROPFIND with
+ * the access token. The server found in DNS may take only Basic (dav.linagora.com does); the Twake Calendar side
+ * service, which publishes DAV under /dav/, takes the session. Both are inside the email's domain.
+ */
+export async function chooseDav(env: TwakeEnvironment, accessToken: string, options: HttpOptions = {}): Promise<Endpoint | undefined> {
+  const side: Endpoint = { url: `https://twcalendar.${env.domain}/dav/`, source: 'convention', hrefPrefix: '/dav' };
+  const found = env.services.dav;
+  for (const candidate of found && found.url !== side.url ? [found, side] : [side]) {
+    try {
+      const response = await send(
+        new URL('calendars/', candidate.url).toString(),
+        { method: 'PROPFIND', redirect: 'manual', headers: { authorization: `Bearer ${accessToken}`, depth: '0' } },
+        { ...options, timeoutMs: 8_000 },
+      );
+      void response.body?.cancel();
+      if (response.status === 207) return candidate;
+    } catch {
+      // unreachable: the next one
+    }
+  }
+  return undefined;
 }
 
 /** Space and Project have no discovery yet: try `https://<service>.<domain>/`. */

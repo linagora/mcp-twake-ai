@@ -112,6 +112,9 @@ describe('serviceEnv', () => {
       DAV_ORGANIZER_EMAIL: 'jdoe@linagora.com',
       ...common,
     });
+    const sideService = { ...ctx, config: { ...config, environment: { ...config.environment, services: { dav: { url: 'https://twcalendar.linagora.com/dav/', source: 'convention' as const, hrefPrefix: '/dav' } } } } };
+    expect(serviceEnv('dav', 'claude-code', sideService)).toMatchObject({ DAV_URL: 'https://twcalendar.linagora.com/dav/', DAV_HREF_PREFIX: '/dav' });
+    expect(serviceEnv('dav', 'claude-code', ctx)).not.toHaveProperty('DAV_HREF_PREFIX');
     expect(serviceEnv('drive', 'claude-code', ctx)).toEqual({ TWAKE_DRIVE_URL: 'https://jdoe.twake.linagora.com', TWAKE_DRIVE_TOKEN_COMMAND: cmd('drive'), ...common });
     expect(serviceEnv('space', 'claude-code', ctx)).toEqual({
       TWAKE_SPACE_URL: 'https://space.linagora.com',

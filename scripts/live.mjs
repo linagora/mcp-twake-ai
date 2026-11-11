@@ -57,7 +57,7 @@ async function backend(service, url, accessToken) {
   const base = url.replace(/\/+$/, '');
   const request =
     service === 'mail' ? fetch(url, { headers: { ...auth, accept: 'application/json' } })
-    : service === 'dav' ? fetch(url, { method: 'PROPFIND', headers: { ...auth, depth: '0' } })
+    : service === 'dav' ? fetch(new URL('calendars/', url), { method: 'PROPFIND', headers: { ...auth, depth: '0' } })
     : fetch(`${base}/api/${service === 'space' ? 'spaces' : 'projects'}`, { headers: { ...auth, accept: 'application/json' } });
   try {
     const answer = await request;

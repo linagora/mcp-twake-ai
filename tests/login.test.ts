@@ -96,6 +96,34 @@ describe('loginOidc', () => {
   });
 });
 
+describe('loginOidc: the calendar server', () => {
+  const found = { url: 'https://dav.example.com/', source: 'discovered' as const };
+  const withDav = () => ({ ...environment, services: { dav: found } });
+
+  it('keeps the one that takes the Twake session, asking with the new access token', async () => {
+    const side = { url: 'https://twcalendar.example.com/dav/', source: 'convention' as const, hrefPrefix: '/dav' };
+    const asked: string[] = [];
+    const d = await deps({ findDav: async (_env, token) => (asked.push(token), side) });
+    const config = await loginOidc({ email: 'alice@example.com', environment: withDav(), client, mode: 'device' }, d);
+    expect(config.environment.services.dav).toEqual(side);
+    expect(asked).toEqual([expect.stringMatching(/^access-/)]);
+    expect(d.lines.join('\n')).toContain('Twake Calendar: https://twcalendar.example.com/dav/');
+  });
+
+  it('says nothing when the one found takes the session', async () => {
+    const d = await deps({ findDav: async () => found });
+    await loginOidc({ email: 'alice@example.com', environment: withDav(), client, mode: 'device' }, d);
+    expect(d.lines.join('\n')).not.toContain('Twake Calendar');
+  });
+
+  it('keeps the one found, with a warning, when none takes the session', async () => {
+    const d = await deps({ findDav: async () => undefined });
+    const config = await loginOidc({ email: 'alice@example.com', environment: withDav(), client, mode: 'device' }, d);
+    expect(config.environment.services.dav).toEqual(found);
+    expect(d.lines.join('\n')).toContain('✗ Twake Calendar: https://dav.example.com/ does not take your Twake session');
+  });
+});
+
 describe('chooseLoginMode', () => {
   it('uses the browser on a desktop', () => {
     expect(chooseLoginMode({ noBrowser: false, env: {}, platform: 'darwin' })).toBe('browser');

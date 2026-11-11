@@ -126,6 +126,18 @@ describe('main', () => {
     expect(idp.refreshCount).toBe(1);
   });
 
+  it('keeps, after sign-in, the calendar server that takes the Twake session', async () => {
+    const deps = await testDeps();
+    const others = deps.fetch;
+    deps.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+      String(input) === 'https://twcalendar.example.com/dav/calendars/' && init?.method === 'PROPFIND'
+        ? new Response(null, { status: 207 })
+        : others(input, init)) as typeof fetch;
+    expect(await main(['login', '--email', 'alice@example.com'], captureIo(), deps)).toBe(0);
+    const saved = await loadConfig(deps.paths);
+    expect(saved?.environment.services.dav).toEqual({ url: 'https://twcalendar.example.com/dav/', source: 'convention', hrefPrefix: '/dav' });
+  });
+
   it('signs in from another device with --no-browser', async () => {
     const io = captureIo();
     expect(await main(['login', '--email', 'alice@example.com', '--no-browser'], io, await testDeps())).toBe(0);
