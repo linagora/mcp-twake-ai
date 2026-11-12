@@ -169,6 +169,22 @@ describe('chooseDav', () => {
     expect((await chooseDav(linagoraEnvironment, 'access-1', { fetch: server.fetch }))?.url).toBe('https://twcalendar.linagora.com/dav/');
   });
 
+  it('turns to calendar-backend, under /dav/, where the domain serves its calendar there (twake.app)', async () => {
+    // no calendar server in DNS, as on twake.app
+    const twakeApp = { ...linagoraEnvironment, domain: 'twake.app', services: {} };
+    const server = calendars({ 'https://twcalendar.twake.app/dav/calendars/': 404, 'https://calendar-backend.twake.app/dav/calendars/': 207 });
+    expect(await chooseDav(twakeApp, 'access-1', { fetch: server.fetch })).toEqual({
+      url: 'https://calendar-backend.twake.app/dav/',
+      source: 'convention',
+      hrefPrefix: '/dav',
+    });
+    // the side service of linagora.com is asked first
+    expect(server.requests.map((request) => request.url)).toEqual([
+      'https://twcalendar.twake.app/dav/calendars/',
+      'https://calendar-backend.twake.app/dav/calendars/',
+    ]);
+  });
+
   it('finds none when no server takes the session or none answers', async () => {
     const server = calendars({ 'https://dav.linagora.com/calendars/': 401, 'https://twcalendar.linagora.com/dav/calendars/': 404 });
     expect(await chooseDav(srvDav, 'access-1', { fetch: server.fetch })).toBeUndefined();
