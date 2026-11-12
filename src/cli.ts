@@ -32,7 +32,7 @@ import { needsConsent, planEntries, wantedEntries, type ActionKind, type EntryAc
 import { applyAgent, createAdapters, detectAgents, recordOwned } from './agents/index.js';
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
 import { runService } from './launcher.js';
-import { runningBackends, stopShared } from './shared.js';
+import { runningBackends, stopShared, watchShared } from './shared.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
 import { ensureInstalled, prefixDir, type Runner } from './installer.js';
 import { join, posix, resolve as resolvePath, win32 } from 'node:path';
@@ -190,6 +190,9 @@ async function dispatch(command: string | undefined, args: string[], io: Io, dep
       return await exportCommand(args, io, deps);
     case 'run':
       return await runCommand(args, deps);
+    // not a command of its own: the watchdog a shared backend gets, and that stops it once its last client is gone
+    case '__watch':
+      return await watchCommand(args);
     default:
       io.stderr(USAGE);
       return 2;
@@ -307,6 +310,22 @@ async function tokenCommand(args: string[], io: Io, d: CliDeps): Promise<number>
 }
 
 /** run <service> --agent <id>: what agent configurations start. stdout belongs to the MCP server. */
+/**
+ * `__watch --shared <dir> --locks <dir>`: the watchdog of one shared backend, started with it and detached. It stops the
+ * server once no client has listed itself for a while — the case of a client killed with SIGKILL, or of an agent that
+ * crashed, which would otherwise leave the Matrix process syncing until a reboot.
+ */
+async function watchCommand(args: string[]): Promise<number> {
+  const { values } = usageErrors(() =>
+    parseArgs({ args, options: { shared: { type: 'string' }, locks: { type: 'string' }, idle: { type: 'string' } }, strict: true }),
+  );
+  if (!values.shared || !values.locks) throw new TwakeAiError('usage', USAGE);
+  const idle = values.idle === undefined ? undefined : Number(values.idle);
+  if (idle !== undefined && !(idle > 0)) throw new TwakeAiError('usage', USAGE);
+  await watchShared(values.shared, values.locks, { idleMs: idle });
+  return 0;
+}
+
 async function runCommand(args: string[], d: CliDeps): Promise<number> {
   const { positionals, values } = usageErrors(() =>
     parseArgs({ args, options: { agent: { type: 'string' } }, allowPositionals: true, strict: true }),

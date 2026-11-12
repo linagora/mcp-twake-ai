@@ -7,6 +7,15 @@ All notable changes to this project are documented in this file. The format foll
 ### Fixed
 
 - Twake Chat no longer dies when a second client starts it: two agents, two folders of the same IDE or a reload used to fight over the agent's Matrix device, whose store one process owns ("the Matrix device store … is already used by process …"). The first client now starts one shared server per agent on loopback HTTP — bearer token in a `0600` file, one MCP session per client, so an approval request still reaches the client that asked — and the last client leaving stops it. The entries the agents have do not change, and no secret is written into their files. `status` shows the shared server while one runs, and `logout` and `uninstall` stop it.
+- A client that starts as the last one leaves keeps its server: it registers under the lock the leaving client takes, before that one looks for clients.
+- A server left by a crash is stopped: a client killed with `kill -9` never says it leaves, and the server would have synced on until a reboot. A watchdog now stops it once no client lists itself for a few minutes.
+- Twake Chat closes a session left idle for 6 hours and answers 404 "Session not found: initialize again": the proxy now opens a new session and replays the request, instead of leaving an agent opened overnight with a dead `twake-chat`.
+- `logout`, `uninstall` and the watchdog never stop a process that is not their server: a `backend.json` surviving a reboot, whose pid now belongs to something else, used to be sent SIGTERM. They check that the port answers with the token of that start, and close the sessions (HTTP DELETE) before stopping the server.
+- The proxy relays JSON-RPC as it comes instead of rebuilding it method by method: `notifications/cancelled` (a search the user interrupts), progress, `ping`, `logging/setLevel` and the agent's own capabilities now cross both ways.
+
+### Changed
+
+- The MCP SDK is pinned to an exact version (`1.32.2`), like the other dependencies: a new minor must not reach every `npx mcp-twake-ai` on its own, in a tool that holds the SSO session.
 
 ## [0.3.1] - 2026-11-12
 
