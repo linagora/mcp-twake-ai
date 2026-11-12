@@ -1,6 +1,6 @@
 {
   "name": "mcp-twake-ai",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Install, configure and authenticate the Twake.ai MCP servers in your AI agents",
   "type": "module",
   "bin": {
