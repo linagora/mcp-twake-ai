@@ -156,12 +156,13 @@ async function discoverDav(domain: string, deps: DiscoveryDeps): Promise<Endpoin
 /**
  * After sign-in: the calendar server that takes the Twake session, the first whose calendars answer a PROPFIND with
  * the access token. The server found in DNS may take only Basic (dav.linagora.com does); the Twake Calendar side
- * service, which publishes DAV under /dav/, takes the session. Both are inside the email's domain.
+ * service, which publishes DAV under /dav/, takes the session: twcalendar.<domain> (linagora.com) or
+ * calendar-backend.<domain> (twake.app). All are inside the email's domain.
  */
 export async function chooseDav(env: TwakeEnvironment, accessToken: string, options: HttpOptions = {}): Promise<Endpoint | undefined> {
-  const side: Endpoint = { url: `https://twcalendar.${env.domain}/dav/`, source: 'convention', hrefPrefix: '/dav' };
+  const sides: Endpoint[] = ['twcalendar', 'calendar-backend'].map((host) => ({ url: `https://${host}.${env.domain}/dav/`, source: 'convention', hrefPrefix: '/dav' }));
   const found = env.services.dav;
-  for (const candidate of found && found.url !== side.url ? [found, side] : [side]) {
+  for (const candidate of found && !sides.some((side) => side.url === found.url) ? [found, ...sides] : sides) {
     try {
       const response = await send(
         new URL('calendars/', candidate.url).toString(),

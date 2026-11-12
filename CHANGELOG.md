@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Fixed
+
+- The calendar of twake.app is found: after sign-in, mcp-twake-ai also asks `https://calendar-backend.<domain>/dav/` for the calendars, after `https://twcalendar.<domain>/dav/`, and keeps the first that takes the Twake session. On twake.app there is no `_caldavs` record and `dav.twake.app` refuses the SSO token.
+
 ## [0.3.0] - 2026-11-11
 
 ### Fixed
