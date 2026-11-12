@@ -8,7 +8,7 @@ import { checkAgentId } from './grants.js';
 import { entryPoint } from './installer.js';
 import type { AppPaths } from './paths.js';
 import { proxyShared } from './proxy.js';
-import { backendUrl, ensureSharedBackend, enterSharedClient, isSharedService, leaveSharedClient, readToken, sharedDir, stopSharedIfUnused } from './shared.js';
+import { backendUrl, enterSharedBackend, isSharedService, leaveSharedClient, setSharedSession, stopSharedIfUnused } from './shared.js';
 
 export interface LaunchDeps {
   paths: AppPaths;
@@ -62,10 +62,16 @@ export async function runService(service: ServiceId, agent: string, deps: Launch
  */
 async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, env: Record<string, string>): Promise<number> {
   const backendEnv = { ...stringEnv(deps.env), ...env };
-  const backend = await ensureSharedBackend({ paths: deps.paths, service, agent, env: backendEnv, nodePath: deps.nodePath, entry: await entryPoint(deps.paths, service) });
-  const token = await readToken(sharedDir(deps.paths, service, agent));
-  if (!token) throw new TwakeAiError('damaged_file', `The shared ${CATALOG[service].name} server of ${agent} lost its token: run mcp-twake-ai uninstall, then setup again.`);
-  await enterSharedClient(deps.paths, service, agent);
+  // this process registers as a client before the start returns, under the same lock the last client leaving takes
+  const { backend, token } = await enterSharedBackend({
+    paths: deps.paths,
+    service,
+    agent,
+    env: backendEnv,
+    nodePath: deps.nodePath,
+    cliPath: deps.cliPath,
+    entry: await entryPoint(deps.paths, service),
+  });
   let left = false;
   const leave = async () => {
     if (left) return;
@@ -80,7 +86,13 @@ async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, en
     return [signal, handler] as const;
   });
   try {
-    return await proxyShared({ url: backendUrl(backend), token, name: CATALOG[service].name, version: CATALOG[service].version });
+    return await proxyShared({
+      url: backendUrl(backend),
+      token,
+      name: CATALOG[service].name,
+      version: CATALOG[service].version,
+      onSession: (session) => void setSharedSession(deps.paths, service, agent, session),
+    });
   } finally {
     for (const [signal, handler] of signals) process.off(signal, handler);
     await leave();
