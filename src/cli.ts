@@ -32,6 +32,7 @@ import { needsConsent, planEntries, wantedEntries, type ActionKind, type EntryAc
 import { applyAgent, createAdapters, detectAgents, recordOwned } from './agents/index.js';
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
 import { runService } from './launcher.js';
+import { runningBackends, stopShared, watchShared } from './shared.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
 import { ensureInstalled, prefixDir, type Runner } from './installer.js';
 import { join, posix, resolve as resolvePath, win32 } from 'node:path';
@@ -189,6 +190,9 @@ async function dispatch(command: string | undefined, args: string[], io: Io, dep
       return await exportCommand(args, io, deps);
     case 'run':
       return await runCommand(args, deps);
+    // not a command of its own: the watchdog a shared backend gets, and that stops it once its last client is gone
+    case '__watch':
+      return await watchCommand(args);
     default:
       io.stderr(USAGE);
       return 2;
@@ -306,6 +310,22 @@ async function tokenCommand(args: string[], io: Io, d: CliDeps): Promise<number>
 }
 
 /** run <service> --agent <id>: what agent configurations start. stdout belongs to the MCP server. */
+/**
+ * `__watch --shared <dir> --locks <dir>`: the watchdog of one shared backend, started with it and detached. It stops the
+ * server once no client has listed itself for a while — the case of a client killed with SIGKILL, or of an agent that
+ * crashed, which would otherwise leave the Matrix process syncing until a reboot.
+ */
+async function watchCommand(args: string[]): Promise<number> {
+  const { values } = usageErrors(() =>
+    parseArgs({ args, options: { shared: { type: 'string' }, locks: { type: 'string' }, idle: { type: 'string' } }, strict: true }),
+  );
+  if (!values.shared || !values.locks) throw new TwakeAiError('usage', USAGE);
+  const idle = values.idle === undefined ? undefined : Number(values.idle);
+  if (idle !== undefined && !(idle > 0)) throw new TwakeAiError('usage', USAGE);
+  await watchShared(values.shared, values.locks, { idleMs: idle });
+  return 0;
+}
+
 async function runCommand(args: string[], d: CliDeps): Promise<number> {
   const { positionals, values } = usageErrors(() =>
     parseArgs({ args, options: { agent: { type: 'string' } }, allowPositionals: true, strict: true }),
@@ -639,6 +659,7 @@ async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number
   report(await checkSession(broker), 'Twake session');
   if (config.drive) report(await checkDrive(broker), 'Twake Drive');
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
+  const shared = await runningBackends(d.paths);
   const wanted = values.agents === undefined ? (Object.keys(config.agents ?? {}).filter(isAgentId) as AgentId[]) : values.agents.split(',').map((name) => name.trim());
   for (const name of wanted) {
     if (!isAgentId(name)) throw new TwakeAiError('usage', `"${name}" is not an agent mcp-twake-ai configures (${AGENT_IDS.join(', ')}).\n\n${USAGE}`);
@@ -671,6 +692,9 @@ async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number
       const chat = await checkChat(broker, name);
       healthy &&= chat.ok;
       io.stdout(`  ${mark(chat)} Twake Chat (${name}): ${chat.detail}\n`);
+      // the one Matrix process every client of this agent talks to, while at least one runs
+      const backend = shared.find((running) => running.service === 'chat' && running.agent === name);
+      if (backend) io.stdout(`  ✓ Twake Chat shared server (${name}): 127.0.0.1:${backend.backend.port}\n`);
     }
   }
   return healthy ? 0 : 1;
@@ -744,7 +768,11 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     for (const line of notRevoked) io.stdout(`✗ ${line}\n`);
     revocationFailed = notRevoked.length > 0;
   }
-  if (unreadable) await forgetSecrets(d.paths);
+  if (unreadable) {
+    // without config.json, nothing says which backends run: the state folder does
+    for (const { service, agent } of await runningBackends(d.paths)) await stopShared(d.paths, service, agent).catch(() => false);
+    await forgetSecrets(d.paths);
+  }
   const keepConfig = Object.keys(left).length > 0;
   if (keepConfig) {
     const remaining = await loadConfig(d.paths);
