@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-17
+
 ### Changed
 
 - Mail is pinned to mcp-twake-mail 4.3.0: `reply_draft` prepares a reply that quotes the previous exchange, drafts carry attachments, `set_mailbox_subscription` shows a folder a mail app hides, and `search_emails participant=` finds every exchange with someone. Mail attaches files from the shared `~/Downloads/Twake` (`JMAP_UPLOAD_DIR`), so a file Drive or Chat saved there can be attached.
