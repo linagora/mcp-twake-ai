@@ -44,7 +44,7 @@ const cmd = (service: string, agent?: string) => `'/usr/bin/node' '/opt/twake-ai
 describe('catalog', () => {
   it('pins the six MCP servers', () => {
     expect(Object.fromEntries(Object.entries(CATALOG).map(([service, pkg]) => [service, `${pkg.name}@${pkg.version}`]))).toEqual({
-      mail: 'mcp-twake-mail@4.2.0',
+      mail: 'mcp-twake-mail@4.3.0',
       dav: 'mcp-twake-dav@4.2.1',
       drive: 'mcp-twake-drive@0.4.1',
       chat: 'mcp-twake-chat@0.6.1',
@@ -97,13 +97,14 @@ describe('tokenCommand', () => {
 });
 
 describe('serviceEnv', () => {
-  it('gives Mail, Drive and Chat one folder for files: an attachment saved by Mail can go to the Drive or a room', () => {
+  it('gives Mail, Drive and Chat one folder for files: an attachment saved by Mail can go to the Drive or a room, a file saved by Drive can be attached', () => {
     const folders = [
       serviceEnv('mail', 'hermes', ctx).JMAP_DOWNLOAD_DIR,
+      serviceEnv('mail', 'hermes', ctx).JMAP_UPLOAD_DIR,
       serviceEnv('drive', 'hermes', ctx).TWAKE_DRIVE_DOWNLOAD_DIR,
       serviceEnv('chat', 'hermes', ctx).MATRIX_DOWNLOAD_DIR,
     ];
-    expect(folders).toEqual(['~/Downloads/Twake', '~/Downloads/Twake', '~/Downloads/Twake']);
+    expect(folders).toEqual(['~/Downloads/Twake', '~/Downloads/Twake', '~/Downloads/Twake', '~/Downloads/Twake']);
   });
 
   it('builds the environment of each service', () => {
@@ -113,6 +114,7 @@ describe('serviceEnv', () => {
       JMAP_AUTH_METHOD: 'command',
       JMAP_TOKEN_COMMAND: cmd('mail'),
       JMAP_DOWNLOAD_DIR: '~/Downloads/Twake',
+      JMAP_UPLOAD_DIR: '~/Downloads/Twake',
       ...common,
     });
     expect(serviceEnv('dav', 'claude-code', ctx)).toEqual({
