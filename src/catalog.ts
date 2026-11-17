@@ -17,7 +17,7 @@ export interface McpPackage {
  * These versions run *_TOKEN_COMMAND through the system shell, so they work on Windows too.
  */
 export const CATALOG: Record<ServiceId, McpPackage> = {
-  mail: { name: 'mcp-twake-mail', version: '4.2.0', approval: 'JMAP' },
+  mail: { name: 'mcp-twake-mail', version: '4.3.0', approval: 'JMAP' },
   dav: { name: 'mcp-twake-dav', version: '4.2.1', approval: 'DAV' },
   drive: { name: 'mcp-twake-drive', version: '0.4.1', approval: 'TWAKE_DRIVE' },
   chat: { name: 'mcp-twake-chat', version: '0.6.1', approval: 'MATRIX' },
@@ -117,6 +117,8 @@ function builtinServiceEnv(service: ServiceId, agent: string, ctx: CatalogContex
         JMAP_AUTH_METHOD: 'command',
         JMAP_TOKEN_COMMAND: tokenCommand('mail', undefined, ctx),
         JMAP_DOWNLOAD_DIR: FILES_FOLDER,
+        // the shared folder, not mcp-twake-mail's own default (<download folder>/Uploads): a file Drive or Chat saved can be attached
+        JMAP_UPLOAD_DIR: FILES_FOLDER,
         ...common,
       };
     }
