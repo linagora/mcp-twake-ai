@@ -72,7 +72,7 @@ function serverSetting(name: string): boolean {
 async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, env: Record<string, string>): Promise<number> {
   const inherited = Object.entries(stringEnv(deps.env)).filter(([name]) => !serverSetting(name));
   const backendEnv = { ...Object.fromEntries(inherited), ...env };
-  // a signal during the start stops the server this client was starting: see the handlers below
+  // a signal while the server starts stops this client's wait: the server goes on starting, for the next client
   const starting = new AbortController();
   let entering: Promise<unknown> = Promise.resolve();
   let shared: SharedSession | undefined;
@@ -80,20 +80,21 @@ async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, en
   let stopBeat = () => {};
   let left = false;
   const leave = async () => {
-    // a client that never got in has nothing to leave: the start it aborted has cleaned up after itself
+    // a client that never got in has nothing to leave: the server it may have started is recorded, and watched
     if (left || !shared) return;
     left = true;
     stopBeat();
     await leaveSharedClient(deps.paths, service, agent);
     await stopSharedIfUnused(deps.paths, service, agent).catch(() => false);
   };
-  // set before the start: a client stopped during the Matrix sign-in must not leave a server nobody knows of. A client
-  // killed by its agent still stops the backend when it was the last one, and closes its session first: the other
-  // clients keep the server running, which would hold that session for 6 hours
+  // set before the start: a client stopped during the Matrix sign-in exits at once, and leaves the server it started to
+  // the next client (an agent that gives up on a slow start would otherwise never see a large account's Chat start). A
+  // client killed by its agent still stops the backend when it was the last one, and closes its session first: the
+  // other clients keep the server running, which would hold that session for 6 hours
   const signals = (['SIGINT', 'SIGTERM', 'SIGHUP'] as const).map((signal) => {
     const handler = () => {
       starting.abort();
-      // the start notices within a ping, then stops its server; a client still waiting for the lock started nothing
+      // the wait notices within a look; a client still waiting for the lock started nothing
       void Promise.race([entering.catch(() => {}), new Promise((resolve) => setTimeout(resolve, 10_000))])
         .then(() => (shared && session ? endSharedSession(shared.backend, shared.token, session) : undefined))
         .then(leave)

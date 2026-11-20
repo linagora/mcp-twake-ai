@@ -447,15 +447,23 @@ describe('a shared service, when what answers on its port is not plainly its ser
   it('lets logout wait for a server that is starting, then stops it', { timeout: 60_000 }, async () => {
     const { paths } = await setup();
     const options = await backendOptions(paths);
-    // a first sync longer than the 10 s a lock is waited for by default
-    const starting = enterSharedBackend({ ...options, env: { ...options.env, FAKE_SYNC_MS: '11000' } });
+    const starting = enterSharedBackend({ ...options, env: { ...options.env, FAKE_SYNC_MS: '1500' } });
     const dir = sharedDir(paths, 'chat', 'claude-code');
     await expect.poll(() => access(join(dir, 'backend.json')).then(() => true, () => false), { timeout: 10_000 }).toBe(true);
+    const { pid } = JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8')) as { pid: number };
 
-    const stopped = stopShared(paths, 'chat', 'claude-code');
-    const { backend } = await starting;
-    expect(await stopped).toBe(true);
-    await expect.poll(() => alive(backend.pid), { timeout: 15_000 }).toBe(false);
+    expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
+    await expect.poll(() => alive(pid), { timeout: 15_000 }).toBe(false);
+    // the client that was starting it either got in first (and loses it to logout) or is told its server went
+    await starting.catch(() => undefined);
+  });
+
+  it('gives a start the time the Matrix sign-in of mcp-twake-chat 0.6.1 may take', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    await enterSharedBackend(await backendOptions(paths));
+    const record = JSON.parse(await readFile(join(sharedDir(paths, 'chat', 'claude-code'), 'backend.json'), 'utf8')) as { readyMs: number };
+    // its initial sync alone may take 180 s, then the key backup is restored
+    expect(record.readyMs).toBeGreaterThan(180_000);
   });
 
   it('never stops a process that answers for a server whose pid it does not have', { timeout: 30_000 }, async () => {
@@ -631,19 +639,33 @@ describe('a shared service, while its server starts', () => {
     }
   });
 
-  it('takes a start that ran out of time long ago for a stranger', { timeout: 30_000 }, async () => {
+  it('stops a start of ours that ran out of time without answering, and starts another', { timeout: 30_000 }, async () => {
     const { paths } = await setup();
-    const stale = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp', { listenAfterMs: null, startedAt: Date.now() - 60 * 60_000, readyMs: 60_000 });
-    bystanders.push(stale.child);
-    expect(await runningBackends(paths)).toEqual([]);
+    // its process is the one that start spawned, its token file is that start's: it is ours, and it never listened
+    const stalled = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp', { listenAfterMs: null, startedAt: Date.now() - 10 * 60_000, readyMs: 60_000 });
+    bystanders.push(stalled.child);
+    expect((await runningBackends(paths)).map((running) => running.backend.pid)).toEqual([stalled.pid]);
+    const { backend } = await enterSharedBackend({ ...(await backendOptions(paths)), busyMs: 500 });
+    expect(backend.pid).not.toBe(stalled.pid);
+    // left alone, it would hold the Matrix store under the new one
+    await expect.poll(() => alive(stalled.pid), { timeout: 10_000 }).toBe(false);
+  });
+
+  it('waits for a start of ours still signing in past the time it was given, instead of starting a second one', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const late = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp', { listenAfterMs: 2_000, startedAt: Date.now() - 61_000, readyMs: 60_000 });
+    bystanders.push(late.child);
+    const { backend } = await enterSharedBackend({ ...(await backendOptions(paths)), busyMs: 500 });
+    expect(backend.pid).toBe(late.pid);
   });
 
   // Windows has no signal a process can catch: kill() terminates it there
-  it.skipIf(process.platform === 'win32')('stops the server it was starting when a signal stops the client', { timeout: 60_000 }, async () => {
+  it.skipIf(process.platform === 'win32')('leaves the server it was starting to the next client when a signal stops it', { timeout: 60_000 }, async () => {
     const { root, paths } = await setup();
+    // an agent that gives up on a slow start stops its client: the server goes on signing in for the next one
     const client = spawn(process.execPath, ['--import', 'tsx', 'src/bin.ts', 'run', 'chat', '--agent', 'claude-code'], {
       cwd: repoRoot,
-      env: { ...process.env, TWAKE_AI_HOME: root, LANG: 'en_US.UTF-8', FAKE_SYNC_MS: '20000' },
+      env: { ...process.env, TWAKE_AI_HOME: root, LANG: 'en_US.UTF-8', FAKE_SYNC_MS: '3000' },
       stdio: ['pipe', 'ignore', 'ignore'],
     });
     running.push(client as ChildProcessWithoutNullStreams);
@@ -653,9 +675,10 @@ describe('a shared service, while its server starts', () => {
 
     client.kill('SIGTERM');
     await new Promise((resolve) => client.once('exit', resolve));
-    // nothing is left for the next client to take for a stranger, and start a second server next to
-    await expect.poll(() => alive(pid), { timeout: 15_000 }).toBe(false);
-    expect(await access(join(dir, 'backend.json')).then(() => true, () => false)).toBe(false);
+    const next = await launch(root, { FAKE_SYNC_MS: '3000' });
+    expect((await whoami(next)).pid).toBe(pid);
+    next.close();
+    await next.exited;
   });
 
   it('gives a server its watchdog as it spawns: a client killed while starting it leaves nothing running', { timeout: 90_000 }, async () => {

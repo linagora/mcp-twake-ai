@@ -99,11 +99,6 @@ function bootedAt(): number {
   return Date.now() - uptime() * 1000 - 5_000;
 }
 
-/** True while a backend may still be in its sign-in and first sync: the time its start was given has not run out. */
-function starting(backend: SharedBackend): boolean {
-  return backend.startedAt !== undefined && backend.readyMs !== undefined && backend.startedAt >= bootedAt() && Date.now() < backend.startedAt + backend.readyMs;
-}
-
 const fingerprint = (token: string) => createHash('sha256').update(token).digest('hex');
 
 /**
@@ -156,25 +151,36 @@ function connects(port: number, timeoutMs = 500): Promise<'open' | 'refused' | '
 }
 
 /**
- * What the process of `backend.json` is: `ours`, `foreign`, or `unknown` when it does not say in time.
+ * What the process of `backend.json` is, as seen right now:
  *
  * - ours: the port answers our ping with JSON-RPC, and `/mcp` took our token, which was generated for this start and
  *   lived in a 0600 file.
- * - foreign: the process is gone, or the port is closed, or it turns our token down (401), or something answers that
- *   speaks no JSON-RPC, or no HTTP at all — an unrelated process that inherited the pid after a reboot, or that holds
- *   the port.
- * - unknown: the process lives and the port is open, but no answer came in time (a Matrix sync keeping the server
- *   busy, a laptop waking up); or the port still refuses within the time its start was given (`startedAt`, `readyMs`),
- *   whoever started it — a client killed during the start leaves a server that will answer soon. Its state must not be forgotten then: the next client would start a second server on the same
- *   store, and nothing could stop the first one any more.
+ * - foreign: the process is gone, or the port refuses and nothing proves the process is a start of ours, or it turns
+ *   our token down (401), or something answers that speaks no JSON-RPC, or no HTTP at all — an unrelated process that
+ *   inherited the pid, or that holds the port. Its state is worthless.
+ * - starting: the port refuses, and the process is proven to be a start of ours (`provenStart`, or the child this very
+ *   process spawned) still within the time it was given and a grace: the Matrix sign-in and first sync run before the
+ *   server listens, whoever started it — even a client killed since.
+ * - stalled: the same, past that time: a start that will not answer, and holds the store. Ours, and proven: stopped.
+ * - busy: the port takes connections and no answer comes in time (a Matrix sync keeping the server busy, a laptop
+ *   waking up).
+ *
+ * Starting and busy servers keep their state: forgotten, the next client would start a second server on the same store,
+ * and nothing could stop the first one any more.
  */
-export type BackendState = 'ours' | 'foreign' | 'unknown';
+export type Seen = 'ours' | 'foreign' | 'starting' | 'stalled' | 'busy';
 
-export async function probeBackend(dir: string, backend: SharedBackend): Promise<BackendState> {
+export async function inspectBackend(dir: string, backend: SharedBackend, child?: ChildProcess): Promise<Seen> {
   const token = await readToken(dir);
   if (!token || !alive(backend.pid)) return 'foreign';
   const port = await connects(backend.port);
-  if (port !== 'open') return port === 'refused' && !starting(backend) ? 'foreign' : 'unknown';
+  if (port === 'refused') {
+    // the child this process spawned and still holds is its own proof; any other start needs one
+    const mine = child !== undefined && child.pid === backend.pid && child.exitCode === null && child.signalCode === null;
+    if (!mine && !(await provenStart(dir, backend))) return 'foreign';
+    return Date.now() < backend.startedAt! + backend.readyMs! + STALL_GRACE_MS ? 'starting' : 'stalled';
+  }
+  if (port === 'silent') return 'busy';
   try {
     const answer = await fetch(backendUrl(backend), {
       method: 'POST',
@@ -190,7 +196,7 @@ export async function probeBackend(dir: string, backend: SharedBackend): Promise
   } catch (error) {
     // no answer in time says nothing; an answer that is not HTTP (a banner, a reset) comes from something else
     const name = (error as Error).name;
-    return name === 'TimeoutError' || name === 'AbortError' ? 'unknown' : 'foreign';
+    return name === 'TimeoutError' || name === 'AbortError' ? 'busy' : 'foreign';
   }
 }
 
@@ -208,25 +214,6 @@ function isJsonRpc(body: string): boolean {
       return false;
     }
   });
-}
-
-/**
- * The state of a backend that may be busy: asked again until it says, for `busyMs` at most, or until the time its start
- * was given runs out. Still unknown then, it is reported as such, and the caller fails rather than guess.
- *
- * `stalled`: a start seen running, that ran out of time without answering while its process lives — what its client
- * would have stopped had it not been killed meanwhile. It is ours: left alone, it would hold the store while the next
- * start fails on it, with no `backend.json` to find it by.
- */
-async function settleBackend(dir: string, backend: SharedBackend, busyMs: number): Promise<BackendState | 'stalled'> {
-  const wasStarting = starting(backend);
-  const deadline = Math.max(Date.now() + busyMs, wasStarting ? backend.startedAt! + backend.readyMs! : 0);
-  for (;;) {
-    const state = await probeBackend(dir, backend);
-    if (state === 'foreign' && wasStarting && (await connects(backend.port)) === 'refused' && (await provenStart(dir, backend))) return 'stalled';
-    if (state !== 'unknown' || Date.now() >= deadline) return state;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
 }
 
 /** The error of a backend that lives and does not answer: nothing is started over it, nothing is stopped blindly. */
@@ -269,7 +256,7 @@ export interface SharedBackendOptions {
   busyMs?: number;
   /** how long the watchdog lets the backend run with no client */
   idleMs?: number;
-  /** aborted when the client is stopped during the start: the server it was starting goes with it */
+  /** aborted when the client is stopped while it waits for the server: it stops waiting (the server goes on starting) */
   signal?: AbortSignal;
   /** called as the client is about to list itself: where a test puts the last client leaving at the worst moment */
   beforeRegister?: () => Promise<void>;
@@ -278,20 +265,27 @@ export interface SharedBackendOptions {
 /** How long a backend that lives and does not answer is asked again: a sync that keeps it busy for longer is a hung one. */
 const BUSY_MS = 10_000;
 
-/** How long a starting backend may take to answer: a Matrix sign-in and its first sync take as long as they take. */
-const READY_MS = 60_000;
+/**
+ * How long a starting backend may take to answer. mcp-twake-chat 0.6.1 listens only once MatrixChat.open() is done:
+ * server discovery, an initial sync it gives up to 180 s, then the restore of the key backup and the profile — longer
+ * on a large account. Past that, plus STALL_GRACE_MS, a start that never answered is taken for stalled.
+ */
+const READY_MS = 5 * 60_000;
+const STALL_GRACE_MS = 30_000;
 
 /**
- * How long anyone waits for the lock of a pair, hence how long anyone may hold it: a start that first waited for a
- * server left starting by a killed client, or asked a busy one again (READY_MS at most, BUSY_MS being shorter), then
- * waited for its own (READY_MS), and stopped it when it failed. The start keeps the lock all that time — a client let
- * in meanwhile would see a port that refuses, and could not tell a start from a stranger without `startedAt` — so
- * `logout`, `login --chat`, a client leaving and the watchdog wait it out instead of giving up after the 10 s other
- * locks are waited for.
+ * How long anyone waits for the lock of a pair. It is held for short steps only — look at the backend, stop it, spawn
+ * one, register — and never while a server signs in: those who wait for a start wait outside it, and since a proven start
+ * is never taken for a stranger, nobody starts a second one meanwhile. The longest step is stopping a server: a DELETE
+ * per session (2 s each), then 2 + 5 s for it to exit.
  */
-const LOCK_MS = 2 * READY_MS + 20_000;
+const LOCK_MS = 60_000;
 
-async function startBackend(options: SharedBackendOptions, dir: string): Promise<SharedBackend> {
+/** How often a client waiting for a start, or a stop waiting for one, looks again. */
+const POLL_MS = 500;
+
+/** Spawns a backend and records it, under the lock of the pair: whoever waits for it then waits outside that lock. */
+async function spawnBackend(options: SharedBackendOptions, dir: string): Promise<{ backend: SharedBackend; child: ChildProcess }> {
   const port = await freePort();
   const token = randomBytes(32).toString('hex');
   // the clients of a backend that is gone listed themselves for nothing: a pid reused by another process must not make
@@ -325,22 +319,16 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
   await writePrivateFile(backendFile(dir), `${JSON.stringify(backend)}\n`);
   // the watchdog from the start: a client killed during the sign-in must not leave a server nobody ever stops
   await watchBackend(options, dir, backend);
-  const deadline = backend.startedAt! + readyMs;
-  while (Date.now() < deadline && !options.signal?.aborted) {
-    // the server it started, and not whatever took the port it was given meanwhile (a sign-in and a first sync are long):
-    // that process lives, and the port takes the token of this start
-    if ((await probeBackend(dir, backend)) === 'ours') return backend;
-    if (!alive(backend.pid)) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
+  return { backend, child };
+}
+
+/** The error of a start that did not answer: the last line the server wrote, and where the rest is. */
+async function startError(options: SharedBackendOptions, dir: string, what = 'could not start'): Promise<TwakeAiError> {
   const reason = await lastLogLine(dir);
-  // the process this one spawned, through its own handle: no pid read back from a file
-  await terminate(dir, backend, child).catch(() => {});
-  await forget(dir);
-  throw new TwakeAiError(
+  return new TwakeAiError(
     'unavailable',
     // the server's stderr is all there is to read: `run` in a terminal is a proxy, and would show nothing more
-    `The shared ${CATALOG[options.service].name} server of ${options.agent} could not start${reason ? `: ${reason}` : ''}. Its whole log is in ${logFile(dir)}.`,
+    `The shared ${CATALOG[options.service].name} server of ${options.agent} ${what}${reason ? `: ${reason}` : ''}. Its whole log is in ${logFile(dir)}.`,
   );
 }
 
@@ -399,12 +387,22 @@ export async function watchShared(shared: string, locksDir: string, options: Wat
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     const backend = await readBackend(shared);
     if (!backend || backend.pid !== options.pid || !alive(backend.pid)) return;
-    // its own server — the pid and start time the start handed it, still recorded with that start's token — that takes
-    // connections and answers none
-    const own = options.startedAt !== undefined && backend.startedAt === options.startedAt && !starting(backend);
-    if (own && (await probeBackend(shared, backend)) === 'unknown') {
+    const seen = await inspectBackend(shared, backend);
+    // that pid is not our server any more: nothing to watch
+    if (seen === 'foreign') return;
+    // the clients wait for it outside the lock, unlisted: a start is never idle
+    if (seen === 'starting') {
+      idleSince = undefined;
+      frozenSince = undefined;
+      continue;
+    }
+    // its own server — the pid and start time the start handed it, still recorded with that start's token — that will
+    // not answer: a start that ran out of time, or a server that takes connections and has answered none for minutes
+    const own = options.startedAt !== undefined && backend.startedAt === options.startedAt;
+    if (own && seen === 'stalled' && (await stopOwn(shared, locksDir, options).catch(() => false))) return;
+    if (own && seen === 'busy') {
       frozenSince ??= Date.now();
-      if (Date.now() - frozenSince >= (options.frozenMs ?? FROZEN_MS) && (await stopFrozen(shared, locksDir, options).catch(() => false))) return;
+      if (Date.now() - frozenSince >= (options.frozenMs ?? FROZEN_MS) && (await stopOwn(shared, locksDir, options).catch(() => false))) return;
     } else {
       frozenSince = undefined;
     }
@@ -458,17 +456,52 @@ export async function endSharedSession(backend: SharedBackend, token: string, se
   await answer?.body?.cancel().catch(() => {});
 }
 
+interface StopOptions<T> {
+  /** how long a server that does not answer is waited for before this gives up (BUSY_MS) */
+  busyMs?: number;
+  /** told once, when the stop has waited for a while (a server still starting): what `logout` says it waits for */
+  onWait?: () => void;
+  /** run under the same lock once the server is stopped, so that none can start before it returns */
+  then?: () => Promise<T>;
+  /** a client leaving, or the watchdog: stop only when no client is listed (entries older than `staleMs` aside), and
+   * never wait — a server starting or busy is someone else's business */
+  unlessUsed?: { staleMs?: number };
+}
+
 /**
- * Stops the backend of that folder if it is proven ours — it answers our ping with the token of its start, or it is a
- * start that ran out of time and `provenStart` vouches for it — then forgets its state. A stranger is only forgotten.
+ * Stops the backend of that folder once it says what it is, then forgets its state. Ours (it answers our ping) or a
+ * stalled start of ours: stopped. Foreign: only forgotten. Starting: waited for, outside the lock, until it answers or
+ * stalls. Busy: waited for `busyMs`, then the caller is told — never stopped blindly, never forgotten.
  */
-async function stopBackend(dir: string, options: { busyMs?: number } = {}): Promise<void> {
-  const backend = await readBackend(dir);
-  const state = !backend || !alive(backend.pid) ? 'foreign' : await settleBackend(dir, backend, options.busyMs ?? BUSY_MS);
-  // a server that may be ours keeps its state: forgotten, it would run on with the Matrix device and nothing to stop it
-  if (state === 'unknown') throw busyError(dir, backend!);
-  if (backend && (state === 'ours' || state === 'stalled')) await terminate(dir, backend);
-  await forget(dir);
+async function stopWhenKnown<T>(dir: string, locksDir: string, options: StopOptions<T> = {}): Promise<{ stopped: boolean; value?: T }> {
+  const began = Date.now();
+  let busySince: number | undefined;
+  let told = false;
+  for (;;) {
+    const step = await withLock(locksDir, sharedLock(dir), async (): Promise<{ wait?: Seen; backend?: SharedBackend; stopped?: boolean; value?: T }> => {
+      if (options.unlessUsed && (await livingClients(clientsDir(dir), options.unlessUsed.staleMs)) > 0) return { stopped: false };
+      const backend = await readBackend(dir);
+      const seen = backend ? await inspectBackend(dir, backend) : 'foreign';
+      if (backend && (seen === 'starting' || seen === 'busy')) return { wait: seen, backend };
+      if (backend && (seen === 'ours' || seen === 'stalled')) await terminate(dir, backend);
+      await rm(dir, { recursive: true, force: true });
+      return { stopped: true, value: await options.then?.() };
+    }, { timeoutMs: LOCK_MS });
+    if (!step.wait) return { stopped: step.stopped ?? false, value: step.value };
+    if (options.unlessUsed) return { stopped: false };
+    if (step.wait === 'busy') {
+      busySince ??= Date.now();
+      // a server that may be ours keeps its state: forgotten, it would run on with the Matrix device and nothing to stop it
+      if (Date.now() - busySince >= (options.busyMs ?? BUSY_MS)) throw busyError(dir, step.backend!);
+    } else {
+      busySince = undefined;
+    }
+    if (!told && Date.now() - began >= 2_000) {
+      told = true;
+      options.onWait?.();
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
 }
 
 /** Forgets the state of a backend that is gone, or was never ours. */
@@ -520,35 +553,65 @@ async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
 
 /**
  * The backend of that (service, agent), started if nothing answers, and this process registered as one of its clients.
- * Under the lock of that pair: two clients starting at the same moment must not start two backends, which would be back
- * to one store and two processes — and a client that registers here, before the lock is released, cannot lose its server
- * to the last one leaving.
+ *
+ * Each look is taken under the lock of that pair: two clients starting at the same moment must not start two backends,
+ * which would be back to one store and two processes — and a client that registers there, before the lock is released,
+ * cannot lose its server to the last one leaving. The wait for a server still signing in happens outside the lock: whoever
+ * looks meanwhile sees a proven start, never a stranger, and waits as well.
  */
 export async function enterSharedBackend(options: SharedBackendOptions): Promise<SharedSession> {
   const dir = sharedDir(options.paths, options.service, options.agent);
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  // the lock covers the whole start: see LOCK_MS
-  return withLock(options.paths.locksDir, sharedLock(dir), async () => {
-    const state = await readBackend(dir);
-    const known = state ? await settleBackend(dir, state, options.busyMs ?? BUSY_MS) : 'foreign';
-    // a second server on the same store is what this whole folder prevents: better no Chat for now than two
-    if (state && known === 'unknown') throw busyError(dir, state);
-    // proven by settleBackend: its start was recorded in this boot, with the token file next to it
-    if (state && known === 'stalled') {
-      await terminate(dir, state);
-      await forget(dir);
-    }
-    let backend = known === 'ours' ? state : undefined;
-    if (!backend) {
+  let mine: { backend: SharedBackend; child: ChildProcess } | undefined;
+  let busySince: number | undefined;
+  for (;;) {
+    if (options.signal?.aborted) throw new TwakeAiError('unavailable', `${CATALOG[options.service].name} was stopped while its shared server started: the server goes on starting for the next client.`);
+    const step = await withLock(options.paths.locksDir, sharedLock(dir), async (): Promise<{ session?: SharedSession; wait?: Seen; backend?: SharedBackend; gone?: boolean }> => {
+      const state = await readBackend(dir);
+      const seen = state ? await inspectBackend(dir, state, mine?.child) : 'foreign';
+      if (state && seen === 'ours') {
+        const token = await readToken(dir);
+        if (!token) throw new TwakeAiError('damaged_file', `The shared ${CATALOG[options.service].name} server of ${options.agent} lost its token: run mcp-twake-ai uninstall, then setup again.`);
+        await registerClient(dir, options);
+        return { session: { backend: state, token } };
+      }
+      if (state && (seen === 'starting' || seen === 'busy')) return { wait: seen, backend: state };
+      if (mine) {
+        // the server this process started, alive and still recorded, while something else answers on its port: it has
+        // until its time runs out, as any start
+        const live = mine.child.exitCode === null && mine.child.signalCode === null;
+        if (live && state?.pid === mine.backend.pid) return { wait: 'starting', backend: state };
+        // it went: dead (its record goes with it), or stopped by `logout` or `login --chat` — not started again here
+        if (state?.pid === mine.backend.pid) await forget(dir);
+        return { gone: true };
+      }
+      // a start of ours that will not answer holds the store: proven, it is stopped before another one starts
+      if (state && seen === 'stalled') await terminate(dir, state);
       // a backend that was killed, or whose port was taken meanwhile: its state is worthless
       await rm(backendFile(dir), { force: true });
-      backend = await startBackend(options, dir);
+      mine = await spawnBackend(options, dir);
+      return { wait: 'starting', backend: mine.backend };
+    }, { timeoutMs: LOCK_MS });
+    if (step.session) return step.session;
+    if (step.gone) throw await startError(options, dir, mine!.child.exitCode === null && mine!.child.signalCode === null ? 'was stopped while it started' : 'could not start');
+    // the start this process spawned, past its time: stopped through its own handle, and forgotten if still recorded
+    if (mine && Date.now() >= mine.backend.startedAt! + mine.backend.readyMs!) {
+      const spawned = mine;
+      await terminate(dir, spawned.backend, spawned.child).catch(() => {});
+      await withLock(options.paths.locksDir, sharedLock(dir), async () => {
+        if ((await readBackend(dir))?.pid === spawned.backend.pid) await forget(dir);
+      }, { timeoutMs: LOCK_MS });
+      throw await startError(options, dir);
     }
-    const token = await readToken(dir);
-    if (!token) throw new TwakeAiError('damaged_file', `The shared ${CATALOG[options.service].name} server of ${options.agent} lost its token: run mcp-twake-ai uninstall, then setup again.`);
-    await registerClient(dir, options);
-    return { backend, token };
-  }, { timeoutMs: LOCK_MS });
+    if (step.wait === 'busy') {
+      busySince ??= Date.now();
+      // a second server on the same store is what this whole folder prevents: better no Chat for now than two
+      if (Date.now() - busySince >= (options.busyMs ?? BUSY_MS)) throw busyError(dir, step.backend!);
+    } else {
+      busySince = undefined;
+    }
+    await new Promise((resolve) => setTimeout(resolve, mine ? 100 : POLL_MS));
+  }
 }
 
 /** Marks this process as a client of the backend, before it connects. */
@@ -617,14 +680,16 @@ export async function leaveSharedClient(paths: AppPaths, service: ServiceId, age
 }
 
 /**
- * Stops a hung server under the lock of its pair, once proven to be the one the watchdog was given: same pid, same start
- * time, the token file of that start next to it, recorded in this boot — and still answering nothing.
+ * Stops the watchdog's own server when it will not answer (stalled, or hung for minutes), under the lock of its pair,
+ * once proven to be the one the watchdog was given: same pid, same start time, the process with that pid still the one
+ * spawned with it, the token file of that start next to it, recorded in this boot — and still not answering.
  */
-async function stopFrozen(dir: string, locksDir: string, given: WatchOptions): Promise<boolean> {
+async function stopOwn(dir: string, locksDir: string, given: WatchOptions): Promise<boolean> {
   return withLock(locksDir, sharedLock(dir), async () => {
     const backend = await readBackend(dir);
     if (!backend || backend.pid !== given.pid || backend.startedAt !== given.startedAt || !(await provenStart(dir, backend))) return false;
-    if ((await probeBackend(dir, backend)) === 'foreign') return false;
+    const seen = await inspectBackend(dir, backend);
+    if (seen !== 'busy' && seen !== 'stalled') return false;
     await terminate(dir, backend);
     await rm(dir, { recursive: true, force: true });
     return true;
@@ -633,12 +698,7 @@ async function stopFrozen(dir: string, locksDir: string, given: WatchOptions): P
 
 async function stopIfUnused(dir: string, locksDir: string, staleMs?: number): Promise<boolean> {
   if (!(await readBackend(dir))) return false;
-  return withLock(locksDir, sharedLock(dir), async () => {
-    if ((await livingClients(clientsDir(dir), staleMs)) > 0) return false;
-    await stopBackend(dir);
-    await rm(dir, { recursive: true, force: true });
-    return true;
-  }, { timeoutMs: LOCK_MS });
+  return (await stopWhenKnown(dir, locksDir, { unlessUsed: { staleMs } })).stopped;
 }
 
 /**
@@ -650,16 +710,13 @@ export async function stopSharedIfUnused(paths: AppPaths, service: ServiceId, ag
 }
 
 /**
- * Stops the backend of that agent, whoever still lists itself as a client: what `logout` and `uninstall` use. `busyMs`:
- * how long one that does not answer is asked again before this gives up (BUSY_MS).
+ * Stops the backend of that agent, whoever still lists itself as a client: what `logout` and `uninstall` use. A server
+ * still starting is waited for (`onWait` is told when that takes a while); one that does not answer, for `busyMs`.
  */
-export async function stopShared(paths: AppPaths, service: ServiceId, agent: string, options: { busyMs?: number } = {}): Promise<boolean> {
+export async function stopShared(paths: AppPaths, service: ServiceId, agent: string, options: { busyMs?: number; onWait?: () => void } = {}): Promise<boolean> {
   const dir = sharedDir(paths, service, agent);
   if (!(await readBackend(dir))) return false;
-  await withLock(paths.locksDir, sharedLock(dir), async () => {
-    await stopBackend(dir, options);
-    await rm(dir, { recursive: true, force: true });
-  }, { timeoutMs: LOCK_MS });
+  await stopWhenKnown(dir, paths.locksDir, options);
   return true;
 }
 
@@ -668,15 +725,10 @@ export async function stopShared(paths: AppPaths, service: ServiceId, agent: str
  * What `login --chat` does around the device swap: the backend keeps the store of the device it was started with, and
  * must not get the token of the next one; the next client starts a server on the new device.
  */
-export async function withSharedStopped<T>(paths: AppPaths, service: ServiceId, agent: string, fn: () => Promise<T>, options: { busyMs?: number } = {}): Promise<T> {
+export async function withSharedStopped<T>(paths: AppPaths, service: ServiceId, agent: string, fn: () => Promise<T>, options: { busyMs?: number; onWait?: () => void } = {}): Promise<T> {
   const dir = sharedDir(paths, service, agent);
-  return withLock(paths.locksDir, sharedLock(dir), async () => {
-    if (await readBackend(dir)) {
-      await stopBackend(dir, options);
-      await rm(dir, { recursive: true, force: true });
-    }
-    return fn();
-  }, { timeoutMs: LOCK_MS });
+  const { value } = await stopWhenKnown(dir, paths.locksDir, { ...options, then: fn });
+  return value as T;
 }
 
 /** A backend that runs for this account: `answers` is false while it is still starting, or too busy to say. */
@@ -698,8 +750,8 @@ export async function runningBackends(paths: AppPaths): Promise<RunningBackend[]
     // a backend.json survives a reboot, and its pid may now belong to another process: only our server is reported, or
     // one still starting or too busy to say, which `logout` must still try to stop
     const backend = await readBackend(join(root, name));
-    const state = backend ? await probeBackend(join(root, name), backend) : 'foreign';
-    if (backend && state !== 'foreign') found.push({ service: service as ServiceId, agent, backend, answers: state === 'ours' });
+    const seen = backend ? await inspectBackend(join(root, name), backend) : 'foreign';
+    if (backend && seen !== 'foreign') found.push({ service: service as ServiceId, agent, backend, answers: seen === 'ours' });
   }
   return found;
 }
