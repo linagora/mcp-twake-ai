@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { access, mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { alive, enterSharedBackend, keepSharedClient, runningBackends, sharedDir, stopShared, watchShared, type SharedBackendOptions } from '../src/shared.js';
 import { saveConfig, type TwakeAiConfig } from '../src/config.js';
@@ -308,8 +308,13 @@ describe('a shared service, when the server or a client goes away', () => {
   });
 });
 
-/** What `run` gives `enterSharedBackend`, with the fake server as the backend. */
+/** What `run` gives `enterSharedBackend`, with the fake server as the backend, and this checkout's CLI for its watchdog. */
 async function backendOptions(paths: AppPaths): Promise<SharedBackendOptions> {
+  // the watchdog is started as `node <cli> __watch …`: the CLI of this checkout is TypeScript, loaded through tsx
+  const cli = join(paths.dataDir, 'cli.mjs');
+  const url = (path: string) => JSON.stringify(pathToFileURL(join(repoRoot, path)).href);
+  await mkdir(paths.dataDir, { recursive: true });
+  await writeFile(cli, `import { register } from ${url('node_modules/tsx/dist/esm/api/index.mjs')};\nregister();\nawait import(${url('src/bin.ts')});\n`);
   return {
     paths,
     service: 'chat',
@@ -317,7 +322,7 @@ async function backendOptions(paths: AppPaths): Promise<SharedBackendOptions> {
     env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
     nodePath: process.execPath,
     entry: await entryPoint(paths, 'chat'),
-    cliPath: join(repoRoot, 'src', 'bin.ts'),
+    cliPath: cli,
   };
 }
 
@@ -452,5 +457,83 @@ describe('the watchdog of a shared server', () => {
     await watchShared(dir, paths.locksDir, { pid: watched.pid, idleMs: 200, intervalMs: 50 });
     expect(alive(next.pid)).toBe(true);
     expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toEqual({ pid: next.pid, port: next.port });
+  });
+});
+
+/** `enter` or `leave` from another process: a client of its own, with a pid of its own. */
+function sharedCli(command: 'enter' | 'leave', options: object) {
+  const child = spawn(process.execPath, ['--import', 'tsx', 'tests/helpers/shared-cli.ts', command, JSON.stringify(options)], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'] });
+  running.push(child as unknown as ChildProcessWithoutNullStreams);
+  const lines: string[] = [];
+  const waiting: ((line: string) => void)[] = [];
+  createInterface({ input: child.stdout! }).on('line', (line) => {
+    const resolve = waiting.shift();
+    if (resolve) resolve(line);
+    else lines.push(line);
+  });
+  return { child, next: () => new Promise<string>((resolve) => (lines.length ? resolve(lines.shift()!) : waiting.push(resolve))) };
+}
+
+describe('a shared service, while its server starts', () => {
+  it('lists a server that is still starting, so that logout sees it', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const starting = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp', { listenAfterMs: null, startedAt: Date.now(), readyMs: 60_000 });
+    bystanders.push(starting.child);
+    expect((await runningBackends(paths)).map((running) => running.backend.pid)).toEqual([starting.pid]);
+  });
+
+  it('joins a server another client started and left before it answered, instead of starting a second one', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const orphan = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp', { listenAfterMs: 1_500, startedAt: Date.now(), readyMs: 10_000 });
+    bystanders.push(orphan.child);
+    const { backend } = await enterSharedBackend({ ...(await backendOptions(paths)), busyMs: 500 });
+    expect(backend.pid).toBe(orphan.pid);
+  });
+
+  it('lets logout stop a server that is still starting', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const starting = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp', { listenAfterMs: 1_500, startedAt: Date.now(), readyMs: 10_000 });
+    bystanders.push(starting.child);
+    expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
+    await expect.poll(() => alive(starting.pid), { timeout: 10_000 }).toBe(false);
+  });
+
+  it('takes a start that ran out of time long ago for a stranger', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const stale = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp', { listenAfterMs: null, startedAt: Date.now() - 60 * 60_000, readyMs: 60_000 });
+    bystanders.push(stale.child);
+    expect(await runningBackends(paths)).toEqual([]);
+  });
+
+  // Windows has no signal a process can catch: kill() terminates it there
+  it.skipIf(process.platform === 'win32')('stops the server it was starting when a signal stops the client', { timeout: 60_000 }, async () => {
+    const { root, paths } = await setup();
+    const client = spawn(process.execPath, ['--import', 'tsx', 'src/bin.ts', 'run', 'chat', '--agent', 'claude-code'], {
+      cwd: repoRoot,
+      env: { ...process.env, TWAKE_AI_HOME: root, LANG: 'en_US.UTF-8', FAKE_SYNC_MS: '20000' },
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    running.push(client as ChildProcessWithoutNullStreams);
+    const dir = sharedDir(paths, 'chat', 'claude-code');
+    await expect.poll(() => readFile(join(dir, 'backend.json'), 'utf8').then(() => true, () => false), { timeout: 15_000 }).toBe(true);
+    const { pid } = JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8')) as { pid: number };
+
+    client.kill('SIGTERM');
+    await new Promise((resolve) => client.once('exit', resolve));
+    // nothing is left for the next client to take for a stranger, and start a second server next to
+    await expect.poll(() => alive(pid), { timeout: 15_000 }).toBe(false);
+    expect(await access(join(dir, 'backend.json')).then(() => true, () => false)).toBe(false);
+  });
+
+  it('gives a server its watchdog as it spawns: a client killed while starting it leaves nothing running', { timeout: 90_000 }, async () => {
+    const { paths } = await setup();
+    const options = await backendOptions(paths);
+    const starter = sharedCli('enter', { ...options, env: { ...options.env, FAKE_SYNC_MS: '1500' }, idleMs: 300 });
+    const dir = sharedDir(paths, 'chat', 'claude-code');
+    await expect.poll(() => readFile(join(dir, 'backend.json'), 'utf8').then(() => true, () => false), { timeout: 15_000 }).toBe(true);
+    const { pid } = JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8')) as { pid: number };
+    // SIGKILL, or TerminateProcess: the client says nothing, and its lock is left to go stale
+    starter.child.kill('SIGKILL');
+    await expect.poll(() => alive(pid), { timeout: 75_000, interval: 500 }).toBe(false);
   });
 });

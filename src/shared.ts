@@ -34,6 +34,12 @@ export interface SharedBackend {
   /** the backend process, killed when the last client leaves */
   pid: number;
   port: number;
+  /**
+   * when it was spawned, and how long it was given to answer: until then, a port that refuses is a server still in its
+   * Matrix sign-in and first sync, not a stranger — even when the client that started it is gone
+   */
+  startedAt?: number;
+  readyMs?: number;
 }
 
 /** What a client of a backend needs: where it answers, and the token that proves it is allowed to talk to it. */
@@ -61,7 +67,8 @@ export async function readBackend(dir: string): Promise<SharedBackend | undefine
   try {
     const state = JSON.parse(await readFile(backendFile(dir), 'utf8')) as Partial<SharedBackend>;
     if (typeof state.pid !== 'number' || typeof state.port !== 'number') return undefined;
-    return { pid: state.pid, port: state.port };
+    const start = typeof state.startedAt === 'number' && typeof state.readyMs === 'number' ? { startedAt: state.startedAt, readyMs: state.readyMs } : {};
+    return { pid: state.pid, port: state.port, ...start };
   } catch {
     return undefined;
   }
@@ -74,6 +81,11 @@ export async function readToken(dir: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/** True while a backend may still be in its sign-in and first sync: the time its start was given has not run out. */
+function starting(backend: SharedBackend): boolean {
+  return backend.startedAt !== undefined && backend.readyMs !== undefined && Date.now() < backend.startedAt + backend.readyMs;
 }
 
 /** True while the process of that pid exists (a zombie counts as gone only once reaped: the backend is detached). */
@@ -115,7 +127,8 @@ function connects(port: number, timeoutMs = 500): Promise<'open' | 'refused' | '
  *   speaks no JSON-RPC, or no HTTP at all — an unrelated process that inherited the pid after a reboot, or that holds
  *   the port.
  * - unknown: the process lives and the port is open, but no answer came in time (a Matrix sync keeping the server
- *   busy, a laptop waking up). Its state must not be forgotten then: the next client would start a second server on the same
+ *   busy, a laptop waking up); or the port still refuses within the time its start was given (`startedAt`, `readyMs`),
+ *   whoever started it — a client killed during the start leaves a server that will answer soon. Its state must not be forgotten then: the next client would start a second server on the same
  *   store, and nothing could stop the first one any more.
  */
 export type BackendState = 'ours' | 'foreign' | 'unknown';
@@ -124,7 +137,7 @@ export async function probeBackend(dir: string, backend: SharedBackend): Promise
   const token = await readToken(dir);
   if (!token || !alive(backend.pid)) return 'foreign';
   const port = await connects(backend.port);
-  if (port !== 'open') return port === 'refused' ? 'foreign' : 'unknown';
+  if (port !== 'open') return port === 'refused' && !starting(backend) ? 'foreign' : 'unknown';
   try {
     const answer = await fetch(backendUrl(backend), {
       method: 'POST',
@@ -161,13 +174,19 @@ function isJsonRpc(body: string): boolean {
 }
 
 /**
- * The state of a backend that may be busy: asked again until it says, for `busyMs` at most. Still unknown then, it is
- * reported as such, and the caller fails rather than guess.
+ * The state of a backend that may be busy: asked again until it says, for `busyMs` at most, or until the time its start
+ * was given runs out. Still unknown then, it is reported as such, and the caller fails rather than guess.
+ *
+ * `stalled`: a start seen running, that ran out of time without answering while its process lives — what its client
+ * would have stopped had it not been killed meanwhile. It is ours: left alone, it would hold the store while the next
+ * start fails on it, with no `backend.json` to find it by.
  */
-async function settleBackend(dir: string, backend: SharedBackend, busyMs: number): Promise<BackendState> {
-  const deadline = Date.now() + busyMs;
+async function settleBackend(dir: string, backend: SharedBackend, busyMs: number): Promise<BackendState | 'stalled'> {
+  const wasStarting = starting(backend);
+  const deadline = Math.max(Date.now() + busyMs, wasStarting ? backend.startedAt! + backend.readyMs! : 0);
   for (;;) {
     const state = await probeBackend(dir, backend);
+    if (state === 'foreign' && wasStarting && alive(backend.pid) && (await connects(backend.port)) === 'refused') return 'stalled';
     if (state !== 'unknown' || Date.now() >= deadline) return state;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -211,6 +230,10 @@ export interface SharedBackendOptions {
   readyMs?: number;
   /** how long a running backend that does not answer is asked again before the client gives up */
   busyMs?: number;
+  /** how long the watchdog lets the backend run with no client */
+  idleMs?: number;
+  /** aborted when the client is stopped during the start: the server it was starting goes with it */
+  signal?: AbortSignal;
 }
 
 /** How long a backend that lives and does not answer is asked again: a sync that keeps it busy for longer is a hung one. */
@@ -220,13 +243,14 @@ const BUSY_MS = 10_000;
 const READY_MS = 60_000;
 
 /**
- * How long anyone waits for the lock of a pair, hence how long anyone may hold it: a start that first asked a busy
- * backend again (BUSY_MS), then waited for its own (READY_MS), and stopped it when it failed. The start keeps the lock
- * all that time — a client let in meanwhile would find a server that does not listen yet, and start a second one on the
- * same store — so `logout`, `login --chat`, a client leaving and the watchdog wait it out instead of giving up after
- * the 10 s other locks are waited for.
+ * How long anyone waits for the lock of a pair, hence how long anyone may hold it: a start that first waited for a
+ * server left starting by a killed client, or asked a busy one again (READY_MS at most, BUSY_MS being shorter), then
+ * waited for its own (READY_MS), and stopped it when it failed. The start keeps the lock all that time — a client let
+ * in meanwhile would see a port that refuses, and could not tell a start from a stranger without `startedAt` — so
+ * `logout`, `login --chat`, a client leaving and the watchdog wait it out instead of giving up after the 10 s other
+ * locks are waited for.
  */
-const LOCK_MS = READY_MS + BUSY_MS + 20_000;
+const LOCK_MS = 2 * READY_MS + 20_000;
 
 async function startBackend(options: SharedBackendOptions, dir: string): Promise<SharedBackend> {
   const port = await freePort();
@@ -252,16 +276,17 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
   });
   await log.close();
   child.unref();
-  const backend: SharedBackend = { pid: child.pid ?? 0, port };
+  const readyMs = options.readyMs ?? READY_MS;
+  // when it started, so that another client tells this start from a stranger even if this one is killed meanwhile
+  const backend: SharedBackend = { pid: child.pid ?? 0, port, startedAt: Date.now(), readyMs };
   await writePrivateFile(backendFile(dir), `${JSON.stringify(backend)}\n`);
-  const deadline = Date.now() + (options.readyMs ?? READY_MS);
-  while (Date.now() < deadline) {
+  // the watchdog from the start: a client killed during the sign-in must not leave a server nobody ever stops
+  await watchBackend(options, dir, backend);
+  const deadline = backend.startedAt! + readyMs;
+  while (Date.now() < deadline && !options.signal?.aborted) {
     // the server it started, and not whatever took the port it was given meanwhile (a sign-in and a first sync are long):
     // that process lives, and the port takes the token of this start
-    if ((await probeBackend(dir, backend)) === 'ours') {
-      await watchBackend(options, dir, backend);
-      return backend;
-    }
+    if ((await probeBackend(dir, backend)) === 'ours') return backend;
     if (!alive(backend.pid)) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -280,7 +305,8 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
  */
 async function watchBackend(options: SharedBackendOptions, dir: string, backend: SharedBackend): Promise<void> {
   try {
-    const child = spawn(options.nodePath, [options.cliPath, '__watch', '--shared', dir, '--locks', options.paths.locksDir, '--pid', String(backend.pid)], {
+    const idle = options.idleMs === undefined ? [] : ['--idle', String(options.idleMs)];
+    const child = spawn(options.nodePath, [options.cliPath, '__watch', '--shared', dir, '--locks', options.paths.locksDir, '--pid', String(backend.pid), ...idle], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -370,7 +396,7 @@ async function stopBackend(dir: string, options: { trusted?: boolean } = {}): Pr
   const state = !backend || !alive(backend.pid) ? 'foreign' : options.trusted ? 'ours' : await settleBackend(dir, backend, BUSY_MS);
   // a server that may be ours keeps its state: forgotten, it would run on with the Matrix device and nothing to stop it
   if (state === 'unknown') throw busyError(dir, backend!);
-  if (backend && state === 'ours') {
+  if (backend && (state === 'ours' || state === 'stalled')) {
     // close the sessions first: every client's stream ends, and the Matrix client sees its clients go before it closes
     const token = await readToken(dir);
     if (token) for (const session of await recordedSessions(dir)) await endSharedSession(backend, token, session);
@@ -418,6 +444,7 @@ export async function enterSharedBackend(options: SharedBackendOptions): Promise
     const known = state ? await settleBackend(dir, state, options.busyMs ?? BUSY_MS) : 'foreign';
     // a second server on the same store is what this whole folder prevents: better no Chat for now than two
     if (state && known === 'unknown') throw busyError(dir, state);
+    if (known === 'stalled') await stopBackend(dir, { trusted: true });
     let backend = known === 'ours' ? state : undefined;
     if (!backend) {
       // a backend that was killed, or whose port was taken meanwhile: its state is worthless

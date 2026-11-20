@@ -8,7 +8,7 @@ import { checkAgentId } from './grants.js';
 import { entryPoint } from './installer.js';
 import type { AppPaths } from './paths.js';
 import { proxyShared } from './proxy.js';
-import { backendUrl, endSharedSession, enterSharedBackend, isSharedService, keepSharedClient, leaveSharedClient, setSharedSession, stopSharedIfUnused } from './shared.js';
+import { backendUrl, endSharedSession, enterSharedBackend, isSharedService, keepSharedClient, leaveSharedClient, setSharedSession, stopSharedIfUnused, type SharedSession } from './shared.js';
 
 export interface LaunchDeps {
   paths: AppPaths;
@@ -62,41 +62,55 @@ export async function runService(service: ServiceId, agent: string, deps: Launch
  */
 async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, env: Record<string, string>): Promise<number> {
   const backendEnv = { ...stringEnv(deps.env), ...env };
-  // this process registers as a client before the start returns, under the same lock the last client leaving takes
-  const { backend, token } = await enterSharedBackend({
-    paths: deps.paths,
-    service,
-    agent,
-    env: backendEnv,
-    nodePath: deps.nodePath,
-    cliPath: deps.cliPath,
-    entry: await entryPoint(deps.paths, service),
-  });
-  // the watchdog believes a client's pid only while its entry is touched: a pid is soon someone else's on some systems
-  const stopBeat = keepSharedClient(deps.paths, service, agent);
+  // a signal during the start stops the server this client was starting: see the handlers below
+  const starting = new AbortController();
+  let entering: Promise<unknown> = Promise.resolve();
+  let shared: SharedSession | undefined;
+  let session: string | undefined;
+  let stopBeat = () => {};
   let left = false;
   const leave = async () => {
-    if (left) return;
+    // a client that never got in has nothing to leave: the start it aborted has cleaned up after itself
+    if (left || !shared) return;
     left = true;
     stopBeat();
     await leaveSharedClient(deps.paths, service, agent);
     await stopSharedIfUnused(deps.paths, service, agent).catch(() => false);
   };
-  let session: string | undefined;
-  // a client killed by its agent still stops the backend when it was the last one, and closes its session first: the
-  // other clients keep the server running, which would hold that session for 6 hours
+  // set before the start: a client stopped during the Matrix sign-in must not leave a server nobody knows of. A client
+  // killed by its agent still stops the backend when it was the last one, and closes its session first: the other
+  // clients keep the server running, which would hold that session for 6 hours
   const signals = (['SIGINT', 'SIGTERM', 'SIGHUP'] as const).map((signal) => {
-    const handler = () =>
-      void (session ? endSharedSession(backend, token, session) : Promise.resolve())
+    const handler = () => {
+      starting.abort();
+      // the start notices within a ping, then stops its server; a client still waiting for the lock started nothing
+      void Promise.race([entering.catch(() => {}), new Promise((resolve) => setTimeout(resolve, 10_000))])
+        .then(() => (shared && session ? endSharedSession(shared.backend, shared.token, session) : undefined))
         .then(leave)
         .finally(() => process.exit(128 + (constants.signals[signal] ?? 0)));
+    };
     process.once(signal, handler);
     return [signal, handler] as const;
   });
   try {
+    // this process registers as a client before the start returns, under the same lock the last client leaving takes
+    const entered = enterSharedBackend({
+      paths: deps.paths,
+      service,
+      agent,
+      env: backendEnv,
+      nodePath: deps.nodePath,
+      cliPath: deps.cliPath,
+      entry: await entryPoint(deps.paths, service),
+      signal: starting.signal,
+    });
+    entering = entered;
+    shared = await entered;
+    // the watchdog believes a client's pid only while its entry is touched: a pid is soon someone else's on some systems
+    stopBeat = keepSharedClient(deps.paths, service, agent);
     return await proxyShared({
-      url: backendUrl(backend),
-      token,
+      url: backendUrl(shared.backend),
+      token: shared.token,
       name: CATALOG[service].name,
       version: CATALOG[service].version,
       onSession: (id) => {
