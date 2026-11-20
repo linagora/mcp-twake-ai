@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- `mcp-twake-ai call <service> <tool>` and `mcp-twake-ai tools <service>` run the command line of the installed Twake.ai server with your sign-in, its server started as agents start it (`run <service> --agent cli`, so Chat goes through its shared server). `mcp-twake-ai allow-unattended <name>` lets a cron write with `--yes --as <name>`; `status` lists the allowed names and `logout` forgets them. The journal never keeps the arguments of a call.
+
 ## [0.3.2] - 2026-11-17
 
 ### Changed
