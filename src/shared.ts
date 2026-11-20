@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { connect, createServer } from 'node:net';
 import { join } from 'node:path';
 import type { ServiceId } from './broker.js';
@@ -294,19 +294,22 @@ export interface WatchOptions {
 export async function watchShared(shared: string, locksDir: string, options: WatchOptions): Promise<void> {
   const idleMs = options.idleMs ?? 5 * 60_000;
   const intervalMs = options.intervalMs ?? Math.max(100, Math.min(30_000, Math.floor(idleMs / 4)));
-  let idleSince = Date.now();
+  // idle since the first look that found no client, not since the last one that found some: after a laptop's sleep,
+  // every client's entry is old until its next heartbeat, and that is no reason to stop a server in use
+  let idleSince: number | undefined = Date.now();
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     const backend = await readBackend(shared);
     if (!backend || backend.pid !== options.pid || !alive(backend.pid)) return;
-    if ((await livingClients(clientsDir(shared))) > 0) {
-      idleSince = Date.now();
+    if ((await livingClients(clientsDir(shared), CLIENT_STALE_MS)) > 0) {
+      idleSince = undefined;
       continue;
     }
+    idleSince ??= Date.now();
     if (Date.now() - idleSince < idleMs) continue;
     // a backend that does not answer is neither stopped nor forgotten: the next look tries again
-    if (await stopIfUnused(shared, locksDir).catch(() => false)) return;
-    idleSince = Date.now();
+    if (await stopIfUnused(shared, locksDir, CLIENT_STALE_MS).catch(() => false)) return;
+    idleSince = undefined;
   }
 }
 
@@ -425,14 +428,48 @@ export async function setSharedSession(paths: AppPaths, service: ServiceId, agen
   await writeFile(join(dir, String(process.pid)), `${JSON.stringify(sessionId ? { session: sessionId } : {})}\n`, { mode: 0o600, flag: 'w' }).catch(() => {});
 }
 
-/** The clients still around: a client killed without a chance to leave is not a client any more. */
-async function livingClients(dir: string): Promise<number> {
+/**
+ * How often a client touches its entry, and how long an entry may go untouched before the watchdog stops believing its
+ * pid: Windows and macOS give a pid out again soon, and a process that inherited the pid of a killed client would keep
+ * the server running for ever. A heartbeat is the one sign of life that works the same on every platform.
+ */
+export const CLIENT_BEAT_MS = 30_000;
+const CLIENT_STALE_MS = 4 * CLIENT_BEAT_MS;
+
+/**
+ * Touches this client's entry until the returned function is called: what tells the watchdog the pid is still ours.
+ * Never recreated: an entry that is gone belongs to a server that is gone.
+ */
+export function keepSharedClient(paths: AppPaths, service: ServiceId, agent: string, intervalMs = CLIENT_BEAT_MS): () => void {
+  const entry = join(clientsDir(sharedDir(paths, service, agent)), String(process.pid));
+  const timer = setInterval(() => {
+    const now = new Date();
+    void utimes(entry, now, now).catch(() => {});
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+/**
+ * The clients still around: a client killed without a chance to leave is not a client any more. With `staleMs` (the
+ * watchdog), neither is one whose entry went untouched for that long — its pid is someone else's, or it is hung — but
+ * that entry stays: a client that wakes up from a sleep touches it again. A client leaving trusts the pid alone, and
+ * leaves a doubtful server to the watchdog.
+ */
+async function livingClients(dir: string, staleMs?: number): Promise<number> {
   let others = 0;
   for (const entry of await readdir(dir).catch(() => [] as string[])) {
     const pid = Number(entry);
     if (!Number.isInteger(pid) || pid <= 0) continue;
-    if (pid !== process.pid && alive(pid)) others++;
-    else await rm(join(dir, entry), { force: true });
+    if (pid === process.pid || !alive(pid)) {
+      await rm(join(dir, entry), { force: true });
+      continue;
+    }
+    if (staleMs !== undefined) {
+      const touched = await stat(join(dir, entry)).then((info) => info.mtimeMs, () => 0);
+      if (Date.now() - touched > staleMs) continue;
+    }
+    others++;
   }
   return others;
 }
@@ -442,10 +479,10 @@ export async function leaveSharedClient(paths: AppPaths, service: ServiceId, age
   await rm(join(clientsDir(sharedDir(paths, service, agent)), String(process.pid)), { force: true });
 }
 
-async function stopIfUnused(dir: string, locksDir: string): Promise<boolean> {
+async function stopIfUnused(dir: string, locksDir: string, staleMs?: number): Promise<boolean> {
   if (!(await readBackend(dir))) return false;
   return withLock(locksDir, sharedLock(dir), async () => {
-    if ((await livingClients(clientsDir(dir))) > 0) return false;
+    if ((await livingClients(clientsDir(dir), staleMs)) > 0) return false;
     await stopBackend(dir);
     await rm(dir, { recursive: true, force: true });
     return true;

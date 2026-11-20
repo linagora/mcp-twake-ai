@@ -8,7 +8,7 @@ import { checkAgentId } from './grants.js';
 import { entryPoint } from './installer.js';
 import type { AppPaths } from './paths.js';
 import { proxyShared } from './proxy.js';
-import { backendUrl, enterSharedBackend, isSharedService, leaveSharedClient, setSharedSession, stopSharedIfUnused } from './shared.js';
+import { backendUrl, enterSharedBackend, isSharedService, keepSharedClient, leaveSharedClient, setSharedSession, stopSharedIfUnused } from './shared.js';
 
 export interface LaunchDeps {
   paths: AppPaths;
@@ -72,10 +72,13 @@ async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, en
     cliPath: deps.cliPath,
     entry: await entryPoint(deps.paths, service),
   });
+  // the watchdog believes a client's pid only while its entry is touched: a pid is soon someone else's on some systems
+  const stopBeat = keepSharedClient(deps.paths, service, agent);
   let left = false;
   const leave = async () => {
     if (left) return;
     left = true;
+    stopBeat();
     await leaveSharedClient(deps.paths, service, agent);
     await stopSharedIfUnused(deps.paths, service, agent).catch(() => false);
   };

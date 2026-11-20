@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { alive, enterSharedBackend, runningBackends, sharedDir, stopShared, watchShared, type SharedBackendOptions } from '../src/shared.js';
+import { alive, enterSharedBackend, keepSharedClient, runningBackends, sharedDir, stopShared, watchShared, type SharedBackendOptions } from '../src/shared.js';
 import { saveConfig, type TwakeAiConfig } from '../src/config.js';
 import { entryPoint } from '../src/installer.js';
 import type { AppPaths } from '../src/paths.js';
@@ -353,6 +353,46 @@ describe('a shared service, when what answers on its port is not plainly its ser
 });
 
 describe('the watchdog of a shared server', () => {
+  it('stops a server whose last client left a pid another process now has', { timeout: 90_000 }, async () => {
+    const { root, paths } = await setup();
+    const client = await launch(root);
+    const { pid } = await whoami(client);
+    // a client killed long ago, whose pid the system gave to a process that has nothing to do with us (Windows and macOS
+    // hand pids out again soon): its entry has not been touched since
+    const recycled = join(sharedDir(paths, 'chat', 'claude-code'), 'clients', String(bystander().pid));
+    await writeFile(recycled, '{}\n');
+    const longAgo = new Date(Date.now() - 60 * 60_000);
+    await utimes(recycled, longAgo, longAgo);
+    client.kill();
+    await client.exited;
+
+    const watcher = spawn(
+      process.execPath,
+      ['--import', 'tsx', 'src/bin.ts', '__watch', '--shared', sharedDir(paths, 'chat', 'claude-code'), '--locks', paths.locksDir, '--pid', String(pid), '--idle', '300'],
+      { cwd: repoRoot, env: { ...process.env, TWAKE_AI_HOME: root, LANG: 'en_US.UTF-8' }, stdio: 'ignore' },
+    );
+    running.push(watcher as ChildProcessWithoutNullStreams);
+    await expect.poll(() => alive(pid), { timeout: 30_000 }).toBe(false);
+    expect(alive(bystanders[0].pid!)).toBe(true);
+  });
+
+  it('is told by a living client that it is still there', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const clients = join(sharedDir(paths, 'chat', 'claude-code'), 'clients');
+    await mkdir(clients, { recursive: true });
+    const mine = join(clients, String(process.pid));
+    await writeFile(mine, '{}\n');
+    const longAgo = new Date(Date.now() - 60 * 60_000);
+    await utimes(mine, longAgo, longAgo);
+
+    const stop = keepSharedClient(paths, 'chat', 'claude-code', 50);
+    try {
+      await expect.poll(async () => Date.now() - (await stat(mine)).mtimeMs < 10_000, { timeout: 5_000 }).toBe(true);
+    } finally {
+      stop();
+    }
+  });
+
   it('leaves alone a server started after its own one', { timeout: 30_000 }, async () => {
     const { paths } = await setup();
     const dir = sharedDir(paths, 'chat', 'claude-code');
