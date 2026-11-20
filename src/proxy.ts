@@ -35,13 +35,26 @@ function sessionGone(error: unknown): boolean {
 }
 
 /**
- * True when our server is no longer there: nothing listens on its port any more, or what listens there now turns our
- * token down (another start, with a token of its own).
+ * True when our server is no longer there, and the request never reached it: nothing listens on its port any more, or
+ * what listens there now turns our token down (another start, with a token of its own). A connection reset is not one:
+ * the server may have run the request before it went (the SDK dispatches it before it answers), and sent again, a
+ * message would be posted twice.
  */
 function serverGone(error: unknown): boolean {
   if (error instanceof StreamableHTTPError) return error.code === 401;
   const cause = error instanceof Error ? (error.cause as { code?: unknown } | undefined) : undefined;
-  return error instanceof TypeError && (cause?.code === 'ECONNREFUSED' || cause?.code === 'ECONNRESET');
+  return error instanceof TypeError && cause?.code === 'ECONNREFUSED';
+}
+
+/** The id of the request a POST carries, when it carries one (not a notification, not an answer, not a batch). */
+function requestIdOf(init: RequestInit | undefined): RequestId | undefined {
+  if (typeof init?.body !== 'string') return undefined;
+  try {
+    const message = JSON.parse(init.body) as JSONRPCMessage;
+    return isJSONRPCRequest(message) ? message.id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isInitialize(message: JSONRPCMessage): message is JSONRPCRequest {
@@ -89,6 +102,8 @@ class Relay {
   /** resolved with the exit code when the relay cannot go on: no server could be found any more */
   readonly ended: Promise<number>;
   private end: (code: number) => void = () => {};
+  /** the agent's requests sent upstream and not answered yet: each gets an answer, from the server or from the relay */
+  private readonly inflight = new Set<RequestId>();
 
   constructor(
     private readonly stdio: StdioServerTransport,
@@ -118,6 +133,7 @@ class Relay {
       // the message that opened the session has been sent by open()
       if (!opens || !isInitialize(message)) {
         try {
+          if (isJSONRPCRequest(message)) this.inflight.add(message.id);
           await this.upstream?.send(message);
           return;
         } catch (error) {
@@ -144,6 +160,7 @@ class Relay {
     for (;;) {
       const transport = new StreamableHTTPClientTransport(new URL(this.url), {
         requestInit: { headers: { authorization: `Bearer ${this.token}` } },
+        fetch: (url, init) => this.watchedFetch(url, init),
       });
       transport.onmessage = (message) => this.fromUpstream(message);
       transport.onerror = (error) => this.report(undefined, error);
@@ -216,7 +233,45 @@ class Relay {
     });
   }
 
+  /**
+   * fetch, with an eye on the stream that carries the answer to a request: when it ends, or breaks, before the answer
+   * came (the server stopped, crashed, closed the session), the request is answered with an error instead of never.
+   */
+  private async watchedFetch(url: string | URL, init?: RequestInit): Promise<Response> {
+    const response = await fetch(url, init);
+    const id = requestIdOf(init);
+    if (id === undefined || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) return response;
+    const reader = response.body.getReader();
+    // the SDK reads what came before the end first: give it that moment, then look whether the answer was among it
+    const ended = () => void setTimeout(() => this.unanswered(id), 100);
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const { value, done } = await reader.read();
+          if (done) {
+            controller.close();
+            ended();
+          } else controller.enqueue(value);
+        } catch (error) {
+          controller.error(error);
+          ended();
+        }
+      },
+      cancel(reason) {
+        ended();
+        return reader.cancel(reason);
+      },
+    });
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  }
+
+  private unanswered(id: RequestId): void {
+    if (!this.inflight.delete(id)) return;
+    this.send({ jsonrpc: '2.0', id, error: { code: -32603, message: 'The shared server went away before it answered: the call may or may not have run.' } });
+  }
+
   private fromUpstream(message: JSONRPCMessage): void {
+    if (('result' in message || 'error' in message) && 'id' in message && message.id !== undefined && message.id !== null) this.inflight.delete(message.id);
     if (this.pending && 'id' in message && message.id === this.pending.id) {
       const waiting = this.pending;
       this.pending = undefined;
@@ -233,6 +288,8 @@ class Relay {
 
   private report(message: JSONRPCMessage | undefined, error: unknown): void {
     this.log(error instanceof Error ? error.message : String(error));
+    // answered here: no stream carries an answer to it
+    if (message && isJSONRPCRequest(message)) this.inflight.delete(message.id);
     const answer = message ? failure(message, error) : undefined;
     if (answer) this.send(answer);
   }

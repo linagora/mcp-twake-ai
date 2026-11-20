@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
+import { createServer as createTcpServer } from 'node:net';
 import { access, mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { uptime } from 'node:os';
 import { join } from 'node:path';
@@ -298,6 +299,60 @@ describe('a shared service, when the server or a client goes away', () => {
     client.send({ id: 3, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
     const answer = await client.next();
     expect(JSON.parse(answer.result.content[0].text).env.MATRIX_STORE_DIR).toMatch(/DEVICETWO$/);
+    client.close();
+    await client.exited;
+  });
+
+  it('answers a call in flight when its server goes away', { timeout: 60_000 }, async () => {
+    const { root, paths } = await setup();
+    const client = await launch(root);
+    await whoami(client);
+    // a call that runs until it is cancelled, then the server stopped under it
+    client.send({ id: 3, method: 'tools/call', params: { name: 'wait', arguments: {} } });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await stopShared(paths, 'chat', 'claude-code');
+    const answered = await Promise.race([client.next(), new Promise((resolve) => setTimeout(() => resolve('no answer'), 5_000))]);
+    expect(answered).toMatchObject({ id: 3, error: { code: -32603 } });
+    client.close();
+    await client.exited;
+  });
+
+  it('never sends a request again after the connection was reset while it ran', { timeout: 60_000 }, async () => {
+    const { root, paths } = await setup();
+    const client = await launch(root);
+    await whoami(client);
+    const { port } = JSON.parse(await readFile(join(sharedDir(paths, 'chat', 'claude-code'), 'backend.json'), 'utf8')) as { port: number };
+    expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
+    // the request may have run before the reset: sent again, a message would be posted twice
+    const resets = createTcpServer((socket) => socket.on('data', () => socket.resetAndDestroy()));
+    await new Promise<void>((resolve) => resets.listen(port, '127.0.0.1', resolve));
+    try {
+      client.send({ id: 3, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
+      expect(await client.next()).toMatchObject({ id: 3, error: { code: -32603 } });
+      expect(await readFile(join(sharedDir(paths, 'chat', 'claude-code'), 'backend.json'), 'utf8').catch(() => 'none')).toBe('none');
+    } finally {
+      await new Promise((resolve) => resets.close(resolve));
+    }
+    // the port refuses now: the next request finds a new server
+    client.send({ id: 4, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
+    expect((await client.next()).result).toBeDefined();
+    client.close();
+    await client.exited;
+  });
+
+  it('finds the next server when what answers on its port turns its token down', { timeout: 60_000 }, async () => {
+    const { root, paths } = await setup();
+    const client = await launch(root);
+    const before = await whoami(client);
+    const { port } = JSON.parse(await readFile(join(sharedDir(paths, 'chat', 'claude-code'), 'backend.json'), 'utf8')) as { port: number };
+    expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
+    // another start took that port, with a token of its own
+    const other = createServer((_request, response) => void response.writeHead(401).end());
+    servers.push(other);
+    await new Promise<void>((resolve) => other.listen(port, '127.0.0.1', resolve));
+    client.send({ id: 3, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
+    const answer = await client.next();
+    expect(JSON.parse(answer.result.content[0].text).pid).not.toBe(before.pid);
     client.close();
     await client.exited;
   });
