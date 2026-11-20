@@ -44,12 +44,12 @@ const cmd = (service: string, agent?: string) => `'/usr/bin/node' '/opt/twake-ai
 describe('catalog', () => {
   it('pins the six MCP servers', () => {
     expect(Object.fromEntries(Object.entries(CATALOG).map(([service, pkg]) => [service, `${pkg.name}@${pkg.version}`]))).toEqual({
-      mail: 'mcp-twake-mail@4.3.0',
-      dav: 'mcp-twake-dav@4.2.1',
-      drive: 'mcp-twake-drive@0.4.1',
-      chat: 'mcp-twake-chat@0.6.1',
-      space: 'mcp-twake-space@0.2.2',
-      project: 'mcp-twake-project@0.2.2',
+      mail: 'mcp-twake-mail@4.4.0',
+      dav: 'mcp-twake-dav@4.3.0',
+      drive: 'mcp-twake-drive@0.5.0',
+      chat: 'mcp-twake-chat@0.7.0',
+      space: 'mcp-twake-space@0.3.0',
+      project: 'mcp-twake-project@0.3.0',
     });
     expect(entryName('mail')).toBe('twake-mail');
     expect(hermesEntryName('project')).toBe('twake_project');

@@ -17,12 +17,12 @@ export interface McpPackage {
  * These versions run *_TOKEN_COMMAND through the system shell, so they work on Windows too.
  */
 export const CATALOG: Record<ServiceId, McpPackage> = {
-  mail: { name: 'mcp-twake-mail', version: '4.3.0', approval: 'JMAP' },
-  dav: { name: 'mcp-twake-dav', version: '4.2.1', approval: 'DAV' },
-  drive: { name: 'mcp-twake-drive', version: '0.4.1', approval: 'TWAKE_DRIVE' },
-  chat: { name: 'mcp-twake-chat', version: '0.6.1', approval: 'MATRIX' },
-  space: { name: 'mcp-twake-space', version: '0.2.2', approval: 'TWAKE_SPACE' },
-  project: { name: 'mcp-twake-project', version: '0.2.2', approval: 'TWAKE_PROJECT' },
+  mail: { name: 'mcp-twake-mail', version: '4.4.0', approval: 'JMAP' },
+  dav: { name: 'mcp-twake-dav', version: '4.3.0', approval: 'DAV' },
+  drive: { name: 'mcp-twake-drive', version: '0.5.0', approval: 'TWAKE_DRIVE' },
+  chat: { name: 'mcp-twake-chat', version: '0.7.0', approval: 'MATRIX' },
+  space: { name: 'mcp-twake-space', version: '0.3.0', approval: 'TWAKE_SPACE' },
+  project: { name: 'mcp-twake-project', version: '0.3.0', approval: 'TWAKE_PROJECT' },
 };
 
 /** Hermes waits 300 s for an answer: the server waits a little longer, so that Hermes, not the server, gives up first. */

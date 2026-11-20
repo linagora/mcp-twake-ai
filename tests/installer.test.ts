@@ -12,18 +12,18 @@ describe('ensureInstalled', () => {
     const npm = fakeNpm(paths);
     const lines: string[] = [];
     expect(await ensureInstalled(paths, ['mail', 'chat', 'mail'], { run: npm, print: (line) => lines.push(line) })).toEqual([
-      'mcp-twake-mail@4.3.0',
-      'mcp-twake-chat@0.6.1',
+      'mcp-twake-mail@4.4.0',
+      'mcp-twake-chat@0.7.0',
     ]);
     expect(npm.calls).toEqual([
       // one folder per server: hoisted together, matrix-js-sdk's @babel/runtime 8 broke cozy-client (mcp-twake-drive)
-      ['install', '--prefix', serverDir(paths, 'mcp-twake-mail'), '--no-audit', '--no-fund', '--save-exact', 'mcp-twake-mail@4.3.0'],
-      ['install', '--prefix', serverDir(paths, 'mcp-twake-chat'), '--no-audit', '--no-fund', '--save-exact', 'mcp-twake-chat@0.6.1'],
+      ['install', '--prefix', serverDir(paths, 'mcp-twake-mail'), '--no-audit', '--no-fund', '--save-exact', 'mcp-twake-mail@4.4.0'],
+      ['install', '--prefix', serverDir(paths, 'mcp-twake-chat'), '--no-audit', '--no-fund', '--save-exact', 'mcp-twake-chat@0.7.0'],
     ]);
     // npm 11 refuses --allow-scripts for a project: the prefix's package.json allows sqlite3's build instead
     expect(JSON.parse(await readFile(join(serverDir(paths, 'mcp-twake-chat'), 'package.json'), 'utf8'))).toMatchObject({ private: true, allowScripts: { sqlite3: true } });
-    expect(lines.join('\n')).toContain('mcp-twake-chat@0.6.1');
-    expect(await installedVersion(paths, 'mcp-twake-chat')).toBe('0.6.1');
+    expect(lines.join('\n')).toContain('mcp-twake-chat@0.7.0');
+    expect(await installedVersion(paths, 'mcp-twake-chat')).toBe('0.7.0');
   });
 
   it('does nothing when everything is installed, and replaces another version', async () => {
@@ -31,7 +31,7 @@ describe('ensureInstalled', () => {
     await installFakeMcp(paths, 'mail');
     await installFakeMcp(paths, 'dav', undefined, '4.0.0');
     const npm = fakeNpm(paths);
-    expect(await ensureInstalled(paths, ['mail', 'dav'], { run: npm, print: () => undefined })).toEqual(['mcp-twake-dav@4.2.1']);
+    expect(await ensureInstalled(paths, ['mail', 'dav'], { run: npm, print: () => undefined })).toEqual(['mcp-twake-dav@4.3.0']);
     expect(await ensureInstalled(paths, ['mail', 'dav'], { run: npm, print: () => undefined })).toEqual([]);
     expect(npm.calls).toHaveLength(1);
   });

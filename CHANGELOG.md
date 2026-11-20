@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-20
+
+### Changed
+
+- The servers are pinned to mcp-twake-mail 4.4.0, mcp-twake-dav 4.3.0, mcp-twake-drive 0.5.0, mcp-twake-chat 0.7.0, mcp-twake-space 0.3.0 and mcp-twake-project 0.3.0: each has a command line (`call`, `tools`) and `approve_batch`; the calendar groups calendars by access rights; Chat has its shared HTTP mode.
+
 ### Added
 
 - One Twake Chat server per agent, run by mcp-twake-chat 0.7.0 (its shared HTTP mode): every client of an agent joins the server the first one started (`run chat` relays its stdio to it), so two Claude Code windows, the Hermes gateway and `mcp-twake-ai call chat` use Chat at the same time on one device. The server stops after 10 minutes without a client, and `logout`, `uninstall` and `login --chat` stop it by its own route; mcp-twake-ai never stops a process by its pid. The token goes only to a server that proves it holds it, and `server.json` is used only when this account can trust it. `login --chat` writes the new device first, then stops the server, then signs the old device out (and puts everything back when the server does not stop). `status` shows the shared server. The stdio↔HTTP relay comes from #25 by guimard. Fixes #24.
