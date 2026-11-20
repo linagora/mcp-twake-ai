@@ -422,6 +422,16 @@ describe('a shared service, when what answers on its port is not plainly its ser
     expect(await runningBackends(paths)).toEqual([]);
   });
 
+  it('tells where the server said why it could not start', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    await installFakeMcp(paths, 'chat', `process.stderr.write('M_UNKNOWN_TOKEN: the device is gone\\n');\nprocess.exit(1);\n`);
+    const failed = await enterSharedBackend(await backendOptions(paths)).catch((error: Error) => error);
+    expect(failed).toMatchObject({ code: 'unavailable', message: expect.stringContaining('M_UNKNOWN_TOKEN: the device is gone') });
+    // `run` in a terminal is now a proxy: it would show nothing more; the server's own log does
+    expect((failed as Error).message).toContain(join(sharedDir(paths, 'chat', 'claude-code'), 'backend.log'));
+    expect((failed as Error).message).not.toContain('in a terminal');
+  });
+
   it('lets logout wait for a server that is starting, then stops it', { timeout: 60_000 }, async () => {
     const { paths } = await setup();
     const options = await backendOptions(paths);

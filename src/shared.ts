@@ -296,7 +296,8 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
   await stopBackend(dir, { trusted: true }).catch(() => {});
   throw new TwakeAiError(
     'unavailable',
-    `${options.service} could not start its shared server${reason ? `: ${reason}` : ''}. Run \`mcp-twake-ai run ${options.service} --agent ${options.agent}\` in a terminal to see more, or read ${logFile(dir)}.`,
+    // the server's stderr is all there is to read: `run` in a terminal is a proxy, and would show nothing more
+    `The shared ${CATALOG[options.service].name} server of ${options.agent} could not start${reason ? `: ${reason}` : ''}. Its whole log is in ${logFile(dir)}.`,
   );
 }
 
