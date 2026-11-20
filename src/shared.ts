@@ -58,6 +58,41 @@ const backendFile = (dir: string) => join(dir, 'backend.json');
 const tokenFile = (dir: string) => join(dir, 'token');
 const logFile = (dir: string) => join(dir, 'backend.log');
 const clientsDir = (dir: string) => join(dir, 'clients');
+/** next to the folder of the pair, which goes with each stop: when its servers were stopped for hanging */
+const hungFile = (dir: string) => `${dir}.hung.json`;
+
+/** How a server that hung is started again: not before 30 s after the first stop, 2 min after the second; not at all
+ * after three within 15 min, until the oldest of them is that old. */
+const HUNG_WINDOW_MS = 15 * 60_000;
+const HUNG_WAITS_MS = [30_000, 2 * 60_000];
+
+async function hungStops(dir: string): Promise<number[]> {
+  try {
+    const { stops } = JSON.parse(await readFile(hungFile(dir), 'utf8')) as { stops?: unknown };
+    return Array.isArray(stops) ? stops.filter((at): at is number => typeof at === 'number' && Date.now() - at < HUNG_WINDOW_MS) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Remembers that a server of that pair was stopped for not answering. */
+async function recordHung(dir: string): Promise<void> {
+  await writePrivateFile(hungFile(dir), `${JSON.stringify({ stops: [...(await hungStops(dir)), Date.now()] })}\n`).catch(() => {});
+}
+
+/** The error of a start held back because its servers hung lately: restarting at once would hang again in a loop. */
+async function hungError(options: SharedBackendOptions, dir: string): Promise<TwakeAiError | undefined> {
+  const stops = (await hungStops(dir)).sort((a, b) => a - b);
+  if (stops.length === 0) return undefined;
+  const name = CATALOG[options.service].name;
+  if (stops.length > HUNG_WAITS_MS.length) {
+    const minutes = Math.ceil((stops[0]! + HUNG_WINDOW_MS - Date.now()) / 60_000);
+    return new TwakeAiError('unavailable', `The shared ${name} server of ${options.agent} hung ${stops.length} times in the last 15 minutes and was stopped each time: it is not started again for ${minutes} min. Its log is in ${logFile(dir)}.`);
+  }
+  const wait = stops.at(-1)! + HUNG_WAITS_MS[stops.length - 1]! - Date.now();
+  if (wait <= 0) return undefined;
+  return new TwakeAiError('unavailable', `The shared ${name} server of ${options.agent} hung and was stopped: it starts again in ${Math.ceil(wait / 1000)} s. Its log is in ${logFile(dir)}.`);
+}
 
 /** The lock every process of this (service, agent) takes: the folder of the pair is `<service>-<agent>`. */
 function sharedLock(dir: string): string {
@@ -587,6 +622,12 @@ export async function enterSharedBackend(options: SharedBackendOptions): Promise
       }
       // a start of ours that will not answer holds the store: proven, it is stopped before another one starts
       if (state && seen === 'stalled') await terminate(dir, state);
+      // a server that hung lately is not started again at once: it would hang again, in a loop
+      const held = await hungError(options, dir);
+      if (held) {
+        await rm(backendFile(dir), { force: true });
+        throw held;
+      }
       // a backend that was killed, or whose port was taken meanwhile: its state is worthless
       await rm(backendFile(dir), { force: true });
       mine = await spawnBackend(options, dir);
@@ -692,6 +733,9 @@ async function stopOwn(dir: string, locksDir: string, given: WatchOptions): Prom
     if (seen !== 'busy' && seen !== 'stalled') return false;
     await terminate(dir, backend);
     await rm(dir, { recursive: true, force: true });
+    // a server that answered for a while, then hung: started again at once, it may hang again, in a loop (a stalled
+    // start took its whole time already, and is no loop)
+    if (seen === 'busy') await recordHung(dir);
     return true;
   }, { timeoutMs: LOCK_MS });
 }
@@ -744,6 +788,7 @@ export async function runningBackends(paths: AppPaths): Promise<RunningBackend[]
   const root = join(paths.dataDir, 'shared');
   const found: RunningBackend[] = [];
   for (const name of await readdir(root).catch(() => [] as string[])) {
+    if (name.endsWith('.hung.json')) continue;
     const [service, ...rest] = name.split('-');
     const agent = rest.join('-');
     if (!isSharedService(service as ServiceId) || !agent) continue;

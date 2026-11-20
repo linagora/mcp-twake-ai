@@ -644,6 +644,27 @@ describe('the watchdog of a shared server', () => {
     const watching = watchShared(sharedDir(paths, 'chat', 'claude-code'), paths.locksDir, { pid: frozen.pid, startedAt, idleMs: 60_000, intervalMs: 100, frozenMs: 1_000 });
     await Promise.race([watching, new Promise((resolve) => setTimeout(resolve, 10_000))]);
     expect(alive(frozen.pid)).toBe(false);
+    // remembered, so that the next start does not follow in a tight loop
+    const hung = JSON.parse(await readFile(`${sharedDir(paths, 'chat', 'claude-code')}.hung.json`, 'utf8')) as { stops: number[] };
+    expect(hung.stops).toHaveLength(1);
+  });
+
+  it('waits before it starts again a server that hung, and stops trying after three times', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const record = `${sharedDir(paths, 'chat', 'claude-code')}.hung.json`;
+    await mkdir(join(paths.dataDir, 'shared'), { recursive: true });
+    for (const [stops, said] of [
+      [[Date.now() - 5_000], /hung.*again in \d+ s/],
+      [[Date.now() - 10 * 60_000, Date.now() - 60_000], /hung.*again in \d+ s/],
+      [[Date.now() - 10 * 60_000, Date.now() - 8 * 60_000, Date.now() - 6 * 60_000], /hung 3 times/],
+    ] as const) {
+      await writeFile(record, JSON.stringify({ stops }));
+      await expect(enterSharedBackend(await backendOptions(paths))).rejects.toMatchObject({ code: 'unavailable', message: expect.stringMatching(said) });
+      expect(await access(join(sharedDir(paths, 'chat', 'claude-code'), 'backend.json')).then(() => true, () => false)).toBe(false);
+    }
+    // once the wait is over, it starts
+    await writeFile(record, JSON.stringify({ stops: [Date.now() - 60_000] }));
+    expect((await enterSharedBackend(await backendOptions(paths))).backend.pid).toBeGreaterThan(0);
   });
 
   it('never takes a hung process for its server without the start it was given', { timeout: 60_000 }, async () => {
