@@ -116,6 +116,8 @@ async function relay(first: { url: string; token: string }, options: { initializ
     nextServer: (server: { url: string; token: string }) => writeFile(nextFile, JSON.stringify({ url: server.url, token: server.token })),
     reconnects: async () => (await readFile(reconnects, 'utf8').catch(() => '')).split('\n').filter(Boolean).length,
     close: () => child.stdin.end(),
+    /** a signal the relay can catch: the agent that stops its server, or Ctrl-C */
+    signal: (signal: NodeJS.Signals) => child.kill(signal),
     exited,
     stderr: () => stderr,
   };
@@ -275,6 +277,19 @@ describe('the relay to a shared server', () => {
     await expect.poll(() => readFile(join(one.dir, 'wait'), 'utf8').catch(() => ''), { timeout: 10_000 }).toBe('cancelled');
     client.close();
     await client.exited;
+  });
+
+  it.skipIf(process.platform === 'win32')('ends its session when the agent stops it with a signal', { timeout: 60_000 }, async () => {
+    const one = await fake();
+    const leaving = await relay(one);
+    const staying = await relay(one);
+    await call(leaving, 2, 'whoami');
+    expect((await call(staying, 2, 'sessions')).sessions).toBe(2);
+    leaving.signal('SIGTERM');
+    await leaving.exited;
+    expect((await call(staying, 3, 'sessions')).sessions).toBe(1);
+    staying.close();
+    await staying.exited;
   });
 
   it('forgets a cancelled request', { timeout: 60_000 }, async () => {

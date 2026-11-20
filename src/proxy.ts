@@ -394,14 +394,25 @@ export async function proxyShared(options: ProxyOptions): Promise<number> {
   const stdio = new StdioServerTransport();
   const relay = new Relay(stdio, options);
   await stdio.start();
+  // an agent may stop its server with a signal instead of closing stdin: the session is ended all the same, so that
+  // the shared server does not keep it (it exits once it has none)
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+  let onSignal: (() => void) | undefined;
+  const signalled = new Promise<number>((resolve) => {
+    onSignal = () => resolve(0);
+    for (const signal of signals) process.on(signal, onSignal);
+  });
   const code = await Promise.race([
     new Promise<number>((resolve) => {
       process.stdin.once('end', () => resolve(0));
       process.stdin.once('close', () => resolve(0));
     }),
     relay.ended,
+    signalled,
   ]);
-  await relay.close();
+  for (const signal of signals) process.off(signal, onSignal!);
+  // the DELETE is best effort, and bounded: a server that does not answer must not keep the agent waiting
+  await Promise.race([relay.close(), new Promise((resolve) => setTimeout(resolve, 2_000).unref())]);
   // stdin is no longer read: a relay that ended while the agent still holds the pipe lets the process exit
   await stdio.close();
   return code;
