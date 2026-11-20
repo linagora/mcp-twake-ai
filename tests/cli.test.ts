@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { createServer as createTcpServer, type AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -14,8 +15,11 @@ import { tempPaths } from './helpers/tmp.js';
 import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
-import { fakeNpm } from './helpers/fake-mcp.js';
+import { fakeNpm, installFakeMcp } from './helpers/fake-mcp.js';
 import { prefixDir, serverDir } from '../src/installer.js';
+import { enterSharedChat, sharedChatFiles, stopSharedChat } from '../src/shared-chat.js';
+import { FAKE_HTTP_MCP } from './helpers/fake-http-mcp.js';
+import { sharedDeps } from './helpers/shared-chat-deps.js';
 import { shortcutPath } from '../src/self-install.js';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -569,6 +573,25 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toMatch(/✓ Twake Chat \(cursor\): @alice:example.com/);
   });
 
+  it("shows the agent's shared Chat server while it answers", { timeout: 30_000 }, async () => {
+    const { deps } = await readyForSetup();
+    deps.nodePath = process.execPath;
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
+    const device = (await loadConfig(deps.paths))!.chat!.cursor!.deviceId;
+    await installFakeMcp(deps.paths, 'chat', FAKE_HTTP_MCP, undefined, { twake: { sharedHttp: 1 } });
+    const server = await enterSharedChat('cursor', sharedDeps(deps.paths, { agent: 'cursor', device: () => device }));
+    try {
+      const io = captureIo();
+      expect(await main(['status', '--no-start'], io, deps)).toBe(0);
+      expect(io.out).toMatch(new RegExp(`shared server: pid ${server.pid}, up since \\S+, device ${device}`));
+    } finally {
+      await stopSharedChat('cursor', { paths: deps.paths });
+    }
+    const after = captureIo();
+    expect(await main(['status', '--no-start'], after, deps)).toBe(0);
+    expect(after.out).not.toContain('shared server');
+  });
+
   it('says what is wrong, and exits with 1', async () => {
     const { deps, cursor } = await readyForSetup();
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);
@@ -689,6 +712,34 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await main(['uninstall', '--yes', '--force'], captureIo(), deps)).toBe(0);
     expect(JSON.parse((await readText(cursor))!).mcpServers).toEqual({});
     expect(await loadConfig(deps.paths)).toBeUndefined();
+  });
+
+  it('keeps the Chat stores, --delete-chat-stores or not, while a shared Chat server does not stop', async () => {
+    const { deps } = await readyForSetup();
+    expect(await main(['login', '--chat', '--agent', 'hermes'], captureIo(), deps)).toBe(0);
+    const files = sharedChatFiles(deps.paths, 'hermes');
+    await mkdir(files.dir, { recursive: true, mode: 0o700 });
+    const stranger = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    // a port that takes connections and never answers: a server too busy to, or hung
+    const silent = await new Promise<{ port: number; close(): void }>((resolve) => {
+      const server = createTcpServer(() => {});
+      server.listen(0, '127.0.0.1', () => resolve({ port: (server.address() as AddressInfo).port, close: () => server.close() }));
+    });
+    try {
+      const state = { version: 1, pid: stranger.pid, url: `http://127.0.0.1:${silent.port}/mcp`, token: 'f'.repeat(64), userId: '@alice:example.com', deviceId: 'DEVICE1', serverVersion: '0.7.0', startedAt: '' };
+      await writeFile(files.state, JSON.stringify(state), { mode: 0o600 });
+      const io = captureIo();
+      expect(await main(['uninstall', '--yes', '--delete-chat-stores'], io, deps)).toBe(1);
+      expect(io.out).toContain(`pid ${stranger.pid}`);
+      expect(io.out).toContain(`Twake Chat stores kept in ${join(deps.paths.dataDir, 'chat')}`);
+      expect(await stat(files.state).then(() => true, () => false)).toBe(true);
+      // the rest is gone, and the process is alive: nothing was signalled
+      expect(await loadConfig(deps.paths)).toBeUndefined();
+      expect(() => process.kill(stranger.pid!, 0)).not.toThrow();
+    } finally {
+      stranger.kill('SIGKILL');
+      silent.close();
+    }
   });
 
   it('refuses to uninstall over a configuration it cannot read, unless --force', async () => {

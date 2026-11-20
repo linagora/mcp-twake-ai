@@ -2,8 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { saveConfig, type TwakeAiConfig } from '../src/config.js';
-import { installFakeMcp } from './helpers/fake-mcp.js';
+import type { AppPaths } from '../src/paths.js';
+import { sharedChatFiles, stopSharedChat } from '../src/shared-chat.js';
+import { FAKE_HTTP_MCP } from './helpers/fake-http-mcp.js';
+import { FAKE_MCP, installFakeMcp } from './helpers/fake-mcp.js';
 import { tempPaths } from './helpers/tmp.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -101,5 +105,124 @@ describe('mcp-twake-ai run', () => {
     const mcp = await launch(['space', '--agent', 'claude-code']);
     expect(await mcp.exited).toBe(1);
     expect(mcp.stderr()).toMatch(/^mcp-twake-ai: No Twake Space server was found/);
+  });
+});
+
+describe('mcp-twake-ai run chat, with a mcp-twake-chat that has the shared mode', () => {
+  const used: AppPaths[] = [];
+  afterEach(async () => {
+    for (const paths of used.splice(0)) await stopSharedChat('claude-code', { paths }).catch(() => 'none');
+  });
+
+  const chatConfig: TwakeAiConfig = { ...config, chat: { 'claude-code': { userId: '@jdoe:linagora.com', deviceId: 'DEVICEONE' } } };
+
+  async function setupChat(script = FAKE_HTTP_MCP, extra: Record<string, unknown> = { twake: { commandLine: 1, sharedHttp: 1 } }) {
+    const { root, paths } = await tempPaths();
+    used.push(paths);
+    await saveConfig(paths, chatConfig);
+    await installFakeMcp(paths, 'chat', script, undefined, extra);
+    return { root, paths };
+  }
+
+  /** `run chat --agent claude-code` in that folder, initialized */
+  async function client(root: string, env: Record<string, string> = {}) {
+    const child = spawn(process.execPath, ['--import', 'tsx', 'src/bin.ts', 'run', 'chat', '--agent', 'claude-code'], {
+      cwd: repoRoot,
+      env: { ...process.env, TWAKE_AI_HOME: root, LANG: 'en_US.UTF-8', ...env },
+    });
+    running.push(child);
+    const lines: any[] = [];
+    const waiting: ((message: any) => void)[] = [];
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      const message = JSON.parse(line) as unknown;
+      const resolve = waiting.shift();
+      if (resolve) resolve(message);
+      else lines.push(message);
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
+    const send = (message: object) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
+    const next = () => new Promise<any>((resolve) => (lines.length ? resolve(lines.shift()) : waiting.push(resolve)));
+    send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: { elicitation: {} }, clientInfo: { name: 'test', version: '1' } } });
+    const initialized = await next();
+    let id = 10;
+    return {
+      initialized,
+      send,
+      next,
+      whoami: async () => {
+        send({ id: ++id, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
+        return JSON.parse((await next()).result.content[0].text) as { pid: number; env: Record<string, string> };
+      },
+      close: () => child.stdin.end(),
+      exited,
+      stderr: () => stderr,
+    };
+  }
+
+  it('two clients of one agent share one Chat server', { timeout: 60_000 }, async () => {
+    const { root, paths } = await setupChat();
+    const [one, two] = await Promise.all([client(root), client(root)]);
+    const [a, b] = await Promise.all([one.whoami(), two.whoami()]);
+    expect(a.pid).toBe(b.pid);
+    expect(a.env).toMatchObject({ MCP_TRANSPORT: 'http', MCP_HTTP_HOST: '127.0.0.1', MCP_HTTP_PORT: '0', MCP_HTTP_EXIT_WHEN_IDLE_MS: '600000' });
+    expect(a.env.MCP_HTTP_STATE_FILE).toBe(sharedChatFiles(paths, 'claude-code').state);
+    expect(a.env.MATRIX_STORE_DIR).toMatch(/DEVICEONE$/);
+    // the token is drawn by the server: no variable carries it
+    const { token } = JSON.parse(await readFile(sharedChatFiles(paths, 'claude-code').state, 'utf8')) as { token: string };
+    expect(Object.values(a.env).some((value) => value.includes(token))).toBe(false);
+    one.close();
+    two.close();
+    expect(await one.exited).toBe(0);
+    expect(await two.exited).toBe(0);
+  });
+
+  it('a client exits when the agent closes stdin, the server stays for the other', { timeout: 60_000 }, async () => {
+    const { root } = await setupChat();
+    const one = await client(root);
+    const two = await client(root);
+    const before = await two.whoami();
+    one.close();
+    expect(await one.exited).toBe(0);
+    expect((await two.whoami()).pid).toBe(before.pid);
+    two.close();
+    await two.exited;
+  });
+
+  it('gives the server only the configuration mcp-twake-ai builds, whichever client starts it', { timeout: 60_000 }, async () => {
+    const { root } = await setupChat();
+    const one = await client(root, { MATRIX_STORE_DIR: '/elsewhere', USER_LANGUAGE: 'fr', MCP_HTTP_PORT: '4000' });
+    const { env } = await one.whoami();
+    expect(env.MATRIX_STORE_DIR).toMatch(/DEVICEONE$/);
+    expect(env.USER_LANGUAGE).toBe('en');
+    expect(env.MCP_HTTP_PORT).toBe('0');
+    expect(one.stderr()).toMatch(/ignores .*MATRIX_STORE_DIR/);
+    one.close();
+    await one.exited;
+  });
+
+  it('moves a connected client to the new device', { timeout: 60_000 }, async () => {
+    const { root, paths } = await setupChat();
+    const one = await client(root);
+    const before = await one.whoami();
+    expect(before.env.MATRIX_STORE_DIR).toMatch(/DEVICEONE$/);
+    // what login --chat does: the new device written first, then the server of the old one stopped by its route
+    await saveConfig(paths, { ...chatConfig, chat: { 'claude-code': { userId: '@jdoe:linagora.com', deviceId: 'DEVICETWO' } } });
+    expect(await stopSharedChat('claude-code', { paths })).toBe('stopped');
+    const after = await one.whoami();
+    expect(after.env.MATRIX_STORE_DIR).toMatch(/DEVICETWO$/);
+    expect(after.pid).not.toBe(before.pid);
+    one.close();
+    expect(await one.exited).toBe(0);
+  });
+
+  it('keeps the stdio child for a Chat without the shared mode', { timeout: 30_000 }, async () => {
+    const { root, paths } = await setupChat(FAKE_MCP, {});
+    const one = await client(root);
+    expect(one.initialized.result.serverInfo.name).toBe('fake');
+    one.close();
+    expect(await one.exited).toBe(0);
+    expect(await readFile(sharedChatFiles(paths, 'claude-code').state, 'utf8').catch(() => 'none')).toBe('none');
   });
 });

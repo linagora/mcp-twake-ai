@@ -187,6 +187,8 @@ mcp-twake-ai uninstall                                # shows what it would remo
 - `logout` revokes the session at the identity provider, removes "Twake AI" from the Drive connected devices, signs every Chat device out, then deletes the secrets and the cached tokens.
 - `uninstall --yes` removes the entries it wrote (`--force` for those changed by hand), signs out, and deletes the servers, the configuration, the cache and the journal. The Twake Chat stores hold the local index of your messages: they are kept unless you add `--delete-chat-stores`.
 
+**One Twake Chat server per agent.** A Matrix device has one end-to-end encryption store, which one process at a time may use. With mcp-twake-chat 0.7.0 or later, every client of an agent (two Claude Code windows, the Hermes gateway and its desktop, `mcp-twake-ai call chat`) shares one Chat server: the first client starts it, the next ones join it, and it stops on its own after 10 minutes without a client, or when `logout`, `uninstall` or `login --chat` stop it. It listens on `127.0.0.1` only, with a token of its own kept in `<data>/chat/<agent>/server.json` (its log is `server.log` next to it), and `status` shows it (`shared server: pid …, up since …, device …`). A client that is connected when `login --chat` gives the agent a new device moves to the new device at its next request. With an older mcp-twake-chat, each client starts its own server, as before.
+
 ### Any other agent: `export`
 
 ```bash

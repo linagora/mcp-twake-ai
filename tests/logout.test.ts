@@ -1,4 +1,7 @@
-import { readdir } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { createServer as createTcpServer, type AddressInfo } from 'node:net';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { saveConfig, loadConfig, type TwakeAiConfig } from '../src/config.js';
 import { COZY_KEYS, matrixGrant, matrixKey, OIDC_GRANT, OIDC_REFRESH_KEY } from '../src/grants.js';
@@ -12,6 +15,11 @@ import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeIdp, type FakeIdp } from './helpers/fake-idp.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { tempPaths } from './helpers/tmp.js';
+import type { AppPaths } from '../src/paths.js';
+import { enterSharedChat, sharedChatFiles, stopSharedChat } from '../src/shared-chat.js';
+import { FAKE_HTTP_MCP } from './helpers/fake-http-mcp.js';
+import { installFakeMcp } from './helpers/fake-mcp.js';
+import { sharedDeps } from './helpers/shared-chat-deps.js';
 
 let idp: FakeIdp;
 let cozy: FakeCozy;
@@ -124,3 +132,58 @@ describe('logout', () => {
     expect(synapse.loggedOut).toEqual([device.deviceId]);
   });
 });
+
+describe('logout and the shared Chat server', () => {
+  const started: AppPaths[] = [];
+  afterEach(async () => {
+    for (const paths of started.splice(0)) await stopSharedChat('hermes', { paths }).catch(() => 'none');
+  });
+
+  it("stops each agent's shared Chat server by its route, before its device is signed out", async () => {
+    const { paths, vault, config, device } = await signedIn();
+    started.push(paths);
+    await installFakeMcp(paths, 'chat', FAKE_HTTP_MCP, undefined, { twake: { sharedHttp: 1 } });
+    const server = await enterSharedChat('hermes', sharedDeps(paths, { agent: 'hermes', device: () => device.deviceId }));
+    const result = await logout({ paths, config, vault, http: {} });
+    expect(result.failed).toEqual([]);
+    expect(result.chatServersLeft).toEqual([]);
+    expect(result.done).toEqual(['Twake session revoked', 'Twake Drive access removed', 'Shared Twake Chat server of hermes stopped', 'Twake Chat device of hermes signed out']);
+    const files = sharedChatFiles(paths, 'hermes');
+    expect(await readFile(files.state, 'utf8').catch(() => 'gone')).toBe('gone');
+    await expect.poll(() => alive(server.pid), { timeout: 10_000 }).toBe(false);
+    expect(await readFile(join(files.dir, 'signals.log'), 'utf8').catch(() => 'none')).toBe('none');
+  }, 30_000);
+
+  it('says which server does not answer, by its pid, and still signs the device out', async () => {
+    const { paths, vault, config, device } = await signedIn();
+    const files = sharedChatFiles(paths, 'hermes');
+    await mkdir(files.dir, { recursive: true, mode: 0o700 });
+    const stranger = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    // a port that takes connections and never answers: a server too busy to, or hung
+    const silent = await new Promise<{ port: number; close(): void }>((resolve) => {
+      const server = createTcpServer(() => {});
+      server.listen(0, '127.0.0.1', () => resolve({ port: (server.address() as AddressInfo).port, close: () => server.close() }));
+    });
+    try {
+      const state = { version: 1, pid: stranger.pid, url: `http://127.0.0.1:${silent.port}/mcp`, token: 'f'.repeat(64), userId: '@alice:example.com', deviceId: device.deviceId, serverVersion: '0.7.0', startedAt: '' };
+      await writeFile(files.state, JSON.stringify(state), { mode: 0o600 });
+      const result = await logout({ paths, config, vault, http: {} });
+      expect(result.failed).toEqual([expect.stringMatching(new RegExp(`^Twake Chat \\(hermes\\): .*pid ${stranger.pid}\\b`))]);
+      expect(result.chatServersLeft).toEqual(['hermes']);
+      expect(synapse.loggedOut).toEqual([device.deviceId]);
+      expect(alive(stranger.pid!)).toBe(true);
+    } finally {
+      stranger.kill('SIGKILL');
+      silent.close();
+    }
+  });
+});
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}

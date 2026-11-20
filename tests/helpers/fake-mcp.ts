@@ -33,11 +33,18 @@ rl.on('close', () => process.exit(0));
 `;
 
 /** Puts a package that looks like the pinned MCP server of `service` in the private prefix. */
-export async function installFakeMcp(paths: AppPaths, service: ServiceId, script = FAKE_MCP, version = CATALOG[service].version): Promise<void> {
+export async function installFakeMcp(
+  paths: AppPaths,
+  service: ServiceId,
+  script = FAKE_MCP,
+  version = CATALOG[service].version,
+  /** more of package.json, such as { twake: { sharedHttp: 1 } } */
+  extra: Record<string, unknown> = {},
+): Promise<void> {
   const pkg = CATALOG[service];
   const dir = join(serverDir(paths, pkg.name), 'node_modules', pkg.name);
   await mkdir(join(dir, 'build'), { recursive: true });
-  await writeFile(join(dir, 'package.json'), JSON.stringify({ name: pkg.name, version, type: 'module', bin: { [pkg.name]: 'build/index.js' } }));
+  await writeFile(join(dir, 'package.json'), JSON.stringify({ name: pkg.name, version, type: 'module', bin: { [pkg.name]: 'build/index.js' }, ...extra }));
   await writeFile(join(dir, 'build', 'index.js'), script);
 }
 
