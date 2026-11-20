@@ -48,6 +48,8 @@ if (stateFile) {
       }
       if (holder && living) {
         process.stderr.write('the Matrix device store ' + store + ' is already used by process ' + holder + '\\n');
+        // FAKE_LOCK_EXIT_DELAY_MS: a loser slow to go (a busy machine), still holding nothing
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_LOCK_EXIT_DELAY_MS ?? 0));
         process.exit(75);
       }
       unlinkSync(lockFile);

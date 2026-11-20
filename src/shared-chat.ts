@@ -242,10 +242,9 @@ async function start(agent: string, files: ReturnType<typeof sharedChatFiles>, d
   let retryAt = 0;
   for (;;) {
     const { state } = await trustedState(files, accountOf(d));
-    if (state && state.deviceId === device && (state.pid === child.pid || exited === STORE_IN_USE) && (await answers(state))) {
-      // ours, or the one that won the store lock against ours
-      return state;
-    }
+    // ours, or the one that won the store lock against ours: answers() proved it holds the token of its state file, so
+    // its pid does not have to be our child's, nor our child to have gone first (a losing start exits 75 on its own)
+    if (state && state.deviceId === device && (await answers(state))) return state;
     if (exited !== undefined && exited !== STORE_IN_USE) {
       throw new TwakeAiError('unavailable', `The shared Twake Chat server for ${agent} stopped (${await lastLine(files.log)}). Its log: ${files.log}`);
     }

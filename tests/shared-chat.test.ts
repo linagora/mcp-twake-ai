@@ -142,6 +142,16 @@ describe('the shared Chat server of an agent', () => {
     expect((await readFile(files.log, 'utf8')).match(/already used by process/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('joins the winner as soon as it proves itself, while its own losing start is still going', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const winner = enterSharedChat(AGENT, sharedDeps(paths, { extra: { FAKE_SYNC_MS: '1500' } }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const started = Date.now();
+    const loser = await enterSharedChat(AGENT, sharedDeps(paths, { extra: { FAKE_LOCK_EXIT_DELAY_MS: '8000' } }));
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(loser.pid).toBe((await winner).pid);
+  });
+
   it('joins the server another client started', { timeout: 30_000 }, async () => {
     const { paths, files } = await setup();
     const first = await enterSharedChat(AGENT, sharedDeps(paths));
