@@ -139,7 +139,10 @@ describe('the shared Chat server of an agent', () => {
     expect(new Set(three.map((s) => s.pid)).size).toBe(1);
     // the store's lock is the one server's, the others went with 75
     expect(await lockPid(paths)).toBe(three[0].pid);
-    expect((await readFile(files.log, 'utf8')).match(/already used by process/g)?.length).toBeGreaterThanOrEqual(2);
+    // the losing starts go with 75 on their own, maybe after their client has joined the winner
+    const losers = async () => (await readFile(files.log, 'utf8')).match(/already used by process/g)?.length ?? 0;
+    for (let i = 0; i < 50 && (await losers()) < 2; i++) await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(await losers()).toBeGreaterThanOrEqual(2);
   });
 
   it('joins the winner as soon as it proves itself, while its own losing start is still going', { timeout: 30_000 }, async () => {
