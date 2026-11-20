@@ -688,6 +688,26 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(await stat(journalFile(deps.paths)).then(() => true, () => false)).toBe(false);
   });
 
+  it('keeps the folder and the Chat stores of a shared server it could not stop, and says so', { timeout: 60_000 }, async () => {
+    const { deps } = await readyForSetup();
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
+    const store = join(deps.paths.dataDir, 'chat', 'cursor', 'DEVICE1');
+    await mkdir(store, { recursive: true });
+    const shared = sharedDir(deps.paths, 'chat', 'cursor');
+    const busy = await fakeBackend(shared, 'busy');
+    try {
+      const io = captureIo();
+      expect(await main(['uninstall', '--yes', '--force', '--delete-chat-stores'], io, deps)).toBe(1);
+      expect(io.out).toContain(`Twake Chat shared server of cursor (pid ${busy.pid}) still runs`);
+      // deleted under it, the store of a running Matrix process would be lost half written
+      expect(await stat(store).then(() => true, () => false)).toBe(true);
+      expect(await stat(join(shared, 'backend.json')).then(() => true, () => false)).toBe(true);
+      expect(io.out).not.toContain('mcp-twake-ai is uninstalled');
+    } finally {
+      busy.child.kill('SIGKILL');
+    }
+  });
+
   it('keeps an entry changed by hand unless --force, and the Chat stores unless asked', async () => {
     const { deps, cursor } = await readyForSetup();
     expect(await main(['setup', '--agents', 'cursor', '--services', 'mail', '--yes'], captureIo(), deps)).toBe(0);

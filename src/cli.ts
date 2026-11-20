@@ -785,8 +785,15 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     const remaining = await loadConfig(d.paths);
     if (remaining) await saveConfig(d.paths, { ...remaining, agents: left });
   }
-  await removeFiles(d.paths, values['delete-chat-stores'] ?? false, keepConfig);
+  // a shared server that could not be stopped still runs on its Matrix store: its state and the stores stay, deleted
+  // under it the store would be lost half written, and nothing would be left to find and stop that process by
+  const stillRunning = await runningBackends(d.paths);
+  for (const { agent, backend } of stillRunning) {
+    io.stdout(`✗ Twake Chat shared server of ${agent} (pid ${backend.pid}) still runs: its folder and the Twake Chat stores are kept. Stop that process, then run uninstall again.\n`);
+  }
+  await removeFiles(d.paths, (values['delete-chat-stores'] ?? false) && stillRunning.length === 0, keepConfig, stillRunning.length > 0);
   await removeShortcut({ platform: d.platform, env: d.env, home: d.home });
+  if (stillRunning.length > 0) return 1;
   if (keepConfig) {
     io.stdout(`Some entries are still in place and recorded in ${d.paths.configFile}: run uninstall --yes --force to remove them, or remove them by hand.\n`);
     return 1;

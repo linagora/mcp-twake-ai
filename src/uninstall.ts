@@ -23,10 +23,12 @@ export async function uninstallPlan(config: TwakeAiConfig, adapters: Record<Agen
 /**
  * Removes the private prefix, the configuration, the secrets file, the cache and the journal; the Chat stores on request.
  * keepConfig: entries left in agents stay recorded, so that uninstall --force can still remove them.
+ * keepShared: a shared server still runs, and keeps its state and the locks it is stopped under.
  */
-export async function removeFiles(paths: AppPaths, deleteChatStores: boolean, keepConfig = false): Promise<string[]> {
+export async function removeFiles(paths: AppPaths, deleteChatStores: boolean, keepConfig = false, keepShared = false): Promise<string[]> {
   // only what mcp-twake-ai put there: the cache or state folder may be shared (XDG_CACHE_HOME = XDG_DATA_HOME, TWAKE_AI_HOME=$HOME)
-  const targets = [prefixDir(paths), ...(keepConfig ? [] : [paths.configFile]), paths.vaultFile, paths.tokensDir, journalFile(paths), `${journalFile(paths)}.1`, paths.locksDir, join(paths.dataDir, 'shared')];
+  const shared = keepShared ? [] : [paths.locksDir, join(paths.dataDir, 'shared')];
+  const targets = [prefixDir(paths), ...(keepConfig ? [] : [paths.configFile]), paths.vaultFile, paths.tokensDir, journalFile(paths), `${journalFile(paths)}.1`, ...shared];
   if (deleteChatStores) targets.push(join(paths.dataDir, 'chat'));
   for (const target of targets) await rm(target, { recursive: true, force: true });
   // then its own folders, once empty
