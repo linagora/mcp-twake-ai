@@ -311,20 +311,21 @@ async function tokenCommand(args: string[], io: Io, d: CliDeps): Promise<number>
 
 /** run <service> --agent <id>: what agent configurations start. stdout belongs to the MCP server. */
 /**
- * `__watch --shared <dir> --locks <dir> --pid <backend>`: the watchdog of one shared backend, started with it and
- * detached. It stops the server once no client has listed itself for a while — the case of a client killed with
- * SIGKILL, or of an agent that crashed, which would otherwise leave the Matrix process syncing until a reboot — and
- * leaves as soon as `backend.json` names another server.
+ * `__watch --shared <dir> --locks <dir> --pid <backend> --started <ms>`: the watchdog of one shared backend, started
+ * with it and detached. It stops the server once no client has listed itself for a while — the case of a client killed
+ * with SIGKILL, or of an agent that crashed, which would otherwise leave the Matrix process syncing until a reboot — or
+ * once it has hung for minutes, and leaves as soon as `backend.json` names another server.
  */
 async function watchCommand(args: string[]): Promise<number> {
   const { values } = usageErrors(() =>
-    parseArgs({ args, options: { shared: { type: 'string' }, locks: { type: 'string' }, pid: { type: 'string' }, idle: { type: 'string' } }, strict: true }),
+    parseArgs({ args, options: { shared: { type: 'string' }, locks: { type: 'string' }, pid: { type: 'string' }, started: { type: 'string' }, idle: { type: 'string' } }, strict: true }),
   );
   if (!values.shared || !values.locks || !values.pid) throw new TwakeAiError('usage', USAGE);
   const pid = Number(values.pid);
+  const startedAt = values.started === undefined ? undefined : Number(values.started);
   const idle = values.idle === undefined ? undefined : Number(values.idle);
-  if (!Number.isInteger(pid) || pid <= 0 || (idle !== undefined && !(idle > 0))) throw new TwakeAiError('usage', USAGE);
-  await watchShared(values.shared, values.locks, { pid, idleMs: idle });
+  if (!Number.isInteger(pid) || pid <= 0 || (startedAt !== undefined && !Number.isInteger(startedAt)) || (idle !== undefined && !(idle > 0))) throw new TwakeAiError('usage', USAGE);
+  await watchShared(values.shared, values.locks, { pid, startedAt, idleMs: idle });
   return 0;
 }
 

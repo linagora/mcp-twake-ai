@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { access, mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
+import { uptime } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -517,11 +518,27 @@ describe('the watchdog of a shared server', () => {
   it('stops its server once it has stopped answering for good', { timeout: 30_000 }, async () => {
     const { paths } = await setup();
     // the port takes connections, and nothing ever answers: a hung event loop, which every client waits on
-    const frozen = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'busy');
+    const startedAt = Date.now() - 1_000;
+    const frozen = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'busy', { startedAt, readyMs: 500 });
     bystanders.push(frozen.child);
-    const watching = watchShared(sharedDir(paths, 'chat', 'claude-code'), paths.locksDir, { pid: frozen.pid, idleMs: 60_000, intervalMs: 100, frozenMs: 1_000 });
+    const watching = watchShared(sharedDir(paths, 'chat', 'claude-code'), paths.locksDir, { pid: frozen.pid, startedAt, idleMs: 60_000, intervalMs: 100, frozenMs: 1_000 });
     await Promise.race([watching, new Promise((resolve) => setTimeout(resolve, 10_000))]);
     expect(alive(frozen.pid)).toBe(false);
+  });
+
+  it('never takes a hung process for its server without the start it was given', { timeout: 60_000 }, async () => {
+    const { paths } = await setup();
+    const dir = sharedDir(paths, 'chat', 'claude-code');
+    // its pid, and a port that takes connections and answers none: but no start of its own, or another one
+    for (const start of [{}, { startedAt: Date.now() - 1_000, readyMs: 500 }]) {
+      const stranger = await fakeBackend(dir, 'busy', start);
+      bystanders.push(stranger.child);
+      const watching = watchShared(dir, paths.locksDir, { pid: stranger.pid, startedAt: Date.now() - 60_000, idleMs: 60_000, intervalMs: 100, frozenMs: 500 });
+      await Promise.race([watching, new Promise((resolve) => setTimeout(resolve, 7_000))]);
+      expect(alive(stranger.pid), JSON.stringify(start)).toBe(true);
+      stranger.child.kill('SIGKILL');
+      await watching;
+    }
   });
 
   it('leaves alone a server started after its own one', { timeout: 30_000 }, async () => {
@@ -576,6 +593,29 @@ describe('a shared service, while its server starts', () => {
     bystanders.push(starting.child);
     expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
     await expect.poll(() => alive(starting.pid), { timeout: 10_000 }).toBe(false);
+  });
+
+  it('never stops a process whose start is not proven ours, wherever its backend.json comes from', { timeout: 60_000 }, async () => {
+    const { paths } = await setup();
+    const dir = sharedDir(paths, 'chat', 'claude-code');
+    const cases = [
+      // a bare pid: no start recorded, nothing listens
+      {},
+      // a start recorded, but with another token than the one next to it
+      { startedAt: Date.now(), readyMs: 1_000, tokenHash: 'not the hash of that token' },
+      // a start recorded before this computer booted: whatever the file says, that pid is someone else's now
+      { startedAt: Date.now() - uptime() * 1000 - 60 * 60_000, readyMs: (uptime() + 2 * 60 * 60) * 1000 },
+    ];
+    for (const start of cases) {
+      const stranger = await fakeBackend(dir, 'mcp', { listenAfterMs: null, ...start });
+      bystanders.push(stranger.child);
+      // a client starting, logout and uninstall: each looks at it, none stops it
+      await enterSharedBackend({ ...(await backendOptions(paths)), busyMs: 500 }).catch(() => undefined);
+      await stopShared(paths, 'chat', 'claude-code', { busyMs: 500 }).catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(alive(stranger.pid), JSON.stringify(start)).toBe(true);
+      for (const { service, agent } of await runningBackends(paths)) await stopShared(paths, service, agent).catch(() => false);
+    }
   });
 
   it('takes a start that ran out of time long ago for a stranger', { timeout: 30_000 }, async () => {

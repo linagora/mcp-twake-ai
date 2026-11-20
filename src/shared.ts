@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, open, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { connect, createServer } from 'node:net';
+import { uptime } from 'node:os';
 import { join } from 'node:path';
 import type { ServiceId } from './broker.js';
 import { CATALOG } from './catalog.js';
@@ -40,6 +41,8 @@ export interface SharedBackend {
    */
   startedAt?: number;
   readyMs?: number;
+  /** the fingerprint of the token that start wrote next to it: what ties this record to that token file */
+  tokenHash?: string;
 }
 
 /** What a client of a backend needs: where it answers, and the token that proves it is allowed to talk to it. */
@@ -67,7 +70,10 @@ export async function readBackend(dir: string): Promise<SharedBackend | undefine
   try {
     const state = JSON.parse(await readFile(backendFile(dir), 'utf8')) as Partial<SharedBackend>;
     if (typeof state.pid !== 'number' || typeof state.port !== 'number') return undefined;
-    const start = typeof state.startedAt === 'number' && typeof state.readyMs === 'number' ? { startedAt: state.startedAt, readyMs: state.readyMs } : {};
+    const start =
+      typeof state.startedAt === 'number' && typeof state.readyMs === 'number' && typeof state.tokenHash === 'string'
+        ? { startedAt: state.startedAt, readyMs: state.readyMs, tokenHash: state.tokenHash }
+        : {};
     return { pid: state.pid, port: state.port, ...start };
   } catch {
     return undefined;
@@ -83,9 +89,28 @@ export async function readToken(dir: string): Promise<string | undefined> {
   }
 }
 
+/** When this computer booted: a start recorded before it is a pid of another life of the system. */
+function bootedAt(): number {
+  // a little slack: the clock and the uptime are not read at the same instant
+  return Date.now() - uptime() * 1000 - 5_000;
+}
+
 /** True while a backend may still be in its sign-in and first sync: the time its start was given has not run out. */
 function starting(backend: SharedBackend): boolean {
-  return backend.startedAt !== undefined && backend.readyMs !== undefined && Date.now() < backend.startedAt + backend.readyMs;
+  return backend.startedAt !== undefined && backend.readyMs !== undefined && backend.startedAt >= bootedAt() && Date.now() < backend.startedAt + backend.readyMs;
+}
+
+const fingerprint = (token: string) => createHash('sha256').update(token).digest('hex');
+
+/**
+ * The proof that a process that does not answer is the one a start of ours spawned — what a kill needs when no ping can
+ * give it: its pid lives, its start was recorded in this boot of the computer, and the token file next to the record
+ * is the one that start wrote. A bare pid from a file is never enough.
+ */
+async function provenStart(dir: string, backend: SharedBackend): Promise<boolean> {
+  if (backend.startedAt === undefined || backend.tokenHash === undefined || backend.startedAt < bootedAt() || !alive(backend.pid)) return false;
+  const token = await readToken(dir);
+  return token !== undefined && fingerprint(token) === backend.tokenHash;
 }
 
 /** True while the process of that pid exists (a zombie counts as gone only once reaped: the backend is detached). */
@@ -186,7 +211,7 @@ async function settleBackend(dir: string, backend: SharedBackend, busyMs: number
   const deadline = Math.max(Date.now() + busyMs, wasStarting ? backend.startedAt! + backend.readyMs! : 0);
   for (;;) {
     const state = await probeBackend(dir, backend);
-    if (state === 'foreign' && wasStarting && alive(backend.pid) && (await connects(backend.port)) === 'refused') return 'stalled';
+    if (state === 'foreign' && wasStarting && (await connects(backend.port)) === 'refused' && (await provenStart(dir, backend))) return 'stalled';
     if (state !== 'unknown' || Date.now() >= deadline) return state;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -280,7 +305,7 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
   child.unref();
   const readyMs = options.readyMs ?? READY_MS;
   // when it started, so that another client tells this start from a stranger even if this one is killed meanwhile
-  const backend: SharedBackend = { pid: child.pid ?? 0, port, startedAt: Date.now(), readyMs };
+  const backend: SharedBackend = { pid: child.pid ?? 0, port, startedAt: Date.now(), readyMs, tokenHash: fingerprint(token) };
   await writePrivateFile(backendFile(dir), `${JSON.stringify(backend)}\n`);
   // the watchdog from the start: a client killed during the sign-in must not leave a server nobody ever stops
   await watchBackend(options, dir, backend);
@@ -293,7 +318,9 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   const reason = await lastLogLine(dir);
-  await stopBackend(dir, { trusted: true }).catch(() => {});
+  // the process this one spawned, through its own handle: no pid read back from a file
+  await terminate(dir, backend, child).catch(() => {});
+  await forget(dir);
   throw new TwakeAiError(
     'unavailable',
     // the server's stderr is all there is to read: `run` in a terminal is a proxy, and would show nothing more
@@ -309,7 +336,8 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
 async function watchBackend(options: SharedBackendOptions, dir: string, backend: SharedBackend): Promise<void> {
   try {
     const idle = options.idleMs === undefined ? [] : ['--idle', String(options.idleMs)];
-    const child = spawn(options.nodePath, [options.cliPath, '__watch', '--shared', dir, '--locks', options.paths.locksDir, '--pid', String(backend.pid), ...idle], {
+    const given = ['--pid', String(backend.pid), '--started', String(backend.startedAt)];
+    const child = spawn(options.nodePath, [options.cliPath, '__watch', '--shared', dir, '--locks', options.paths.locksDir, ...given, ...idle], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -324,6 +352,8 @@ async function watchBackend(options: SharedBackendOptions, dir: string, backend:
 export interface WatchOptions {
   /** the backend this watchdog was started with: the one after it, started by another client, has a watchdog of its own */
   pid: number;
+  /** when that backend was started, as the start recorded it: with `pid`, what proves a hung server is that one */
+  startedAt?: number;
   /** how long a backend may have no client before it is stopped: a client that is still starting has not registered yet */
   idleMs?: number;
   /** how often the clients are looked at */
@@ -353,10 +383,12 @@ export async function watchShared(shared: string, locksDir: string, options: Wat
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     const backend = await readBackend(shared);
     if (!backend || backend.pid !== options.pid || !alive(backend.pid)) return;
-    // its own server, handed by the start (not read from a file a reboot left), that takes connections and answers none
-    if ((await probeBackend(shared, backend)) === 'unknown' && !starting(backend)) {
+    // its own server — the pid and start time the start handed it, still recorded with that start's token — that takes
+    // connections and answers none
+    const own = options.startedAt !== undefined && backend.startedAt === options.startedAt && !starting(backend);
+    if (own && (await probeBackend(shared, backend)) === 'unknown') {
       frozenSince ??= Date.now();
-      if (Date.now() - frozenSince >= (options.frozenMs ?? FROZEN_MS) && (await stopFrozen(shared, locksDir, options.pid).catch(() => false))) return;
+      if (Date.now() - frozenSince >= (options.frozenMs ?? FROZEN_MS) && (await stopFrozen(shared, locksDir, options).catch(() => false))) return;
     } else {
       frozenSince = undefined;
     }
@@ -410,33 +442,46 @@ export async function endSharedSession(backend: SharedBackend, token: string, se
   await answer?.body?.cancel().catch(() => {});
 }
 
-async function stopBackend(dir: string, options: { trusted?: boolean; busyMs?: number } = {}): Promise<void> {
+/**
+ * Stops the backend of that folder if it is proven ours — it answers our ping with the token of its start, or it is a
+ * start that ran out of time and `provenStart` vouches for it — then forgets its state. A stranger is only forgotten.
+ */
+async function stopBackend(dir: string, options: { busyMs?: number } = {}): Promise<void> {
   const backend = await readBackend(dir);
-  const state = !backend || !alive(backend.pid) ? 'foreign' : options.trusted ? 'ours' : await settleBackend(dir, backend, options.busyMs ?? BUSY_MS);
+  const state = !backend || !alive(backend.pid) ? 'foreign' : await settleBackend(dir, backend, options.busyMs ?? BUSY_MS);
   // a server that may be ours keeps its state: forgotten, it would run on with the Matrix device and nothing to stop it
   if (state === 'unknown') throw busyError(dir, backend!);
-  if (backend && (state === 'ours' || state === 'stalled')) {
-    // close the sessions first: every client's stream ends, and the Matrix client sees its clients go before it closes
-    const token = await readToken(dir);
-    if (token) for (const session of await recordedSessions(dir)) await endSharedSession(backend, token, session);
-    // Windows has no signal that asks a process to close: it is terminated, unless it leaves once its sessions are gone
-    if (process.platform === 'win32') await waitForExit(backend.pid, 2_000);
+  if (backend && (state === 'ours' || state === 'stalled')) await terminate(dir, backend);
+  await forget(dir);
+}
+
+/** Forgets the state of a backend that is gone, or was never ours. */
+async function forget(dir: string): Promise<void> {
+  await rm(backendFile(dir), { force: true });
+  await rm(clientsDir(dir), { recursive: true, force: true });
+}
+
+/**
+ * Stops a backend whose ownership the caller has proven: the process it spawned (`child`, its own handle), or a pid it
+ * has just confirmed. Never called with a bare pid read from a file.
+ */
+async function terminate(dir: string, backend: SharedBackend, child?: ChildProcess): Promise<void> {
+  const signal = (name: NodeJS.Signals) => {
     try {
-      process.kill(backend.pid, 'SIGTERM');
+      if (child) child.kill(name);
+      else process.kill(backend.pid, name);
     } catch {
       /* already gone */
     }
-    // it closes its Matrix session and its store on SIGTERM: give it a moment, without waiting for a hung one
-    if (!(await waitForExit(backend.pid, 5_000))) {
-      try {
-        process.kill(backend.pid, 'SIGKILL');
-      } catch {
-        /* already gone */
-      }
-    }
-  }
-  await rm(backendFile(dir), { force: true });
-  await rm(clientsDir(dir), { recursive: true, force: true });
+  };
+  // close the sessions first: every client's stream ends, and the Matrix client sees its clients go before it closes
+  const token = await readToken(dir);
+  if (token) for (const session of await recordedSessions(dir)) await endSharedSession(backend, token, session);
+  // Windows has no signal that asks a process to close: it is terminated, unless it leaves once its sessions are gone
+  if (process.platform === 'win32') await waitForExit(backend.pid, 2_000);
+  signal('SIGTERM');
+  // it closes its Matrix session and its store on SIGTERM: give it a moment, without waiting for a hung one
+  if (!(await waitForExit(backend.pid, 5_000))) signal('SIGKILL');
 }
 
 async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
@@ -463,7 +508,11 @@ export async function enterSharedBackend(options: SharedBackendOptions): Promise
     const known = state ? await settleBackend(dir, state, options.busyMs ?? BUSY_MS) : 'foreign';
     // a second server on the same store is what this whole folder prevents: better no Chat for now than two
     if (state && known === 'unknown') throw busyError(dir, state);
-    if (known === 'stalled') await stopBackend(dir, { trusted: true });
+    // proven by settleBackend: its start was recorded in this boot, with the token file next to it
+    if (state && known === 'stalled') {
+      await terminate(dir, state);
+      await forget(dir);
+    }
     let backend = known === 'ours' ? state : undefined;
     if (!backend) {
       // a backend that was killed, or whose port was taken meanwhile: its state is worthless
@@ -542,11 +591,16 @@ export async function leaveSharedClient(paths: AppPaths, service: ServiceId, age
   await rm(join(clientsDir(sharedDir(paths, service, agent)), String(process.pid)), { force: true });
 }
 
-/** Stops a hung server under the lock of its pair, if `backend.json` still names the one the watchdog was given. */
-async function stopFrozen(dir: string, locksDir: string, pid: number): Promise<boolean> {
+/**
+ * Stops a hung server under the lock of its pair, once proven to be the one the watchdog was given: same pid, same start
+ * time, the token file of that start next to it, recorded in this boot — and still answering nothing.
+ */
+async function stopFrozen(dir: string, locksDir: string, given: WatchOptions): Promise<boolean> {
   return withLock(locksDir, sharedLock(dir), async () => {
-    if ((await readBackend(dir))?.pid !== pid) return false;
-    await stopBackend(dir, { trusted: true });
+    const backend = await readBackend(dir);
+    if (!backend || backend.pid !== given.pid || backend.startedAt !== given.startedAt || !(await provenStart(dir, backend))) return false;
+    if ((await probeBackend(dir, backend)) === 'foreign') return false;
+    await terminate(dir, backend);
     await rm(dir, { recursive: true, force: true });
     return true;
   }, { timeoutMs: LOCK_MS });

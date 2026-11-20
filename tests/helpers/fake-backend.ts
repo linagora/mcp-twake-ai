@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -17,6 +18,8 @@ export interface FakeBackendOptions {
   /** what `backend.json` says of the start: when it began, and how long it was given to answer */
   startedAt?: number;
   readyMs?: number;
+  /** the fingerprint of the token that start wrote: the token's own by default, as `startBackend` records it */
+  tokenHash?: string;
 }
 
 const SCRIPT = `const http = require('node:http');
@@ -64,7 +67,8 @@ export async function fakeBackend(dir: string, mode: FakeBackendMode, options: F
   const child = spawn(process.execPath, ['-e', SCRIPT, mode, token, String(await freePort()), after], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   const port = await new Promise<number>((resolve) => createInterface({ input: child.stdout! }).once('line', (line) => resolve(Number(line))));
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  const start = options.startedAt === undefined ? {} : { startedAt: options.startedAt, readyMs: options.readyMs };
+  const tokenHash = options.tokenHash ?? createHash('sha256').update(token).digest('hex');
+  const start = options.startedAt === undefined ? {} : { startedAt: options.startedAt, readyMs: options.readyMs, tokenHash };
   await writeFile(join(dir, 'backend.json'), JSON.stringify({ pid: child.pid, port, ...start }));
   await writeFile(join(dir, 'token'), `${token}\n`);
   return { child, pid: child.pid!, port };
