@@ -114,6 +114,8 @@ More to try:
 - "Which tasks are due this week in the Website project?"
 - "Post the meeting notes in the #team room."
 
+`setup` also installs the `twake-batch-approval` skill (in `~/.claude/skills/`, and in Hermes' `skills/` folder): before a series of writes (several tasks, uploads, drafts…), the agent proposes one approval for the exact list (`approve_batch`), then makes each call without another question; anything not in the list asks as usual. `uninstall` removes it, unless you changed it.
+
 ## Commands
 
 ### Setup without questions
@@ -193,7 +195,7 @@ mcp-twake-ai export --agent cursor --services mail,chat --out ./cursor-config
 mcp-twake-ai export --agent zed --raw                   # the servers and their full environment
 ```
 
-`export` installs the pinned servers into mcp-twake-ai's private folder and writes `mcpServers.json` (Claude Desktop, Cursor, Windsurf, Cline, Gemini CLI…), `vscode-mcp.json`, `hermes.yaml`, `codex.toml`, `claude-code.sh` and one `<service>.env` per service, with a README saying where each goes. No file holds a secret.
+`export` installs the pinned servers into mcp-twake-ai's private folder and writes `mcpServers.json` (Claude Desktop, Cursor, Windsurf, Cline, Gemini CLI…), `vscode-mcp.json`, `hermes.yaml`, `codex.toml`, `claude-code.sh`, one `<service>.env` per service and the `skills/twake-batch-approval/` skill, with a README saying where each goes. No file holds a secret.
 
 ### Tokens for your own MCP configuration
 

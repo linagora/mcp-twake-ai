@@ -22,6 +22,9 @@ export const claudeDesktopConfig = (p: Place) => pathOf(p).join(appConfigDir(p, 
 /** Claude Code keeps its user-scope servers in .claude.json, in CLAUDE_CONFIG_DIR or the home folder. */
 export const claudeCodeState = (p: Place) => pathOf(p).join(p.env.CLAUDE_CONFIG_DIR || p.home, '.claude.json');
 
+/** Claude Code's personal skills: skills/ of CLAUDE_CONFIG_DIR, or of ~/.claude. */
+export const claudeCodeSkills = (p: Place) => pathOf(p).join(p.env.CLAUDE_CONFIG_DIR || pathOf(p).join(p.home, '.claude'), 'skills');
+
 export const cursorConfig = (p: Place) => pathOf(p).join(p.home, '.cursor', 'mcp.json');
 
 /** The default profile's mcp.json; VSCODE_APPDATA moves the whole user data folder. */

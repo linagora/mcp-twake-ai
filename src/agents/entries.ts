@@ -30,9 +30,12 @@ export function fingerprint(entry: Entry): string {
   return createHash('sha256').update(JSON.stringify(canonical(normalizeEntry(entry)))).digest('hex').slice(0, 16);
 }
 
-/** The entries one agent should have: each service through the launcher. */
+/** The entries one agent should have: each service through the launcher, and the skills of an agent that reads them. */
 export function wantedEntries(adapter: AgentAdapter, services: ServiceId[], ctx: CatalogContext, env: Record<string, string>): Record<string, Entry> {
-  return Object.fromEntries(services.map((service) => [adapter.entryName(service), adapter.shape(launcherEntry(service, adapter.id, ctx, env))]));
+  return {
+    ...Object.fromEntries(services.map((service) => [adapter.entryName(service), adapter.shape(launcherEntry(service, adapter.id, ctx, env))])),
+    ...(adapter.skills ?? {}),
+  };
 }
 
 export type ActionKind = 'add' | 'update' | 'keep' | 'remove' | 'forget' | 'replace-foreign' | 'replace-modified' | 'remove-modified';
