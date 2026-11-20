@@ -1,0 +1,2 @@
+# The shipped skill keeps LF line endings on every checkout (Windows included): agents read its front matter as is.
+skills/** text eol=lf
