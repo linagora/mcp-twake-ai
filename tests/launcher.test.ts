@@ -202,6 +202,21 @@ describe('mcp-twake-ai run chat, with a mcp-twake-chat that has the shared mode'
     await one.exited;
   });
 
+  it('moves a connected client to the new device', { timeout: 60_000 }, async () => {
+    const { root, paths } = await setupChat();
+    const one = await client(root);
+    const before = await one.whoami();
+    expect(before.env.MATRIX_STORE_DIR).toMatch(/DEVICEONE$/);
+    // what login --chat does: the new device written first, then the server of the old one stopped by its route
+    await saveConfig(paths, { ...chatConfig, chat: { 'claude-code': { userId: '@jdoe:linagora.com', deviceId: 'DEVICETWO' } } });
+    expect(await stopSharedChat('claude-code', { paths })).toBe('stopped');
+    const after = await one.whoami();
+    expect(after.env.MATRIX_STORE_DIR).toMatch(/DEVICETWO$/);
+    expect(after.pid).not.toBe(before.pid);
+    one.close();
+    expect(await one.exited).toBe(0);
+  });
+
   it('keeps the stdio child for a Chat without the shared mode', { timeout: 30_000 }, async () => {
     const { root, paths } = await setupChat(FAKE_MCP, {});
     const one = await client(root);

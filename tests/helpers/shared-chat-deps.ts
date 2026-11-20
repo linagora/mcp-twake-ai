@@ -7,9 +7,10 @@ export const AGENT = 'claude-code';
 /** The environment of the shared mode as `run chat` builds it, for the device of the moment, with the store under it. */
 export function sharedDeps(
   paths: AppPaths,
-  options: { device?: () => string; extra?: Record<string, string>; readyMs?: number; stderr?: string[] } = {},
+  options: { agent?: string; device?: () => string; extra?: Record<string, string>; readyMs?: number; stderr?: string[] } = {},
 ): SharedChatDeps {
-  const files = sharedChatFiles(paths, AGENT);
+  const agent = options.agent ?? AGENT;
+  const files = sharedChatFiles(paths, agent);
   const device = () => options.device?.() ?? 'DEVICEONE';
   return {
     paths,
@@ -18,7 +19,7 @@ export function sharedDeps(
     buildEnv: async () => ({
       ...(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== undefined)) as Record<string, string>),
       MATRIX_USER_ID: '@jdoe:linagora.com',
-      MATRIX_STORE_DIR: join(paths.dataDir, 'chat', AGENT, device()),
+      MATRIX_STORE_DIR: join(paths.dataDir, 'chat', agent, device()),
       MCP_TRANSPORT: 'http',
       MCP_HTTP_HOST: '127.0.0.1',
       MCP_HTTP_PORT: '0',

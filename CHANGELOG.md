@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- One Twake Chat server per agent, run by mcp-twake-chat 0.7.0 (its shared HTTP mode): every client of an agent joins the server the first one started (`run chat` relays its stdio to it), so two Claude Code windows, the Hermes gateway and `mcp-twake-ai call chat` use Chat at the same time on one device. The server stops after 10 minutes without a client, and `logout`, `uninstall` and `login --chat` stop it by its own route; mcp-twake-ai never stops a process by its pid. The token goes only to a server that proves it holds it, and `server.json` is used only when this account can trust it. `login --chat` writes the new device first, then stops the server, then signs the old device out (and puts everything back when the server does not stop). `status` shows the shared server. The stdio↔HTTP relay comes from #25 by guimard. Fixes #24.
+
 - `setup` installs the `twake-batch-approval` skill for Claude Code (`~/.claude/skills/`) and Hermes (its `skills/` folder): before a series of writes, the agent proposes one approval for the exact list with the servers' `approve_batch`. The skill is an entry like the servers' (a hand-changed `SKILL.md` is left alone without `--force`, `uninstall` removes it), and `export` includes it.
 - `mcp-twake-ai call <service> <tool>` and `mcp-twake-ai tools <service>` run the command line of the installed Twake.ai server with your sign-in, its server started as agents start it (`run <service> --agent cli`, so Chat goes through its shared server). `mcp-twake-ai allow-unattended <name>` lets a cron write with `--yes --as <name>`; `status` lists the allowed names and `logout` forgets them. The journal never keeps the arguments of a call.
 

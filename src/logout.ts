@@ -9,6 +9,7 @@ import { logoutDevice } from './matrix.js';
 import type { OidcHttp } from './oidc.js';
 import { revokeToken } from './oidc.js';
 import type { AppPaths } from './paths.js';
+import { stopSharedChat } from './shared-chat.js';
 import type { Vault } from './vault.js';
 
 export interface LogoutDeps {
@@ -19,13 +20,15 @@ export interface LogoutDeps {
 }
 
 /**
- * Revokes the Twake session, removes the Drive client, signs every Chat device out, then forgets the secrets and the
- * cached tokens (spec §7.3). Every step is tried even when another one fails.
+ * Revokes the Twake session, removes the Drive client, stops each agent's shared Chat server then signs its device
+ * out, then forgets the secrets and the cached tokens (spec §7.3, shared-chat §3.3). Every step is tried even when
+ * another one fails. chatServersLeft: the agents whose shared Chat server did not stop (their stores must stay).
  */
-export async function logout(d: LogoutDeps): Promise<{ done: string[]; failed: string[] }> {
+export async function logout(d: LogoutDeps): Promise<{ done: string[]; failed: string[]; chatServersLeft: string[] }> {
   const { config, vault, http } = d;
   const done: string[] = [];
   const failed: string[] = [];
+  const chatServersLeft: string[] = [];
   const attempt = async (label: string, what: string, step: () => Promise<void>) => {
     try {
       await step();
@@ -59,6 +62,13 @@ export async function logout(d: LogoutDeps): Promise<{ done: string[]; failed: s
     await deleteCachedToken(d.paths, COZY_GRANT);
   });
   for (const agent of Object.keys(config.chat ?? {})) {
+    // first the server: it holds the device's store and session, and would go on using them
+    try {
+      if ((await stopSharedChat(agent, { paths: d.paths })) === 'stopped') done.push(`Shared Twake Chat server of ${agent} stopped`);
+    } catch (error) {
+      chatServersLeft.push(agent);
+      failed.push(`Twake Chat (${agent}): ${describeError(error)}`);
+    }
     await underLock(matrixGrant(agent), `Twake Chat (${agent})`, async () => {
       // the broker caches each renewed access token; the one kept at login is stale after a few minutes
       const cached = await readCachedToken(d.paths, matrixGrant(agent));
@@ -71,5 +81,5 @@ export async function logout(d: LogoutDeps): Promise<{ done: string[]; failed: s
   await rm(d.paths.tokensDir, { recursive: true, force: true });
   const { drive: _drive, chat: _chat, ...rest } = config;
   await saveConfig(d.paths, rest);
-  return { done, failed };
+  return { done, failed, chatServersLeft };
 }

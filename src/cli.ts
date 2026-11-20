@@ -22,7 +22,7 @@ import { createInterface } from 'node:readline/promises';
 import { checkAgentId, OIDC_GRANT, OIDC_REFRESH_KEY } from './grants.js';
 import { revokeToken } from './oidc.js';
 import { deleteCachedToken } from './token-cache.js';
-import { rm, stat } from 'node:fs/promises';
+import { readdir, rm, stat } from 'node:fs/promises';
 import { loginChat } from './login-chat.js';
 import { loginDrive } from './login-drive.js';
 import { LOOPBACK_PORTS } from './loopback.js';
@@ -32,6 +32,7 @@ import { needsConsent, planEntries, wantedEntries, type ActionKind, type EntryAc
 import { applyAgent, createAdapters, detectAgents, recordOwned } from './agents/index.js';
 import { AGENT_IDS, isAgentId, type AgentAdapter, type AgentId } from './agents/types.js';
 import { runService } from './launcher.js';
+import { sharedChatStatus, stopSharedChat } from './shared-chat.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
 import { ensureInstalled, prefixDir, type Runner } from './installer.js';
 import { join, posix, resolve as resolvePath, win32 } from 'node:path';
@@ -756,6 +757,8 @@ async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number
       const chat = await checkChat(broker, name);
       healthy &&= chat.ok;
       io.stdout(`  ${mark(chat)} Twake Chat (${name}): ${chat.detail}\n`);
+      const shared = await sharedChatStatus(name, { paths: d.paths });
+      if (shared) io.stdout(`    shared server: pid ${shared.pid}, up since ${shared.startedAt ?? '?'}, device ${shared.deviceId}\n`);
     }
   }
   return healthy ? 0 : 1;
@@ -813,6 +816,8 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   // the entries an agent still has (skipped, or its write failed) stay recorded
   const left: Record<string, { entries: Record<string, string> }> = {};
   let revocationFailed = false;
+  // a shared Chat server that did not stop still uses its store: the stores stay, whatever was asked
+  const chatServersLeft: string[] = [];
   for (const { adapter, owned, actions } of plans) {
     const result = await applyAgent(adapter, actions, owned, () => force);
     if (result.status === 'failed') {
@@ -828,7 +833,8 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   }
   if (config) {
     const vault = await openVault(config.vault, d.paths);
-    const { done: revoked, failed: notRevoked } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    const { done: revoked, failed: notRevoked, chatServersLeft: running } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    chatServersLeft.push(...running);
     // the servers' cli.json outlives mcp-twake-ai's files: its allowed names go with the sign-in (spec CLI §4)
     if (d.accountHome !== undefined) {
       await forgetUnattended(cliSettingsFile(d.platform, d.accountHome)).catch((error) => io.stderr(`The names allowed to write without a terminal are kept: ${describeError(error)}\n`));
@@ -837,13 +843,33 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
     for (const line of notRevoked) io.stdout(`✗ ${line}\n`);
     revocationFailed = notRevoked.length > 0;
   }
-  if (unreadable) await forgetSecrets(d.paths);
+  if (unreadable) {
+    await forgetSecrets(d.paths);
+    // without the configuration, the agents are the folders of the shared servers
+    for (const agent of await readdir(chat).catch(() => [] as string[])) {
+      try {
+        checkAgentId(agent);
+      } catch {
+        continue;
+      }
+      try {
+        if ((await stopSharedChat(agent, { paths: d.paths })) === 'stopped') io.stdout(`✓ Shared Twake Chat server of ${agent} stopped\n`);
+      } catch (error) {
+        chatServersLeft.push(agent);
+        io.stdout(`✗ Twake Chat (${agent}): ${describeError(error)}\n`);
+      }
+    }
+  }
+  const deleteChatStores = (values['delete-chat-stores'] ?? false) && chatServersLeft.length === 0;
+  if (chatServersLeft.length > 0) {
+    io.stdout(`The shared Twake Chat server of ${chatServersLeft.join(', ')} still runs: the Twake Chat stores in ${chat} are kept. Stop it, then run uninstall again.\n`);
+  }
   const keepConfig = Object.keys(left).length > 0;
   if (keepConfig) {
     const remaining = await loadConfig(d.paths);
     if (remaining) await saveConfig(d.paths, { ...remaining, agents: left });
   }
-  await removeFiles(d.paths, values['delete-chat-stores'] ?? false, keepConfig);
+  await removeFiles(d.paths, deleteChatStores, keepConfig);
   await removeShortcut({ platform: d.platform, env: d.env, home: d.home });
   if (keepConfig) {
     io.stdout(`Some entries are still in place and recorded in ${d.paths.configFile}: run uninstall --yes --force to remove them, or remove them by hand.\n`);
@@ -851,9 +877,9 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   }
   // run from npx's cache, there is no global install to remove
   const command = isNpxCache(d.cliPath) ? '' : ' Remove the command itself with: npm uninstall -g mcp-twake-ai';
-  io.stdout(`mcp-twake-ai is uninstalled.${values['delete-chat-stores'] ? '' : ` Twake Chat stores kept in ${chat}.`}${command}\n`);
-  // the files are gone, but an authorization may still be alive at the server: say so with the exit code
-  return revocationFailed ? 1 : 0;
+  io.stdout(`mcp-twake-ai is uninstalled.${deleteChatStores ? '' : ` Twake Chat stores kept in ${chat}.`}${command}\n`);
+  // the files are gone, but an authorization may still be alive at the server, or a Chat server still run: say so
+  return revocationFailed || chatServersLeft.length > 0 ? 1 : 0;
 }
 
 const SERVICE_LABELS: Record<ServiceId, string> = { mail: 'Mail', dav: 'Calendar & contacts', drive: 'Drive', chat: 'Chat', space: 'Space', project: 'Project' };

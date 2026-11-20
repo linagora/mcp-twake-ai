@@ -27,6 +27,8 @@ export interface SharedServer {
   token: string;
   pid: number;
   deviceId: string;
+  /** when the server says it started (ISO 8601) */
+  startedAt?: string;
 }
 
 export interface SharedChatDeps {
@@ -95,7 +97,7 @@ function parseState(text: string): (SharedServer & { url: string }) | undefined 
   try {
     const s = JSON.parse(text) as Partial<SharedServer> & { version?: number };
     if (s.version !== 1 || typeof s.url !== 'string' || typeof s.token !== 'string' || typeof s.pid !== 'number' || typeof s.deviceId !== 'string') return undefined;
-    return { url: s.url, token: s.token, pid: s.pid, deviceId: s.deviceId };
+    return { url: s.url, token: s.token, pid: s.pid, deviceId: s.deviceId, ...(typeof s.startedAt === 'string' ? { startedAt: s.startedAt } : {}) };
   } catch {
     return undefined;
   }
@@ -280,6 +282,13 @@ async function stopServer(server: SharedServer): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** What `status` shows: the agent's shared server, when its state file is trusted and it answers. */
+export async function sharedChatStatus(agent: string, d: Pick<SharedChatDeps, 'paths' | 'uid'>): Promise<{ pid: number; deviceId: string; startedAt?: string } | undefined> {
+  const { state } = await trustedState(sharedChatFiles(d.paths, agent), accountOf(d)).catch(() => ({ state: undefined }));
+  if (!state || !(await answers(state))) return undefined;
+  return { pid: state.pid, deviceId: state.deviceId, startedAt: state.startedAt };
 }
 
 /** Stops the agent's shared server by its route (spec §3.3): logout, uninstall and login --chat. */
