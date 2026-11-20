@@ -245,7 +245,7 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
     // the server it started, and not whatever took the port it was given meanwhile (a sign-in and a first sync are long):
     // that process lives, and the port takes the token of this start
     if ((await probeBackend(dir, backend)) === 'ours') {
-      await watchBackend(options, dir);
+      await watchBackend(options, dir, backend);
       return backend;
     }
     if (!alive(backend.pid)) break;
@@ -264,9 +264,9 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
  * on, holding the Matrix device, until a reboot or a `logout`. This watchdog stops it once no client is left, which is
  * the one thing the server cannot do itself.
  */
-async function watchBackend(options: SharedBackendOptions, dir: string): Promise<void> {
+async function watchBackend(options: SharedBackendOptions, dir: string, backend: SharedBackend): Promise<void> {
   try {
-    const child = spawn(options.nodePath, [options.cliPath, '__watch', '--shared', dir, '--locks', options.paths.locksDir], {
+    const child = spawn(options.nodePath, [options.cliPath, '__watch', '--shared', dir, '--locks', options.paths.locksDir, '--pid', String(backend.pid)], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -279,6 +279,8 @@ async function watchBackend(options: SharedBackendOptions, dir: string): Promise
 }
 
 export interface WatchOptions {
+  /** the backend this watchdog was started with: the one after it, started by another client, has a watchdog of its own */
+  pid: number;
   /** how long a backend may have no client before it is stopped: a client that is still starting has not registered yet */
   idleMs?: number;
   /** how often the clients are looked at */
@@ -289,14 +291,14 @@ export interface WatchOptions {
  * Stops a backend nobody uses any more. Under the lock of the pair, and looking at the clients again: a client that
  * started meanwhile has registered before this could see none.
  */
-export async function watchShared(shared: string, locksDir: string, options: WatchOptions = {}): Promise<void> {
+export async function watchShared(shared: string, locksDir: string, options: WatchOptions): Promise<void> {
   const idleMs = options.idleMs ?? 5 * 60_000;
   const intervalMs = options.intervalMs ?? Math.max(100, Math.min(30_000, Math.floor(idleMs / 4)));
   let idleSince = Date.now();
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     const backend = await readBackend(shared);
-    if (!backend || !alive(backend.pid)) return;
+    if (!backend || backend.pid !== options.pid || !alive(backend.pid)) return;
     if ((await livingClients(clientsDir(shared))) > 0) {
       idleSince = Date.now();
       continue;

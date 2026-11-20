@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { alive, enterSharedBackend, runningBackends, sharedDir, stopShared, type SharedBackendOptions } from '../src/shared.js';
+import { alive, enterSharedBackend, runningBackends, sharedDir, stopShared, watchShared, type SharedBackendOptions } from '../src/shared.js';
 import { saveConfig, type TwakeAiConfig } from '../src/config.js';
 import { entryPoint } from '../src/installer.js';
 import type { AppPaths } from '../src/paths.js';
@@ -278,7 +278,7 @@ describe('a shared service, when the server or a client goes away', () => {
     // the watchdog the server is started with, as `run` starts it
     const watcher = spawn(
       process.execPath,
-      ['--import', 'tsx', 'src/bin.ts', '__watch', '--shared', sharedDir(paths, 'chat', 'claude-code'), '--locks', paths.locksDir, '--idle', '300'],
+      ['--import', 'tsx', 'src/bin.ts', '__watch', '--shared', sharedDir(paths, 'chat', 'claude-code'), '--locks', paths.locksDir, '--pid', String(pid), '--idle', '300'],
       { cwd: repoRoot, env: { ...process.env, TWAKE_AI_HOME: root, LANG: 'en_US.UTF-8' }, stdio: 'ignore' },
     );
     running.push(watcher as ChildProcessWithoutNullStreams);
@@ -349,5 +349,22 @@ describe('a shared service, when what answers on its port is not plainly its ser
     await expect(stopShared(paths, 'chat', 'claude-code')).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(String(busy.pid)) });
     expect(alive(busy.pid)).toBe(true);
     expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toEqual({ pid: busy.pid, port: busy.port });
+  });
+});
+
+describe('the watchdog of a shared server', () => {
+  it('leaves alone a server started after its own one', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const dir = sharedDir(paths, 'chat', 'claude-code');
+    const watched = await fakeBackend(dir, 'mcp');
+    bystanders.push(watched.child);
+    // its server went, another client started the next one: that one has a watchdog of its own, and clients soon
+    watched.child.kill('SIGKILL');
+    const next = await fakeBackend(dir, 'mcp');
+    bystanders.push(next.child);
+
+    await watchShared(dir, paths.locksDir, { pid: watched.pid, idleMs: 200, intervalMs: 50 });
+    expect(alive(next.pid)).toBe(true);
+    expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toEqual({ pid: next.pid, port: next.port });
   });
 });
