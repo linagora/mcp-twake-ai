@@ -61,7 +61,7 @@ class Relay {
   /** the agent's initialize, replayed when the server has closed our session */
   private initialize: JSONRPCRequest | undefined;
   /** the answer to an initialize the relay sent: it is ours, unless it is the agent's own */
-  private pending: { id: RequestId; ours: boolean; answered: () => void } | undefined;
+  private pending: { id: RequestId; ours: boolean; answered: (message: JSONRPCMessage) => void } | undefined;
   /** messages are passed on one at a time, in the order the agent wrote them (a request, then its cancellation) */
   private steps: Promise<void> = Promise.resolve();
   private opened = false;
@@ -123,7 +123,10 @@ class Relay {
         const answered = this.expectAnswer(opening.id, forward === undefined);
         await transport.send(opening);
         // the server needs its handshake complete before anything else: an approval prompt would not find us otherwise
-        await answered;
+        const answer = await answered;
+        // the version the server agreed on goes with every later request of this session, as the spec wants
+        const version = (answer as { result?: { protocolVersion?: unknown } } | undefined)?.result?.protocolVersion;
+        if (typeof version === 'string') transport.setProtocolVersion(version);
         await transport.send(INITIALIZED);
         this.handed = true;
       } catch (error) {
@@ -154,16 +157,19 @@ class Relay {
     return { ...initialize, id: `mcp-twake-ai-replay-${++this.replays}` } as JSONRPCRequest;
   }
 
-  /** Waits for the server's answer to an initialize: the relay's own is dropped, the agent's is passed on. */
-  private expectAnswer(id: RequestId, ours: boolean): Promise<void> {
+  /**
+   * Waits for the server's answer to an initialize, undefined when none came in time: the relay's own is dropped, the
+   * agent's is passed on.
+   */
+  private expectAnswer(id: RequestId, ours: boolean): Promise<JSONRPCMessage | undefined> {
     return new Promise((resolve) => {
-      const timer = setTimeout(resolve, REPLAY_MS);
+      const timer = setTimeout(() => resolve(undefined), REPLAY_MS);
       this.pending = {
         id,
         ours,
-        answered: () => {
+        answered: (message) => {
           clearTimeout(timer);
-          resolve();
+          resolve(message);
         },
       };
     });
@@ -173,14 +179,9 @@ class Relay {
     if (this.pending && 'id' in message && message.id === this.pending.id) {
       const waiting = this.pending;
       this.pending = undefined;
-      waiting.answered();
+      waiting.answered(message);
       // the answer to an initialize the relay sent is its own: the agent answered its own long ago
       if (waiting.ours) return;
-    }
-    // the server tells which protocol version it speaks: every later request carries it
-    if (this.initialize && 'id' in message && message.id === this.initialize.id) {
-      const version = (message as { result?: { protocolVersion?: unknown } }).result?.protocolVersion;
-      if (typeof version === 'string') this.upstream?.setProtocolVersion(version);
     }
     this.send(message);
   }

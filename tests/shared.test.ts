@@ -237,6 +237,22 @@ describe('a shared service, when the server or a client goes away', () => {
     await client.exited;
   });
 
+  it('tells the server the protocol version it agreed on, in a session opened again too', { timeout: 90_000 }, async () => {
+    const { root } = await setup();
+    const client = await launch(root);
+    const protocol = async (id: number) => {
+      client.send({ id, method: 'tools/call', params: { name: 'headers', arguments: {} } });
+      return JSON.parse((await client.next()).result.content[0].text).protocol;
+    };
+    expect(await protocol(2)).toBe('2025-06-18');
+
+    client.send({ id: 3, method: 'tools/call', params: { name: 'forget', arguments: {} } });
+    await client.next();
+    expect(await protocol(4)).toBe('2025-06-18');
+    client.close();
+    await client.exited;
+  });
+
   it('passes a cancellation on to the server', { timeout: 90_000 }, async () => {
     const { root, paths } = await setup();
     const client = await launch(root);
