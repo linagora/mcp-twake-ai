@@ -338,8 +338,11 @@ async function recordedSessions(dir: string): Promise<string[]> {
   return sessions;
 }
 
-/** Asks the server to close one session (HTTP DELETE): the transport it kept for that client ends with it. */
-async function endSession(backend: SharedBackend, token: string, session: string): Promise<void> {
+/**
+ * Asks the server to close one session (HTTP DELETE): the transport it kept for that client ends with it. Best effort,
+ * and 2 s at most: what `stop` does for every client, and a client stopped by a signal for its own.
+ */
+export async function endSharedSession(backend: SharedBackend, token: string, session: string): Promise<void> {
   const answer = await fetch(backendUrl(backend), {
     method: 'DELETE',
     headers: { authorization: `Bearer ${token}`, 'mcp-session-id': session },
@@ -356,7 +359,7 @@ async function stopBackend(dir: string, options: { trusted?: boolean } = {}): Pr
   if (backend && state === 'ours') {
     // close the sessions first: every client's stream ends, and the Matrix client sees its clients go before it closes
     const token = await readToken(dir);
-    if (token) for (const session of await recordedSessions(dir)) await endSession(backend, token, session);
+    if (token) for (const session of await recordedSessions(dir)) await endSharedSession(backend, token, session);
     // Windows has no signal that asks a process to close: it is terminated, unless it leaves once its sessions are gone
     if (process.platform === 'win32') await waitForExit(backend.pid, 2_000);
     try {

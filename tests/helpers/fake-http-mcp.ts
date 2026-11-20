@@ -8,7 +8,7 @@ const sdk = (module: string) => pathToFileURL(join(fileURLToPath(new URL('../../
  * A streamable-HTTP MCP server standing in for mcp-twake-chat's shared mode: it reads MCP_HTTP_HOST, MCP_HTTP_PORT and
  * MCP_HTTP_TOKEN_FILE, keeps one MCP session per client over one process, answers `whoami` with its pid and environment,
  * and asks the client (elicitation/create) before answering `ask`; `headers` tells the protocol version a call came
- * with. `forget` closes the session of its caller, as the server's 6-hour idle sweep does, and `wait` writes what became
+ * with, and `sessions` how many sessions are open. `forget` closes the session of its caller, as the server's 6-hour idle sweep does, and `wait` writes what became
  * of it (cancelled or not) next to the token file. A request with no session is served statelessly, as the real server
  * does.
  */
@@ -34,6 +34,7 @@ function newServer() {
   mcp.registerTool('headers', { description: 'the MCP headers of the request that called it' }, async (extra) =>
     text({ protocol: extra.requestInfo?.headers['mcp-protocol-version'] ?? null }),
   );
+  mcp.registerTool('sessions', { description: 'how many sessions are open' }, async () => text({ sessions: sessions.size }));
   mcp.registerTool('forget', { description: 'close the session of its caller, as the idle sweep does' }, async (extra) => {
     if (extra.sessionId) sessions.delete(extra.sessionId);
     return text({ forgotten: true });

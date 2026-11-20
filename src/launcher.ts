@@ -8,7 +8,7 @@ import { checkAgentId } from './grants.js';
 import { entryPoint } from './installer.js';
 import type { AppPaths } from './paths.js';
 import { proxyShared } from './proxy.js';
-import { backendUrl, enterSharedBackend, isSharedService, keepSharedClient, leaveSharedClient, setSharedSession, stopSharedIfUnused } from './shared.js';
+import { backendUrl, endSharedSession, enterSharedBackend, isSharedService, keepSharedClient, leaveSharedClient, setSharedSession, stopSharedIfUnused } from './shared.js';
 
 export interface LaunchDeps {
   paths: AppPaths;
@@ -82,9 +82,14 @@ async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, en
     await leaveSharedClient(deps.paths, service, agent);
     await stopSharedIfUnused(deps.paths, service, agent).catch(() => false);
   };
-  // a client killed by its agent still stops the backend when it was the last one
+  let session: string | undefined;
+  // a client killed by its agent still stops the backend when it was the last one, and closes its session first: the
+  // other clients keep the server running, which would hold that session for 6 hours
   const signals = (['SIGINT', 'SIGTERM', 'SIGHUP'] as const).map((signal) => {
-    const handler = () => void leave().finally(() => process.exit(128 + (constants.signals[signal] ?? 0)));
+    const handler = () =>
+      void (session ? endSharedSession(backend, token, session) : Promise.resolve())
+        .then(leave)
+        .finally(() => process.exit(128 + (constants.signals[signal] ?? 0)));
     process.once(signal, handler);
     return [signal, handler] as const;
   });
@@ -94,7 +99,10 @@ async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, en
       token,
       name: CATALOG[service].name,
       version: CATALOG[service].version,
-      onSession: (session) => void setSharedSession(deps.paths, service, agent, session),
+      onSession: (id) => {
+        session = id;
+        void setSharedSession(deps.paths, service, agent, id);
+      },
     });
   } finally {
     for (const [signal, handler] of signals) process.off(signal, handler);

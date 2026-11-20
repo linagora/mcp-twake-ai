@@ -91,6 +91,8 @@ async function launch(root: string) {
     close: () => child.stdin.end(),
     /** SIGKILL: the agent that crashes, with no chance to say it leaves */
     kill: () => child.kill('SIGKILL'),
+    /** a signal the client can catch: the agent that stops it, or Ctrl-C in a terminal */
+    signal: (signal: NodeJS.Signals) => child.kill(signal),
     exited,
     stderr: () => stderr,
   };
@@ -219,6 +221,25 @@ describe('a shared service, when the server or a client goes away', () => {
     expect(await runningBackends(paths)).toEqual([]);
     expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
     expect(alive(stranger.pid!)).toBe(true);
+  });
+
+  // Windows has no signal a process can catch: kill() terminates it there
+  it.skipIf(process.platform === 'win32')('closes the session of a client stopped by a signal', { timeout: 90_000 }, async () => {
+    const { root } = await setup();
+    const first = await launch(root);
+    const second = await launch(root);
+    const open = async (id: number) => {
+      second.send({ id, method: 'tools/call', params: { name: 'sessions', arguments: {} } });
+      return JSON.parse((await second.next()).result.content[0].text).sessions;
+    };
+    expect(await open(2)).toBe(2);
+
+    first.signal('SIGTERM');
+    await first.exited;
+    // the server would keep it open for 6 hours otherwise, since the other client keeps the server running
+    expect(await open(3)).toBe(1);
+    second.close();
+    await second.exited;
   });
 
   it('opens a new session when the server closed ours', { timeout: 90_000 }, async () => {
