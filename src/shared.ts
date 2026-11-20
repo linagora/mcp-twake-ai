@@ -469,6 +469,22 @@ export async function stopShared(paths: AppPaths, service: ServiceId, agent: str
   return true;
 }
 
+/**
+ * Runs `fn` with the backend of that agent stopped, and none able to start until it returns: under the lock of the pair.
+ * What `login --chat` does around the device swap: the backend keeps the store of the device it was started with, and
+ * must not get the token of the next one; the next client starts a server on the new device.
+ */
+export async function withSharedStopped<T>(paths: AppPaths, service: ServiceId, agent: string, fn: () => Promise<T>): Promise<T> {
+  const dir = sharedDir(paths, service, agent);
+  return withLock(paths.locksDir, sharedLock(dir), async () => {
+    if (await readBackend(dir)) {
+      await stopBackend(dir);
+      await rm(dir, { recursive: true, force: true });
+    }
+    return fn();
+  });
+}
+
 /** Every backend running for this account, as `(service, agent)`, for `logout`, `uninstall` and `status`. */
 export async function runningBackends(paths: AppPaths): Promise<{ service: ServiceId; agent: string; backend: SharedBackend }[]> {
   const root = join(paths.dataDir, 'shared');

@@ -5,6 +5,7 @@ import { LOOPBACK_PORTS, obtainCallback, type CallbackDeps, type CallbackMode } 
 import { loginWithToken, logoutDevice, ssoProvider, ssoRedirectUrl } from './matrix.js';
 import { randomState, type OidcHttp } from './oidc.js';
 import type { AppPaths } from './paths.js';
+import { withSharedStopped } from './shared.js';
 import { readCachedToken, writeCachedToken } from './token-cache.js';
 import type { Vault } from './vault.js';
 
@@ -40,24 +41,29 @@ export async function loginChat(
   );
   const session = await loginWithToken(homeserver, loginToken, `Twake AI · ${agent}`, deps.http);
   const previous = config.chat?.[agent];
-  const old = await withLock(deps.paths.locksDir, grant, async () => {
-    // the previous device's credentials, read before they are replaced, to log that device out afterwards
-    const oldDevice =
-      previous && previous.deviceId !== session.deviceId
-        ? {
-            accessToken: (await readCachedToken(deps.paths, grant))?.accessToken ?? (await deps.vault.get(matrixKey(agent, 'access_token'))),
-            refreshToken: await deps.vault.get(matrixKey(agent, 'refresh_token')),
-          }
-        : undefined;
-    await deps.vault.set(matrixKey(agent, 'access_token'), session.accessToken);
-    if (session.refreshToken) await deps.vault.set(matrixKey(agent, 'refresh_token'), session.refreshToken);
-    else await deps.vault.delete(matrixKey(agent, 'refresh_token'));
-    await writeCachedToken(deps.paths, grant, { accessToken: session.accessToken, expiresAt: session.expiresAt ?? NEVER_EXPIRES });
-    return oldDevice;
+  // the agent's shared server goes first, and none starts before the new device is recorded: it would sync the old
+  // device's store with the new device's token
+  const { old, updated } = await withSharedStopped(deps.paths, 'chat', agent, async () => {
+    const old = await withLock(deps.paths.locksDir, grant, async () => {
+      // the previous device's credentials, read before they are replaced, to log that device out afterwards
+      const oldDevice =
+        previous && previous.deviceId !== session.deviceId
+          ? {
+              accessToken: (await readCachedToken(deps.paths, grant))?.accessToken ?? (await deps.vault.get(matrixKey(agent, 'access_token'))),
+              refreshToken: await deps.vault.get(matrixKey(agent, 'refresh_token')),
+            }
+          : undefined;
+      await deps.vault.set(matrixKey(agent, 'access_token'), session.accessToken);
+      if (session.refreshToken) await deps.vault.set(matrixKey(agent, 'refresh_token'), session.refreshToken);
+      else await deps.vault.delete(matrixKey(agent, 'refresh_token'));
+      await writeCachedToken(deps.paths, grant, { accessToken: session.accessToken, expiresAt: session.expiresAt ?? NEVER_EXPIRES });
+      return oldDevice;
+    });
+    // the new device id right after its token: an MCP server must not get the new token with the old device
+    const updated: TwakeAiConfig = { ...config, chat: { ...config.chat, [agent]: { userId: session.userId, deviceId: session.deviceId } } };
+    await saveConfig(deps.paths, updated);
+    return { old, updated };
   });
-  // the new device id right after its token: an MCP server must not get the new token with the old device
-  const updated: TwakeAiConfig = { ...config, chat: { ...config.chat, [agent]: { userId: session.userId, deviceId: session.deviceId } } };
-  await saveConfig(deps.paths, updated);
   // best effort: a device left behind can still be removed from Twake Chat
   if (old) await logoutDevice(homeserver, agent, old, deps.http).catch(() => undefined);
   return updated;

@@ -1,9 +1,14 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import type { ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig, saveConfig, type TwakeAiConfig } from '../src/config.js';
 import { matrixKey, NEVER_EXPIRES } from '../src/grants.js';
 import { loginChat, type ChatLoginDeps } from '../src/login-chat.js';
+import { alive, sharedDir } from '../src/shared.js';
 import { readCachedToken } from '../src/token-cache.js';
 import { MemoryVault } from '../src/vault.js';
+import { fakeBackend } from './helpers/fake-backend.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { tempPaths } from './helpers/tmp.js';
 
@@ -105,5 +110,26 @@ describe('loginChat after the review', () => {
     const again = await loginChat(first, 'hermes', 'browser', deps, [0]);
     expect(again.chat?.hermes?.deviceId).toBe('DEVICE2');
     expect(synapse.loggedOut).toEqual(['DEVICE1']);
+  });
+});
+
+describe('loginChat and the shared server', () => {
+  const backends: ChildProcess[] = [];
+  afterEach(() => {
+    for (const child of backends.splice(0)) child.kill('SIGKILL');
+  });
+
+  it('stops the shared server of the agent, which holds the store of the previous device', { timeout: 30_000 }, async () => {
+    const { config, deps } = await setup();
+    const first = await loginChat(config, 'hermes', 'browser', deps, [0]);
+    const dir = sharedDir(deps.paths, 'chat', 'hermes');
+    const server = await fakeBackend(dir, 'mcp');
+    backends.push(server.child);
+
+    const again = await loginChat(first, 'hermes', 'browser', deps, [0]);
+    expect(again.chat?.hermes?.deviceId).toBe('DEVICE2');
+    // `token chat` now gives the new device's token: a server on the old device's store must not ask for it
+    await expect.poll(() => alive(server.pid), { timeout: 10_000 }).toBe(false);
+    expect(existsSync(join(dir, 'backend.json'))).toBe(false);
   });
 });
