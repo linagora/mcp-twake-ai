@@ -10,6 +10,7 @@ import { TwakeAiError } from './errors.js';
 import { writePrivateFile } from './files.js';
 import { withLock } from './lock.js';
 import type { AppPaths } from './paths.js';
+import { processIdentity } from './process-identity.js';
 
 /**
  * The services that cannot run twice for one account: Twake Chat keeps one Matrix device, whose end-to-end encryption
@@ -43,6 +44,8 @@ export interface SharedBackend {
   readyMs?: number;
   /** the fingerprint of the token that start wrote next to it: what ties this record to that token file */
   tokenHash?: string;
+  /** the start time of the process, read from the system as it was spawned: what ties this pid to that process */
+  identity?: string;
 }
 
 /** What a client of a backend needs: where it answers, and the token that proves it is allowed to talk to it. */
@@ -74,7 +77,8 @@ export async function readBackend(dir: string): Promise<SharedBackend | undefine
       typeof state.startedAt === 'number' && typeof state.readyMs === 'number' && typeof state.tokenHash === 'string'
         ? { startedAt: state.startedAt, readyMs: state.readyMs, tokenHash: state.tokenHash }
         : {};
-    return { pid: state.pid, port: state.port, ...start };
+    const identity = typeof state.identity === 'string' ? { identity: state.identity } : {};
+    return { pid: state.pid, port: state.port, ...start, ...identity };
   } catch {
     return undefined;
   }
@@ -103,12 +107,20 @@ function starting(backend: SharedBackend): boolean {
 const fingerprint = (token: string) => createHash('sha256').update(token).digest('hex');
 
 /**
- * The proof that a process that does not answer is the one a start of ours spawned — what a kill needs when no ping can
- * give it: its pid lives, its start was recorded in this boot of the computer, and the token file next to the record
- * is the one that start wrote. A bare pid from a file is never enough.
+ * True when the process that has the recorded pid now is the one that was spawned with it: same start time, read from
+ * the system. Nothing else binds a pid to a process — the pid is reused, and the files only say what they were told.
+ */
+async function sameProcess(backend: SharedBackend): Promise<boolean> {
+  return backend.identity !== undefined && (await processIdentity(backend.pid)) === backend.identity;
+}
+
+/**
+ * The proof that a process that does not answer is the one a start of ours spawned: the process with that pid is the
+ * one spawned with it (`sameProcess`), its start was recorded in this boot of the computer, and the token file next to
+ * the record is the one that start wrote. A bare pid from a file is never enough.
  */
 async function provenStart(dir: string, backend: SharedBackend): Promise<boolean> {
-  if (backend.startedAt === undefined || backend.tokenHash === undefined || backend.startedAt < bootedAt() || !alive(backend.pid)) return false;
+  if (backend.startedAt === undefined || backend.tokenHash === undefined || backend.startedAt < bootedAt() || !(await sameProcess(backend))) return false;
   const token = await readToken(dir);
   return token !== undefined && fingerprint(token) === backend.tokenHash;
 }
@@ -306,6 +318,10 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
   const readyMs = options.readyMs ?? READY_MS;
   // when it started, so that another client tells this start from a stranger even if this one is killed meanwhile
   const backend: SharedBackend = { pid: child.pid ?? 0, port, startedAt: Date.now(), readyMs, tokenHash: fingerprint(token) };
+  // read from the system now, while this process holds the child: later, only it tells this process from the next one
+  // with the same pid
+  const identity = await processIdentity(backend.pid);
+  if (identity) backend.identity = identity;
   await writePrivateFile(backendFile(dir), `${JSON.stringify(backend)}\n`);
   // the watchdog from the start: a client killed during the sign-in must not leave a server nobody ever stops
   await watchBackend(options, dir, backend);
@@ -463,10 +479,19 @@ async function forget(dir: string): Promise<void> {
 
 /**
  * Stops a backend whose ownership the caller has proven: the process it spawned (`child`, its own handle), or a pid it
- * has just confirmed. Never called with a bare pid read from a file.
+ * has just confirmed — and then only if the process with that pid is still the one spawned with it, checked again
+ * before each signal. Never called with a bare pid read from a file; when the process cannot be told apart, nothing is
+ * signalled and the caller is told.
  */
 async function terminate(dir: string, backend: SharedBackend, child?: ChildProcess): Promise<void> {
-  const signal = (name: NodeJS.Signals) => {
+  const notProven = () =>
+    new TwakeAiError(
+      'unavailable',
+      `The process ${backend.pid} recorded for the shared server in ${dir} cannot be told from another process that got its pid (its start time ${backend.identity ? 'does not match' : 'was not recorded'}): it was left running. Stop it yourself if it is the server.`,
+    );
+  if (!child && !(await sameProcess(backend))) throw notProven();
+  const signal = async (name: NodeJS.Signals) => {
+    if (!child && !(await sameProcess(backend))) return;
     try {
       if (child) child.kill(name);
       else process.kill(backend.pid, name);
@@ -479,9 +504,9 @@ async function terminate(dir: string, backend: SharedBackend, child?: ChildProce
   if (token) for (const session of await recordedSessions(dir)) await endSharedSession(backend, token, session);
   // Windows has no signal that asks a process to close: it is terminated, unless it leaves once its sessions are gone
   if (process.platform === 'win32') await waitForExit(backend.pid, 2_000);
-  signal('SIGTERM');
+  await signal('SIGTERM');
   // it closes its Matrix session and its store on SIGTERM: give it a moment, without waiting for a hung one
-  if (!(await waitForExit(backend.pid, 5_000))) signal('SIGKILL');
+  if (!(await waitForExit(backend.pid, 5_000))) await signal('SIGKILL');
 }
 
 async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {

@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { processIdentity } from '../../src/process-identity.js';
 
 /**
  * What can answer on the port a `backend.json` names: our server (`mcp` answers a ping with the token of that start), a
@@ -20,6 +21,8 @@ export interface FakeBackendOptions {
   readyMs?: number;
   /** the fingerprint of the token that start wrote: the token's own by default, as `startBackend` records it */
   tokenHash?: string;
+  /** the start time of the process, as `startBackend` records it: the real one by default, none when null */
+  identity?: string | null;
 }
 
 const SCRIPT = `const http = require('node:http');
@@ -69,7 +72,8 @@ export async function fakeBackend(dir: string, mode: FakeBackendMode, options: F
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const tokenHash = options.tokenHash ?? createHash('sha256').update(token).digest('hex');
   const start = options.startedAt === undefined ? {} : { startedAt: options.startedAt, readyMs: options.readyMs, tokenHash };
-  await writeFile(join(dir, 'backend.json'), JSON.stringify({ pid: child.pid, port, ...start }));
+  const identity = options.identity === undefined ? await processIdentity(child.pid!) : (options.identity ?? undefined);
+  await writeFile(join(dir, 'backend.json'), JSON.stringify({ pid: child.pid, port, ...start, ...(identity ? { identity } : {}) }));
   await writeFile(join(dir, 'token'), `${token}\n`);
   return { child, pid: child.pid!, port };
 }

@@ -389,7 +389,7 @@ describe('a shared service, when what answers on its port is not plainly its ser
     const { paths } = await setup();
     const server = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp');
     bystanders.push(server.child);
-    expect((await runningBackends(paths)).map((running) => running.backend)).toEqual([{ pid: server.pid, port: server.port }]);
+    expect((await runningBackends(paths)).map((running) => running.backend)).toMatchObject([{ pid: server.pid, port: server.port }]);
   });
 
   it('never takes a port that answers anything but JSON-RPC for its server', { timeout: 30_000 }, async () => {
@@ -418,7 +418,7 @@ describe('a shared service, when what answers on its port is not plainly its ser
     const busy = await fakeBackend(dir, 'busy');
     bystanders.push(busy.child);
     await expect(enterSharedBackend({ ...(await backendOptions(paths)), busyMs: 1_000 })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(String(busy.pid)) });
-    expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toEqual({ pid: busy.pid, port: busy.port });
+    expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toMatchObject({ pid: busy.pid, port: busy.port });
     expect(alive(busy.pid)).toBe(true);
   });
 
@@ -458,6 +458,15 @@ describe('a shared service, when what answers on its port is not plainly its ser
     await expect.poll(() => alive(backend.pid), { timeout: 15_000 }).toBe(false);
   });
 
+  it('never stops a process that answers for a server whose pid it does not have', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    // the port answers with our token, but the process of that pid is not the one the start recorded
+    const server = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp', { identity: 'the start time of another process' });
+    bystanders.push(server.child);
+    await expect(stopShared(paths, 'chat', 'claude-code', { busyMs: 500 })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(String(server.pid)) });
+    expect(alive(server.pid)).toBe(true);
+  });
+
   it('neither stops nor forgets a server too busy to answer, and says so', { timeout: 30_000 }, async () => {
     const { paths } = await setup();
     const dir = sharedDir(paths, 'chat', 'claude-code');
@@ -470,7 +479,7 @@ describe('a shared service, when what answers on its port is not plainly its ser
     // asked again for as long as it was told, not the 10 s logout gives
     expect(Date.now() - asked).toBeLessThan(5_000);
     expect(alive(busy.pid)).toBe(true);
-    expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toEqual({ pid: busy.pid, port: busy.port });
+    expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toMatchObject({ pid: busy.pid, port: busy.port });
   });
 });
 
@@ -553,7 +562,7 @@ describe('the watchdog of a shared server', () => {
 
     await watchShared(dir, paths.locksDir, { pid: watched.pid, idleMs: 200, intervalMs: 50 });
     expect(alive(next.pid)).toBe(true);
-    expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toEqual({ pid: next.pid, port: next.port });
+    expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toMatchObject({ pid: next.pid, port: next.port });
   });
 });
 
@@ -598,15 +607,19 @@ describe('a shared service, while its server starts', () => {
   it('never stops a process whose start is not proven ours, wherever its backend.json comes from', { timeout: 60_000 }, async () => {
     const { paths } = await setup();
     const dir = sharedDir(paths, 'chat', 'claude-code');
+    // built as each case comes: a start recorded "now" must still be in its window then
     const cases = [
       // a bare pid: no start recorded, nothing listens
-      {},
+      () => ({}),
       // a start recorded, but with another token than the one next to it
-      { startedAt: Date.now(), readyMs: 1_000, tokenHash: 'not the hash of that token' },
+      () => ({ startedAt: Date.now(), readyMs: 1_000, tokenHash: 'not the hash of that token' }),
       // a start recorded before this computer booted: whatever the file says, that pid is someone else's now
-      { startedAt: Date.now() - uptime() * 1000 - 60 * 60_000, readyMs: (uptime() + 2 * 60 * 60) * 1000 },
+      () => ({ startedAt: Date.now() - uptime() * 1000 - 60 * 60_000, readyMs: (uptime() + 2 * 60 * 60) * 1000 }),
+      // everything right about the files, but the pid is now another process's (same boot: Windows reuses them soon)
+      () => ({ startedAt: Date.now(), readyMs: 1_000, identity: 'the start time of the process that had that pid' }),
     ];
-    for (const start of cases) {
+    for (const make of cases) {
+      const start = make();
       const stranger = await fakeBackend(dir, 'mcp', { listenAfterMs: null, ...start });
       bystanders.push(stranger.child);
       // a client starting, logout and uninstall: each looks at it, none stops it
