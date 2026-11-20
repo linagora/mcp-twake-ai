@@ -108,6 +108,12 @@ async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, bu
   });
   const entry = await entryPoint(deps.paths, service);
   // this process registers as a client before the start returns, under the same lock the last client leaving takes
+  // what the agent's entry sets for the server, and that it does not get: said once, rather than silently dropped
+  const first = await build();
+  const ignored = Object.keys(stringEnv(deps.env)).filter((name) => serverSetting(name) && deps.env[name] !== first[name]);
+  if (ignored.length > 0) {
+    process.stderr.write(`mcp-twake-ai: ignored for the shared ${CATALOG[service].name} server: ${ignored.sort().join(', ')} (its settings are those mcp-twake-ai builds, the same for every client).\n`);
+  }
   const enter = async () => {
     // the device, hence the store, of the agent as configured now: a server started after `login --chat` uses the new one
     const env = { ...inherited, ...(await build()) };

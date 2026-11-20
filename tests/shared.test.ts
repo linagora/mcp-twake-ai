@@ -160,6 +160,7 @@ describe('a shared service', () => {
     const client = await launch(root, {
       MATRIX_SEARCH_BACKFILL_DAYS: '7',
       MATRIX_USER_ID: '@someone-else:linagora.com',
+      MATRIX_HOMESERVER_URL: 'https://matrix.linagora.com/',
       TOM_URL: 'https://tom.elsewhere.example',
       LOG_LEVEL: 'debug',
       USER_LANGUAGE: 'xx',
@@ -173,6 +174,12 @@ describe('a shared service', () => {
     expect(env.LOG_LEVEL).toBeUndefined();
     expect(env.USER_LANGUAGE).toBe('en');
     expect(env.MCP_HTTP_EXTRA).toBeUndefined();
+    // and the user is told, once, which of the entry's settings are not used
+    expect(client.stderr()).toMatch(/ignored for the shared mcp-twake-chat server: .*MATRIX_SEARCH_BACKFILL_DAYS/);
+    expect(client.stderr()).toContain('TOM_URL');
+    expect(client.stderr()).toContain('USER_LANGUAGE');
+    // what it would have been anyway is no news
+    expect(client.stderr()).not.toContain('MATRIX_HOMESERVER_URL');
     client.close();
     await client.exited;
   });
