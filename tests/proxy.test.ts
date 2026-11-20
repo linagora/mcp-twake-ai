@@ -3,6 +3,7 @@
  * started directly (token file, known port), and a reconnection that reads where the next server is from a file.
  */
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { createServer as createTcpServer, type AddressInfo } from 'node:net';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -161,8 +162,16 @@ describe('the relay to a shared server', () => {
     await client.nextServer(two);
     await call(client, 2, 'whoami');
     await one.stop();
-    // the request may have run before the reset: sent again, a message would be posted twice
-    const resets = createTcpServer((socket) => socket.on('data', () => socket.resetAndDestroy()));
+    // the request may have run before the reset: sent again, a message would be posted twice (the server proves it holds
+    // the token, then the connection carrying the request is reset)
+    const resets = createTcpServer((socket) =>
+      socket.on('data', (chunk: Buffer) => {
+        const nonce = /^GET \/mcp\/proof\?nonce=([0-9a-f]+) /.exec(chunk.toString())?.[1];
+        if (!nonce) return void socket.resetAndDestroy();
+        const body = JSON.stringify({ proof: createHmac('sha256', one.token).update(`twake-chat-proof:${nonce}:${one.port}`).digest('hex') });
+        socket.end(`HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: ${body.length}\r\nconnection: close\r\n\r\n${body}`);
+      }),
+    );
     await new Promise<void>((resolve) => resets.listen(one.port, '127.0.0.1', resolve));
     try {
       client.send({ id: 3, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
@@ -189,6 +198,35 @@ describe('the relay to a shared server', () => {
     servers.push(other);
     await new Promise<void>((resolve) => other.listen(one.port, '127.0.0.1', resolve));
     expect((await call(client, 3, 'whoami')).pid).toBe(two.child.pid);
+    client.close();
+    await client.exited;
+  });
+
+  it("never relays to what listens on its server's port without the proof", { timeout: 60_000 }, async () => {
+    const one = await fake();
+    const two = await fake();
+    const client = await relay(one);
+    await client.nextServer(two);
+    await call(client, 2, 'whoami');
+    await one.stop();
+    // another account of this machine takes the port, and answers 200 to everything
+    const seen: { method?: string; url?: string; authorization?: string; body: string }[] = [];
+    const squatter = createServer((request, response) => {
+      let body = '';
+      request.on('data', (chunk: Buffer) => (body += chunk.toString()));
+      request.on('end', () => {
+        seen.push({ method: request.method, url: request.url, authorization: request.headers.authorization, body });
+        response.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'squat' }).end('{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{}"}]}}');
+      });
+    });
+    servers.push(squatter);
+    await new Promise<void>((resolve) => squatter.listen(one.port, '127.0.0.1', resolve));
+    expect((await call(client, 3, 'whoami')).pid).toBe(two.child.pid);
+    expect(seen.length).toBeGreaterThan(0);
+    for (const request of seen) {
+      expect(request).toMatchObject({ method: 'GET', authorization: undefined, body: '' });
+      expect(request.url).toMatch(/^\/mcp\/proof\?nonce=/);
+    }
     client.close();
     await client.exited;
   });

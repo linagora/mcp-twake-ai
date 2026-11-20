@@ -1,5 +1,6 @@
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { NotOurServer, proves } from './proof.js';
 import { isJSONRPCNotification, isJSONRPCRequest, type JSONRPCMessage, type JSONRPCRequest, type RequestId } from '@modelcontextprotocol/sdk/types.js';
 
 /** The one message of the MCP handshake the proxy sends itself, when it opens a session on its own. */
@@ -41,6 +42,8 @@ function sessionGone(error: unknown): boolean {
  * message would be posted twice.
  */
 function serverGone(error: unknown): boolean {
+  // what listens there could not prove it holds our token: the request was not sent
+  if (error instanceof NotOurServer) return true;
   if (error instanceof StreamableHTTPError) return error.code === 401;
   const cause = error instanceof Error ? (error.cause as { code?: unknown } | undefined) : undefined;
   return error instanceof TypeError && cause?.code === 'ECONNREFUSED';
@@ -179,9 +182,10 @@ class Relay {
     const opening = forward ?? this.replay();
     const deadline = this.opened ? Date.now() : Date.now() + (this.options.readyMs ?? 30_000);
     for (;;) {
+      const token = this.token;
       const transport = new StreamableHTTPClientTransport(new URL(this.url), {
-        requestInit: { headers: { authorization: `Bearer ${this.token}` } },
-        fetch: (url, init) => this.watchedFetch(url, init),
+        requestInit: { headers: { authorization: `Bearer ${token}` } },
+        fetch: (url, init) => this.watchedFetch(url, init, token),
       });
       transport.onmessage = (message) => this.fromUpstream(message);
       transport.onerror = (error) => this.report(undefined, error);
@@ -263,7 +267,12 @@ class Relay {
    * fetch, with an eye on the stream that carries the answer to a request: when it ends, or breaks, before the answer
    * came (the server stopped, crashed, closed the session), the request is answered with an error instead of never.
    */
-  private async watchedFetch(url: string | URL, init?: RequestInit): Promise<Response> {
+  private async watchedFetch(url: string | URL, init: RequestInit | undefined, token: string): Promise<Response> {
+    // every request, the token and the agent's message in it, goes only to a server that proved it holds the token: the
+    // server may have gone since the last one, and another account of this machine listen on its port
+    const endpoint = new URL(url);
+    endpoint.search = '';
+    if (!(await proves(endpoint.href, token))) throw new NotOurServer(endpoint.href);
     const response = await fetch(url, init);
     const id = requestIdOf(init);
     if (id === undefined || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) return response;
