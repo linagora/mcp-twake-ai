@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -358,6 +358,20 @@ describe('a shared service, when what answers on its port is not plainly its ser
     );
     await expect(enterSharedBackend({ ...(await backendOptions(paths)), readyMs: 2_000 })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining('could not start') });
     expect(await runningBackends(paths)).toEqual([]);
+  });
+
+  it('lets logout wait for a server that is starting, then stops it', { timeout: 60_000 }, async () => {
+    const { paths } = await setup();
+    const options = await backendOptions(paths);
+    // a first sync longer than the 10 s a lock is waited for by default
+    const starting = enterSharedBackend({ ...options, env: { ...options.env, FAKE_SYNC_MS: '11000' } });
+    const dir = sharedDir(paths, 'chat', 'claude-code');
+    await expect.poll(() => access(join(dir, 'backend.json')).then(() => true, () => false), { timeout: 10_000 }).toBe(true);
+
+    const stopped = stopShared(paths, 'chat', 'claude-code');
+    const { backend } = await starting;
+    expect(await stopped).toBe(true);
+    await expect.poll(() => alive(backend.pid), { timeout: 15_000 }).toBe(false);
   });
 
   it('neither stops nor forgets a server too busy to answer, and says so', { timeout: 30_000 }, async () => {

@@ -82,5 +82,6 @@ const http = createServer(async (req, res) => {
   await mcp.connect(transport);
   await transport.handleRequest(req, res, body);
 });
-http.listen(Number(process.env.MCP_HTTP_PORT), process.env.MCP_HTTP_HOST, () => process.stderr.write('fake-chat ready\\n'));
+// FAKE_SYNC_MS: the Matrix sign-in and first sync the real server goes through before it listens
+setTimeout(() => http.listen(Number(process.env.MCP_HTTP_PORT), process.env.MCP_HTTP_HOST, () => process.stderr.write('fake-chat ready\\n')), Number(process.env.FAKE_SYNC_MS ?? 0));
 `;

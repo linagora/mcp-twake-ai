@@ -214,6 +214,18 @@ export interface SharedBackendOptions {
 /** How long a backend that lives and does not answer is asked again: a sync that keeps it busy for longer is a hung one. */
 const BUSY_MS = 10_000;
 
+/** How long a starting backend may take to answer: a Matrix sign-in and its first sync take as long as they take. */
+const READY_MS = 60_000;
+
+/**
+ * How long anyone waits for the lock of a pair, hence how long anyone may hold it: a start that first asked a busy
+ * backend again (BUSY_MS), then waited for its own (READY_MS), and stopped it when it failed. The start keeps the lock
+ * all that time — a client let in meanwhile would find a server that does not listen yet, and start a second one on the
+ * same store — so `logout`, `login --chat`, a client leaving and the watchdog wait it out instead of giving up after
+ * the 10 s other locks are waited for.
+ */
+const LOCK_MS = READY_MS + BUSY_MS + 20_000;
+
 async function startBackend(options: SharedBackendOptions, dir: string): Promise<SharedBackend> {
   const port = await freePort();
   const token = randomBytes(32).toString('hex');
@@ -240,7 +252,7 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
   child.unref();
   const backend: SharedBackend = { pid: child.pid ?? 0, port };
   await writePrivateFile(backendFile(dir), `${JSON.stringify(backend)}\n`);
-  const deadline = Date.now() + (options.readyMs ?? 60_000);
+  const deadline = Date.now() + (options.readyMs ?? READY_MS);
   while (Date.now() < deadline) {
     // the server it started, and not whatever took the port it was given meanwhile (a sign-in and a first sync are long):
     // that process lives, and the port takes the token of this start
@@ -398,8 +410,7 @@ async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
 export async function enterSharedBackend(options: SharedBackendOptions): Promise<SharedSession> {
   const dir = sharedDir(options.paths, options.service, options.agent);
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  // the lock covers the whole start: a Matrix sign-in and its first sync take as long as they take
-  const wait = (options.readyMs ?? 60_000) + 10_000;
+  // the lock covers the whole start: see LOCK_MS
   return withLock(options.paths.locksDir, sharedLock(dir), async () => {
     const state = await readBackend(dir);
     const known = state ? await settleBackend(dir, state, options.busyMs ?? BUSY_MS) : 'foreign';
@@ -415,7 +426,7 @@ export async function enterSharedBackend(options: SharedBackendOptions): Promise
     if (!token) throw new TwakeAiError('damaged_file', `The shared ${CATALOG[options.service].name} server of ${options.agent} lost its token: run mcp-twake-ai uninstall, then setup again.`);
     await registerClient(dir);
     return { backend, token };
-  }, { timeoutMs: wait });
+  }, { timeoutMs: LOCK_MS });
 }
 
 /** Marks this process as a client of the backend, before it connects. */
@@ -489,7 +500,7 @@ async function stopIfUnused(dir: string, locksDir: string, staleMs?: number): Pr
     await stopBackend(dir);
     await rm(dir, { recursive: true, force: true });
     return true;
-  }, { timeoutMs: 30_000 });
+  }, { timeoutMs: LOCK_MS });
 }
 
 /**
@@ -507,7 +518,7 @@ export async function stopShared(paths: AppPaths, service: ServiceId, agent: str
   await withLock(paths.locksDir, sharedLock(dir), async () => {
     await stopBackend(dir);
     await rm(dir, { recursive: true, force: true });
-  });
+  }, { timeoutMs: LOCK_MS });
   return true;
 }
 
@@ -524,7 +535,7 @@ export async function withSharedStopped<T>(paths: AppPaths, service: ServiceId, 
       await rm(dir, { recursive: true, force: true });
     }
     return fn();
-  });
+  }, { timeoutMs: LOCK_MS });
 }
 
 /** Every backend running for this account, as `(service, agent)`, for `logout`, `uninstall` and `status`. */
