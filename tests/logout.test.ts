@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createServer as createTcpServer, type AddressInfo } from 'node:net';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -158,8 +159,13 @@ describe('logout and the shared Chat server', () => {
     const files = sharedChatFiles(paths, 'hermes');
     await mkdir(files.dir, { recursive: true, mode: 0o700 });
     const stranger = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    // a port that takes connections and never answers: a server too busy to, or hung
+    const silent = await new Promise<{ port: number; close(): void }>((resolve) => {
+      const server = createTcpServer(() => {});
+      server.listen(0, '127.0.0.1', () => resolve({ port: (server.address() as AddressInfo).port, close: () => server.close() }));
+    });
     try {
-      const state = { version: 1, pid: stranger.pid, url: 'http://127.0.0.1:9/mcp', token: 'f'.repeat(64), userId: '@alice:example.com', deviceId: device.deviceId, serverVersion: '0.7.0', startedAt: '' };
+      const state = { version: 1, pid: stranger.pid, url: `http://127.0.0.1:${silent.port}/mcp`, token: 'f'.repeat(64), userId: '@alice:example.com', deviceId: device.deviceId, serverVersion: '0.7.0', startedAt: '' };
       await writeFile(files.state, JSON.stringify(state), { mode: 0o600 });
       const result = await logout({ paths, config, vault, http: {} });
       expect(result.failed).toEqual([expect.stringMatching(new RegExp(`^Twake Chat \\(hermes\\): .*pid ${stranger.pid}\\b`))]);
@@ -168,6 +174,7 @@ describe('logout and the shared Chat server', () => {
       expect(alive(stranger.pid!)).toBe(true);
     } finally {
       stranger.kill('SIGKILL');
+      silent.close();
     }
   });
 });

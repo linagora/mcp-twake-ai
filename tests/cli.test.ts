@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import { createServer as createTcpServer, type AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -719,8 +720,13 @@ describe('main: Twake Drive and Twake Chat', () => {
     const files = sharedChatFiles(deps.paths, 'hermes');
     await mkdir(files.dir, { recursive: true, mode: 0o700 });
     const stranger = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    // a port that takes connections and never answers: a server too busy to, or hung
+    const silent = await new Promise<{ port: number; close(): void }>((resolve) => {
+      const server = createTcpServer(() => {});
+      server.listen(0, '127.0.0.1', () => resolve({ port: (server.address() as AddressInfo).port, close: () => server.close() }));
+    });
     try {
-      const state = { version: 1, pid: stranger.pid, url: 'http://127.0.0.1:9/mcp', token: 'f'.repeat(64), userId: '@alice:example.com', deviceId: 'DEVICE1', serverVersion: '0.7.0', startedAt: '' };
+      const state = { version: 1, pid: stranger.pid, url: `http://127.0.0.1:${silent.port}/mcp`, token: 'f'.repeat(64), userId: '@alice:example.com', deviceId: 'DEVICE1', serverVersion: '0.7.0', startedAt: '' };
       await writeFile(files.state, JSON.stringify(state), { mode: 0o600 });
       const io = captureIo();
       expect(await main(['uninstall', '--yes', '--delete-chat-stores'], io, deps)).toBe(1);
@@ -732,6 +738,7 @@ describe('main: Twake Drive and Twake Chat', () => {
       expect(() => process.kill(stranger.pid!, 0)).not.toThrow();
     } finally {
       stranger.kill('SIGKILL');
+      silent.close();
     }
   });
 

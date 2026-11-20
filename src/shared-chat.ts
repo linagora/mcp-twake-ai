@@ -5,7 +5,7 @@ import { CATALOG } from './catalog.js';
 import { TwakeAiError } from './errors.js';
 import { entryPoint, serverDir } from './installer.js';
 import type { AppPaths } from './paths.js';
-import { proves } from './proof.js';
+import { probe, proves } from './proof.js';
 
 /**
  * One mcp-twake-chat per agent, shared by the agent's clients (spec shared-chat §3). mcp-twake-chat holds the store lock
@@ -297,11 +297,19 @@ export async function stopSharedChat(agent: string, d: Pick<SharedChatDeps, 'pat
   const { state, refused } = await trustedState(files, accountOf(d));
   if (refused) throw new TwakeAiError('insecure_file', `${files.state} is not to be trusted (${refused}): nothing was stopped. Remove it, then run this command again.`);
   if (!state) return 'none';
-  if (!(await answers(state))) {
-    throw new TwakeAiError('unavailable', `The shared Twake Chat server for ${agent} (pid ${state.pid}) does not answer: stop it, then run this command again.`);
+  const found = await probe(state.url, state.token, { pid: state.pid });
+  if (found === 'gone') {
+    // the server removes its state file before it leaves its port: a refused port, or another program on it, means it
+    // is gone (killed, crashed, the computer stopped). Its file goes, unless a newer server wrote its own meanwhile.
+    if ((await statePid(files.state)) === state.pid) await unlink(files.state).catch(() => {});
+    return 'none';
+  }
+  const hint = `If no mcp-twake-chat runs for ${agent} any more, remove ${files.state}, then run this command again.`;
+  if (found === 'silent' || !(await answers(state))) {
+    throw new TwakeAiError('unavailable', `The shared Twake Chat server for ${agent} (pid ${state.pid}) does not answer. ${hint}`);
   }
   if (!(await stopServer(state)) || !(await waitGone(files.state, state.pid))) {
-    throw new TwakeAiError('unavailable', `The shared Twake Chat server for ${agent} (pid ${state.pid}) did not stop: stop it, then run this command again.`);
+    throw new TwakeAiError('unavailable', `The shared Twake Chat server for ${agent} (pid ${state.pid}) did not stop within ${GONE_MS / 1000} s: run this command again in a moment. ${hint}`);
   }
   return 'stopped';
 }

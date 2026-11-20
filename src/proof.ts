@@ -19,19 +19,35 @@ export class NotOurServer extends Error {
 }
 
 export async function proves(url: string, token: string, expected: { pid?: number; timeoutMs?: number } = {}): Promise<boolean> {
+  return (await probe(url, token, expected)) === 'ours';
+}
+
+/**
+ * What listens at url: 'ours' proved it holds the token; 'gone' refused the connection, or answered without the proof
+ * (another program took the port: ours is gone, since it never listens without answering it); 'silent' did not answer
+ * in time, or the connection broke (a server too busy to answer may still be ours).
+ */
+export async function probe(url: string, token: string, expected: { pid?: number; timeoutMs?: number } = {}): Promise<'ours' | 'gone' | 'silent'> {
   const nonce = randomBytes(16).toString('hex');
+  let response: Response;
+  try {
+    response = await fetch(`${url.replace(/\/+$/, '')}/proof?nonce=${nonce}`, { signal: AbortSignal.timeout(expected.timeoutMs ?? PROOF_MS), redirect: 'error' });
+  } catch (error) {
+    const cause = (error as { cause?: { code?: unknown } }).cause;
+    return cause?.code === 'ECONNREFUSED' ? 'gone' : 'silent';
+  }
   try {
     const endpoint = new URL(url);
     const port = endpoint.port || (endpoint.protocol === 'https:' ? '443' : '80');
-    const response = await fetch(`${url.replace(/\/+$/, '')}/proof?nonce=${nonce}`, { signal: AbortSignal.timeout(expected.timeoutMs ?? PROOF_MS), redirect: 'error' });
-    if (response.status !== 200) return false;
+    if (response.status !== 200) return 'gone';
     const answer = (await response.json()) as { proof?: unknown; pid?: unknown } | null;
-    if (typeof answer?.proof !== 'string') return false;
-    if (expected.pid !== undefined && answer.pid !== expected.pid) return false;
+    if (typeof answer?.proof !== 'string') return 'gone';
+    if (expected.pid !== undefined && answer.pid !== expected.pid) return 'gone';
     const given = Buffer.from(answer.proof);
     const want = Buffer.from(createHmac('sha256', token).update(`twake-chat-proof:${nonce}:${port}`).digest('hex'));
-    return given.length === want.length && timingSafeEqual(given, want);
-  } catch {
-    return false;
+    return given.length === want.length && timingSafeEqual(given, want) ? 'ours' : 'gone';
+  } catch (error) {
+    // an answer cut off on the way, or that is not JSON: not ours, unless it broke on the way
+    return error instanceof SyntaxError ? 'gone' : 'silent';
   }
 }

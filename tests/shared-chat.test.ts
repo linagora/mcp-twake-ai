@@ -83,6 +83,14 @@ async function squatter() {
   return { port: (server.address() as AddressInfo).port, seen };
 }
 
+/** A port that takes connections and never answers: a server too busy to, or hung */
+async function silentPort(): Promise<number> {
+  const server = createTcpServer(() => {});
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  servers.push(server as unknown as Server);
+  return (server.address() as AddressInfo).port;
+}
+
 const stateOf = async (file: string) => JSON.parse(await readFile(file, 'utf8')) as { pid: number; url: string; token: string; deviceId: string };
 const lockPid = async (paths: AppPaths, device = 'DEVICEONE') => Number(await readFile(join(paths.dataDir, 'chat', AGENT, device, '.lock'), 'utf8').catch(() => '0'));
 const until = async (check: () => boolean | Promise<boolean>, ms = 15_000) => {
@@ -272,23 +280,41 @@ describe('stopSharedChat', () => {
     expect(await readFile(join(files.dir, 'signals.log'), 'utf8').catch(() => 'none')).toBe('none');
   });
 
-  it('names the pid of a server that does not answer, and kills nothing', { timeout: 30_000 }, async () => {
+  it('has nothing to stop when the port of a state file refuses: its server is gone (it leaves its port last)', { timeout: 30_000 }, async () => {
     const { paths, files } = await setup();
     const stranger = bystander();
     await mkdir(files.dir, { recursive: true, mode: 0o700 });
     await writeFile(files.state, JSON.stringify(fakeState(stranger.pid!, await closedPort())), { mode: 0o600 });
-    await expect(stopSharedChat(AGENT, { paths })).rejects.toThrow(new RegExp(`pid ${stranger.pid}\\b`));
+    expect(await stopSharedChat(AGENT, { paths })).toBe('none');
+    expect(await readFile(files.state, 'utf8').catch(() => 'gone')).toBe('gone');
     expect(alive(stranger.pid!)).toBe(true);
   });
 
-  it('never sends the token to what listens on the port without the proof', { timeout: 30_000 }, async () => {
+  it('names the pid of a server that does not answer in time, never asks to kill it, and kills nothing', { timeout: 30_000 }, async () => {
+    const { paths, files } = await setup();
+    const stranger = bystander();
+    const silent = await silentPort();
+    await mkdir(files.dir, { recursive: true, mode: 0o700 });
+    await writeFile(files.state, JSON.stringify(fakeState(stranger.pid!, silent)), { mode: 0o600 });
+    const error = await stopSharedChat(AGENT, { paths }).then(
+      () => undefined,
+      (e: Error) => e,
+    );
+    expect(error?.message).toMatch(new RegExp(`pid ${stranger.pid}\\b`));
+    expect(error?.message).toContain(files.state);
+    expect(error?.message).not.toMatch(/stop it|kill/i);
+    expect(await readFile(files.state, 'utf8')).toContain(String(stranger.pid));
+    expect(alive(stranger.pid!)).toBe(true);
+  });
+
+  it('never sends the token to what listens on the port without the proof, and takes the file for a stale one', { timeout: 30_000 }, async () => {
     const { paths, files } = await setup();
     const stranger = bystander();
     const squat = await squatter();
     await mkdir(files.dir, { recursive: true, mode: 0o700 });
     const left = fakeState(stranger.pid!, squat.port);
     await writeFile(files.state, JSON.stringify(left), { mode: 0o600 });
-    await expect(stopSharedChat(AGENT, { paths })).rejects.toThrow(new RegExp(`pid ${stranger.pid}\\b`));
+    expect(await stopSharedChat(AGENT, { paths })).toBe('none');
     for (const request of squat.seen) {
       expect(request.url).toMatch(/^\/mcp\/proof\?/);
       expect(JSON.stringify(request.headers)).not.toContain(left.token);
