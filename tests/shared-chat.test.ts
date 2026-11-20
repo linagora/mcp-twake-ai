@@ -6,7 +6,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { createServer as createTcpServer, type AddressInfo } from 'node:net';
-import { readdir, readFile, stat, writeFile, mkdir } from 'node:fs/promises';
+import { createHmac } from 'node:crypto';
+import { chmod, readdir, readFile, stat, symlink, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -146,8 +147,8 @@ describe('the shared Chat server of an agent', () => {
   it('replaces a state file left by a dead server', { timeout: 30_000 }, async () => {
     const { paths, files } = await setup();
     const dead = await deadPid();
-    await mkdir(files.dir, { recursive: true });
-    await writeFile(files.state, JSON.stringify(fakeState(dead, await closedPort())));
+    await mkdir(files.dir, { recursive: true, mode: 0o700 });
+    await writeFile(files.state, JSON.stringify(fakeState(dead, await closedPort())), { mode: 0o600 });
     const server = await enterSharedChat(AGENT, sharedDeps(paths));
     expect(server.pid).not.toBe(dead);
     expect((await stateOf(files.state)).pid).toBe(server.pid);
@@ -157,9 +158,9 @@ describe('the shared Chat server of an agent', () => {
     const { paths, files } = await setup();
     const stranger = bystander();
     const squat = await squatter();
-    await mkdir(files.dir, { recursive: true });
+    await mkdir(files.dir, { recursive: true, mode: 0o700 });
     const left = fakeState(stranger.pid!, squat.port);
-    await writeFile(files.state, JSON.stringify(left));
+    await writeFile(files.state, JSON.stringify(left), { mode: 0o600 });
     const server = await enterSharedChat(AGENT, sharedDeps(paths));
     expect(server.pid).not.toBe(stranger.pid);
     expect(server.url).not.toBe(left.url);
@@ -274,8 +275,8 @@ describe('stopSharedChat', () => {
   it('names the pid of a server that does not answer, and kills nothing', { timeout: 30_000 }, async () => {
     const { paths, files } = await setup();
     const stranger = bystander();
-    await mkdir(files.dir, { recursive: true });
-    await writeFile(files.state, JSON.stringify(fakeState(stranger.pid!, await closedPort())));
+    await mkdir(files.dir, { recursive: true, mode: 0o700 });
+    await writeFile(files.state, JSON.stringify(fakeState(stranger.pid!, await closedPort())), { mode: 0o600 });
     await expect(stopSharedChat(AGENT, { paths })).rejects.toThrow(new RegExp(`pid ${stranger.pid}\\b`));
     expect(alive(stranger.pid!)).toBe(true);
   });
@@ -284,14 +285,127 @@ describe('stopSharedChat', () => {
     const { paths, files } = await setup();
     const stranger = bystander();
     const squat = await squatter();
-    await mkdir(files.dir, { recursive: true });
+    await mkdir(files.dir, { recursive: true, mode: 0o700 });
     const left = fakeState(stranger.pid!, squat.port);
-    await writeFile(files.state, JSON.stringify(left));
+    await writeFile(files.state, JSON.stringify(left), { mode: 0o600 });
     await expect(stopSharedChat(AGENT, { paths })).rejects.toThrow(new RegExp(`pid ${stranger.pid}\\b`));
     for (const request of squat.seen) {
       expect(request.url).toMatch(/^\/mcp\/proof\?/);
       expect(JSON.stringify(request.headers)).not.toContain(left.token);
     }
     expect(alive(stranger.pid!)).toBe(true);
+  });
+});
+
+/** A server that proves the token it was given, as ours would, and notes every request: only the trust checks keep it out. */
+async function lookalike(token: string) {
+  const seen: { url?: string; authorization?: string }[] = [];
+  let port = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    seen.push({ url: request.url, authorization: request.headers.authorization });
+    const nonce = new URL(request.url ?? '/', 'http://x').searchParams.get('nonce');
+    if (request.url?.startsWith('/mcp/proof?') && nonce) {
+      const proof = createHmac('sha256', token).update(`twake-chat-proof:${nonce}:${port}`).digest('hex');
+      return void response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ proof, pid: process.pid }));
+    }
+    response.writeHead(200, { 'content-type': 'application/json' }).end('{"jsonrpc":"2.0","id":"twake-ai-ping","result":{}}');
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  port = (server.address() as AddressInfo).port;
+  return { port, seen };
+}
+
+describe('a state file mcp-twake-ai does not trust', () => {
+  const token = 'e'.repeat(64);
+
+  async function planted(mutate: (files: ReturnType<typeof sharedChatFiles>, state: object, port: number) => Promise<void>) {
+    const { paths, files } = await setup();
+    const like = await lookalike(token);
+    await mkdir(files.dir, { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') await chmod(files.dir, 0o700);
+    const state = { ...fakeState(process.pid, like.port, token) };
+    await mutate(files, state, like.port);
+    return { paths, files, like };
+  }
+
+  const write = (file: string, state: object, mode = 0o600) => writeFile(file, JSON.stringify(state), { mode });
+
+  it('is a good one: the lookalike proves itself and is joined (the checks below are what keep it out)', { timeout: 30_000 }, async () => {
+    const { paths, like } = await planted((files, state) => write(files.state, state));
+    const joined = await enterSharedChat(AGENT, sharedDeps(paths));
+    expect(joined.token).toBe(token);
+    expect(like.seen.some((request) => request.authorization === `Bearer ${token}`)).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('is ignored when others can read or write it, said once, and a server of our own starts', { timeout: 30_000 }, async () => {
+    const { paths, files, like } = await planted(async (f, state) => {
+      await write(f.state, state, 0o644);
+      await chmod(f.state, 0o644);
+    });
+    const stderr: string[] = [];
+    const server = await enterSharedChat(AGENT, sharedDeps(paths, { stderr }));
+    expect(server.token).not.toBe(token);
+    expect(like.seen).toEqual([]);
+    expect(stderr.join('').split(files.state).length - 1).toBe(1);
+    expect(stderr.join('')).toMatch(/not mcp-twake-ai's|ignored/);
+  });
+
+  it.skipIf(process.platform === 'win32')('is ignored in a folder others can enter, and the folder is closed again', { timeout: 30_000 }, async () => {
+    const { paths, files, like } = await planted(async (f, state) => {
+      await write(f.state, state);
+      await chmod(f.dir, 0o755);
+    });
+    const server = await enterSharedChat(AGENT, sharedDeps(paths));
+    expect(server.token).not.toBe(token);
+    expect(like.seen).toEqual([]);
+    expect((await stat(files.dir)).mode & 0o777).toBe(0o700);
+  });
+
+  it('is ignored when it is a symbolic link', { timeout: 30_000 }, async () => {
+    let linked = true;
+    const { paths, like } = await planted(async (f, state) => {
+      const elsewhere = join(f.dir, '..', 'elsewhere.json');
+      await write(elsewhere, state);
+      await symlink(elsewhere, f.state).catch(() => (linked = false));
+    });
+    // Windows without the right to create links: nothing to check
+    if (!linked) return;
+    const server = await enterSharedChat(AGENT, sharedDeps(paths));
+    expect(server.token).not.toBe(token);
+    expect(like.seen).toEqual([]);
+  });
+
+  it.each([
+    ['another host', (port: number) => `http://192.0.2.1:${port}/mcp`],
+    ['https', (port: number) => `https://127.0.0.1:${port}/mcp`],
+    ['another path', (port: number) => `http://127.0.0.1:${port}/other`],
+    ['a user name', (port: number) => `http://someone@127.0.0.1:${port}/mcp`],
+    ['a query', (port: number) => `http://127.0.0.1:${port}/mcp?x=1`],
+    ['no port', () => `http://127.0.0.1/mcp`],
+  ])('is ignored when its URL has %s', { timeout: 30_000 }, async (_what, url) => {
+    const { paths, like } = await planted((f, state, port) => write(f.state, { ...state, url: url(port) }));
+    const server = await enterSharedChat(AGENT, sharedDeps(paths));
+    expect(server.token).not.toBe(token);
+    expect(like.seen).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('makes everything fail clearly in a folder of another account', { timeout: 30_000 }, async () => {
+    const { paths, files, like } = await planted((f, state) => write(f.state, state));
+    const deps = { ...sharedDeps(paths), uid: process.getuid!() + 1 };
+    await expect(enterSharedChat(AGENT, deps)).rejects.toThrow(files.dir);
+    await expect(stopSharedChat(AGENT, deps)).rejects.toThrow(files.dir);
+    expect(like.seen).toEqual([]);
+    expect(await readFile(files.log, 'utf8').catch(() => 'none')).toBe('none');
+  });
+
+  it.skipIf(process.platform === 'win32')('is not used to stop anything', { timeout: 30_000 }, async () => {
+    const { paths, files, like } = await planted(async (f, state) => {
+      await write(f.state, state, 0o644);
+      await chmod(f.state, 0o644);
+    });
+    await expect(stopSharedChat(AGENT, { paths })).rejects.toThrow(files.state);
+    expect(like.seen).toEqual([]);
   });
 });

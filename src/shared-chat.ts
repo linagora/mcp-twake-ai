@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { chmod, mkdir, open, readFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CATALOG } from './catalog.js';
 import { TwakeAiError } from './errors.js';
@@ -39,6 +39,8 @@ export interface SharedChatDeps {
   deviceId(): Promise<string>;
   stderr(text: string): void;
   readyMs?: number;
+  /** the account whose files these must be (POSIX; default: this process's) */
+  uid?: number;
 }
 
 export function sharedChatFiles(paths: AppPaths, agent: string): { dir: string; state: string; log: string } {
@@ -58,26 +60,77 @@ export async function supportsSharedHttp(paths: AppPaths): Promise<boolean> {
   }
 }
 
-/** A loopback http URL: the only kind the shared mode listens on, and the only kind the token goes to. */
-function loopback(url: string): boolean {
+/** http://127.0.0.1:<port>/mcp or http://localhost:<port>/mcp: what the shared mode publishes, and where the token may go. */
+function loopbackEndpoint(url: string): boolean {
   try {
     const u = new URL(url);
-    return u.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
+    return (
+      u.protocol === 'http:' &&
+      (u.hostname === '127.0.0.1' || u.hostname === 'localhost') &&
+      u.port !== '' &&
+      u.pathname === '/mcp' &&
+      u.search === '' &&
+      u.hash === '' &&
+      u.username === '' &&
+      u.password === '' &&
+      url === `http://${u.hostname}:${u.port}/mcp`
+    );
   } catch {
     return false;
   }
 }
 
-export async function readSharedState(file: string): Promise<SharedServer | undefined> {
+function parseState(text: string): (SharedServer & { url: string }) | undefined {
   try {
-    const s = JSON.parse(await readFile(file, 'utf8')) as Partial<SharedServer> & { version?: number };
+    const s = JSON.parse(text) as Partial<SharedServer> & { version?: number };
     if (s.version !== 1 || typeof s.url !== 'string' || typeof s.token !== 'string' || typeof s.pid !== 'number' || typeof s.deviceId !== 'string') return undefined;
-    if (!loopback(s.url)) return undefined;
     return { url: s.url, token: s.token, pid: s.pid, deviceId: s.deviceId };
   } catch {
     return undefined;
   }
 }
+
+/** The pid server.json names now, whoever wrote it: only to see a server go, never to use its token. */
+async function statePid(file: string): Promise<number | undefined> {
+  return parseState(await readFile(file, 'utf8').catch(() => ''))?.pid;
+}
+
+const notFound = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
+
+/**
+ * server.json, when mcp-twake-ai can trust it with a token: a regular file (not a link), and on POSIX, it and its folder
+ * this account's and closed to others (0600, 0700), with a loopback address. A folder of another account makes it fail;
+ * a file that is not to be trusted is `refused`, with the reason, and its token never used.
+ */
+async function trustedState(files: ReturnType<typeof sharedChatFiles>, uid: number | undefined): Promise<{ state?: SharedServer; refused?: string }> {
+  const posix = process.platform !== 'win32';
+  const folder = await lstat(files.dir).catch((error: unknown) => {
+    if (notFound(error)) return undefined;
+    throw error;
+  });
+  if (!folder) return {};
+  if (!folder.isDirectory() || (posix && uid !== undefined && folder.uid !== uid)) {
+    throw new TwakeAiError('insecure_file', `${files.dir} is not a folder of this account: mcp-twake-ai does not use it. Remove it, then run this command again.`);
+  }
+  const file = await lstat(files.state).catch((error: unknown) => {
+    if (notFound(error)) return undefined;
+    throw error;
+  });
+  if (!file) return {};
+  if (file.isSymbolicLink()) return { refused: 'it is a symbolic link' };
+  if (!file.isFile()) return { refused: 'it is not a file' };
+  if (posix) {
+    if (uid !== undefined && file.uid !== uid) return { refused: 'it belongs to another account' };
+    if (file.mode & 0o077) return { refused: 'other accounts can read or change it' };
+    if (folder.mode & 0o077) return { refused: `other accounts can enter ${files.dir}` };
+  }
+  const state = parseState(await readFile(files.state, 'utf8').catch(() => ''));
+  if (!state) return {};
+  if (!loopbackEndpoint(state.url)) return { refused: 'its address is not a loopback address of this computer' };
+  return { state };
+}
+
+const accountOf = (d: Pick<SharedChatDeps, 'uid'>) => d.uid ?? process.getuid?.();
 
 /**
  * The server of this state file, and nothing else, answers: it proves it holds the token (without the token going
@@ -105,8 +158,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function waitGone(file: string, pid: number): Promise<boolean> {
   const deadline = Date.now() + GONE_MS;
   while (Date.now() < deadline) {
-    const s = await readSharedState(file);
-    if (!s || s.pid !== pid) return true;
+    if ((await statePid(file)) !== pid) return true;
     await sleep(200);
   }
   return false;
@@ -125,7 +177,12 @@ async function lastLine(file: string): Promise<string> {
 export async function enterSharedChat(agent: string, d: SharedChatDeps): Promise<SharedServer> {
   const files = sharedChatFiles(d.paths, agent);
   const device = await d.deviceId();
-  const current = await readSharedState(files.state);
+  const { state: current, refused } = await trustedState(files, accountOf(d));
+  if (refused) {
+    // its token is never used; the folder is ours (trustedState checked it): the file goes, and our server writes its own
+    d.stderr(`mcp-twake-ai: ${files.state} is not to be trusted (${refused}): ignored, a shared Chat server of our own starts.\n`);
+    await unlink(files.state).catch(() => {});
+  }
   if (current && (await answers(current))) {
     if (current.deviceId === device) return current;
     // the agent has another device now: the server of the old one goes, by its route
@@ -171,7 +228,7 @@ async function start(agent: string, files: ReturnType<typeof sharedChatFiles>, d
   let retries = 0;
   let retryAt = 0;
   for (;;) {
-    const state = await readSharedState(files.state);
+    const { state } = await trustedState(files, accountOf(d));
     if (state && state.deviceId === device && (state.pid === child.pid || exited === STORE_IN_USE) && (await answers(state))) {
       // ours, or the one that won the store lock against ours
       return state;
@@ -215,9 +272,10 @@ async function stopServer(server: SharedServer): Promise<boolean> {
 }
 
 /** Stops the agent's shared server by its route (spec §3.3): logout, uninstall and login --chat. */
-export async function stopSharedChat(agent: string, d: Pick<SharedChatDeps, 'paths'>): Promise<'stopped' | 'none'> {
+export async function stopSharedChat(agent: string, d: Pick<SharedChatDeps, 'paths' | 'uid'>): Promise<'stopped' | 'none'> {
   const files = sharedChatFiles(d.paths, agent);
-  const state = await readSharedState(files.state);
+  const { state, refused } = await trustedState(files, accountOf(d));
+  if (refused) throw new TwakeAiError('insecure_file', `${files.state} is not to be trusted (${refused}): nothing was stopped. Remove it, then run this command again.`);
   if (!state) return 'none';
   if (!(await answers(state))) {
     throw new TwakeAiError('unavailable', `The shared Twake Chat server for ${agent} (pid ${state.pid}) does not answer: stop it, then run this command again.`);
