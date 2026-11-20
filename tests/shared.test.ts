@@ -189,6 +189,22 @@ describe('a shared service, when the server or a client goes away', () => {
     await expect.poll(() => alive(served.pid), { timeout: 15_000 }).toBe(false);
   });
 
+  it('lists a joining client before the last one leaving can look for clients', { timeout: 60_000 }, async () => {
+    const { paths } = await setup();
+    let leaving: ReturnType<typeof sharedCli> | undefined;
+    const { backend } = await enterSharedBackend({
+      ...(await backendOptions(paths)),
+      beforeRegister: async () => {
+        // the last client leaves at the worst moment: the server answers, and this client is not listed yet
+        leaving = sharedCli('leave', { paths, service: 'chat', agent: 'claude-code' });
+        expect(await leaving.next()).toBe('ready');
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      },
+    });
+    expect(await leaving!.next()).toBe('false');
+    expect(alive(backend.pid)).toBe(true);
+  });
+
   it('ignores the clients a server that is gone left behind', { timeout: 90_000 }, async () => {
     const { root, paths } = await setup();
     // what a crash or a reboot leaves: a client that never said it left, whose pid now belongs to someone else

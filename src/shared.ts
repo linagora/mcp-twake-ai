@@ -234,6 +234,8 @@ export interface SharedBackendOptions {
   idleMs?: number;
   /** aborted when the client is stopped during the start: the server it was starting goes with it */
   signal?: AbortSignal;
+  /** called as the client is about to list itself: where a test puts the last client leaving at the worst moment */
+  beforeRegister?: () => Promise<void>;
 }
 
 /** How long a backend that lives and does not answer is asked again: a sync that keeps it busy for longer is a hung one. */
@@ -453,13 +455,14 @@ export async function enterSharedBackend(options: SharedBackendOptions): Promise
     }
     const token = await readToken(dir);
     if (!token) throw new TwakeAiError('damaged_file', `The shared ${CATALOG[options.service].name} server of ${options.agent} lost its token: run mcp-twake-ai uninstall, then setup again.`);
-    await registerClient(dir);
+    await registerClient(dir, options);
     return { backend, token };
   }, { timeoutMs: LOCK_MS });
 }
 
 /** Marks this process as a client of the backend, before it connects. */
-async function registerClient(dir: string): Promise<void> {
+async function registerClient(dir: string, options: SharedBackendOptions): Promise<void> {
+  await options.beforeRegister?.();
   const clients = clientsDir(dir);
   await mkdir(clients, { recursive: true, mode: 0o700 });
   await writeFile(join(clients, String(process.pid)), '{}\n', { mode: 0o600, flag: 'w' });
