@@ -132,4 +132,16 @@ describe('loginChat and the shared server', () => {
     await expect.poll(() => alive(server.pid), { timeout: 10_000 }).toBe(false);
     expect(existsSync(join(dir, 'backend.json'))).toBe(false);
   });
+
+  it('signs the new device out when the shared server cannot be stopped, and keeps the previous one', { timeout: 30_000 }, async () => {
+    const { config, deps } = await setup();
+    const first = await loginChat(config, 'hermes', 'browser', deps, [0]);
+    const busy = await fakeBackend(sharedDir(deps.paths, 'chat', 'hermes'), 'busy');
+    backends.push(busy.child);
+
+    await expect(loginChat(first, 'hermes', 'browser', { ...deps, busyMs: 500 }, [0])).rejects.toMatchObject({ code: 'unavailable' });
+    // each try would otherwise leave one more device in the account, with nothing that knows of it
+    expect(synapse.loggedOut).toEqual(['DEVICE2']);
+    expect((await loadConfig(deps.paths))?.chat?.hermes?.deviceId).toBe('DEVICE1');
+  });
 });

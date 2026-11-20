@@ -391,9 +391,9 @@ export async function endSharedSession(backend: SharedBackend, token: string, se
   await answer?.body?.cancel().catch(() => {});
 }
 
-async function stopBackend(dir: string, options: { trusted?: boolean } = {}): Promise<void> {
+async function stopBackend(dir: string, options: { trusted?: boolean; busyMs?: number } = {}): Promise<void> {
   const backend = await readBackend(dir);
-  const state = !backend || !alive(backend.pid) ? 'foreign' : options.trusted ? 'ours' : await settleBackend(dir, backend, BUSY_MS);
+  const state = !backend || !alive(backend.pid) ? 'foreign' : options.trusted ? 'ours' : await settleBackend(dir, backend, options.busyMs ?? BUSY_MS);
   // a server that may be ours keeps its state: forgotten, it would run on with the Matrix device and nothing to stop it
   if (state === 'unknown') throw busyError(dir, backend!);
   if (backend && (state === 'ours' || state === 'stalled')) {
@@ -556,11 +556,11 @@ export async function stopShared(paths: AppPaths, service: ServiceId, agent: str
  * What `login --chat` does around the device swap: the backend keeps the store of the device it was started with, and
  * must not get the token of the next one; the next client starts a server on the new device.
  */
-export async function withSharedStopped<T>(paths: AppPaths, service: ServiceId, agent: string, fn: () => Promise<T>): Promise<T> {
+export async function withSharedStopped<T>(paths: AppPaths, service: ServiceId, agent: string, fn: () => Promise<T>, options: { busyMs?: number } = {}): Promise<T> {
   const dir = sharedDir(paths, service, agent);
   return withLock(paths.locksDir, sharedLock(dir), async () => {
     if (await readBackend(dir)) {
-      await stopBackend(dir);
+      await stopBackend(dir, options);
       await rm(dir, { recursive: true, force: true });
     }
     return fn();

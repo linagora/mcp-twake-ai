@@ -13,6 +13,8 @@ export interface ChatLoginDeps extends CallbackDeps {
   paths: AppPaths;
   vault: Vault;
   http: OidcHttp;
+  /** how long the agent's shared server is asked again when it does not answer, before the login gives up */
+  busyMs?: number;
 }
 
 /** Gives the agent its own Matrix device through single sign-on, and logs the agent's previous device out. */
@@ -43,7 +45,9 @@ export async function loginChat(
   const previous = config.chat?.[agent];
   // the agent's shared server goes first, and none starts before the new device is recorded: it would sync the old
   // device's store with the new device's token
-  const { old, updated } = await withSharedStopped(deps.paths, 'chat', agent, async () => {
+  let swapping = false;
+  const swapped = withSharedStopped(deps.paths, 'chat', agent, async () => {
+    swapping = true;
     const old = await withLock(deps.paths.locksDir, grant, async () => {
       // the previous device's credentials, read before they are replaced, to log that device out afterwards
       const oldDevice =
@@ -63,6 +67,12 @@ export async function loginChat(
     const updated: TwakeAiConfig = { ...config, chat: { ...config.chat, [agent]: { userId: session.userId, deviceId: session.deviceId } } };
     await saveConfig(deps.paths, updated);
     return { old, updated };
+  }, { busyMs: deps.busyMs });
+  const { old, updated } = await swapped.catch(async (error: unknown) => {
+    // the server could not be stopped, so nothing was swapped: the device just created would stay in the account, one
+    // more at every try, with nothing that knows of it (best effort: Twake Chat lists it otherwise)
+    if (!swapping) await logoutDevice(homeserver, agent, { accessToken: session.accessToken, refreshToken: session.refreshToken }, deps.http).catch(() => undefined);
+    throw error;
   });
   // best effort: a device left behind can still be removed from Twake Chat
   if (old) await logoutDevice(homeserver, agent, old, deps.http).catch(() => undefined);
