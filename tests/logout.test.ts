@@ -57,7 +57,7 @@ describe('logout', () => {
     const { paths, vault, config, refresh, device } = await signedIn();
     const result = await logout({ paths, config, vault, http: {} });
     expect(result.failed).toEqual([]);
-    expect(result.done).toEqual(['Twake session revoked', 'Twake Drive access removed', 'Twake Chat device of hermes signed out']);
+    expect(result.done).toEqual(['Twake Chat device of hermes signed out', 'Twake session revoked', 'Twake Drive access removed']);
     expect(idp.revoked).toEqual([refresh]);
     expect(cozy.deleted).toEqual([config.drive!.clientId]);
     expect(synapse.loggedOut).toEqual([device.deviceId]);
@@ -68,6 +68,22 @@ describe('logout', () => {
     expect(after).toMatchObject({ email: 'alice@example.com', agents: config.agents });
     expect(after?.drive).toBeUndefined();
     expect(after?.chat).toBeUndefined();
+  });
+
+  it('keeps every client from starting the Chat server again until the device is signed out', async () => {
+    const { paths, vault, config, device } = await signedIn();
+    let held: boolean | undefined;
+    const watching: typeof fetch = async (url, init) => {
+      // the moment the device is signed out: a client reconnecting now would start a server on tokens about to go
+      if (String(url).endsWith('/_matrix/client/v3/logout')) {
+        held = await withLock(paths.locksDir, 'shared-chat-hermes', async () => false, { timeoutMs: 300 }).catch((error: { code?: string }) => error.code === 'lock_timeout');
+      }
+      return fetch(url, init);
+    };
+    const result = await logout({ paths, config, vault, http: { fetch: watching } });
+    expect(result.failed).toEqual([]);
+    expect(synapse.loggedOut).toEqual([device.deviceId]);
+    expect(held).toBe(true);
   });
 
   it('goes on when a step fails, and says which one', async () => {
