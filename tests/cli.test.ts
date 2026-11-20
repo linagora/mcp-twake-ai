@@ -668,6 +668,20 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(token.err).toContain('mcp-twake-ai login');
   });
 
+  it('says it waits for a shared Chat server that is still starting before it logs out', { timeout: 60_000 }, async () => {
+    const deps = await signedIn();
+    expect(await main(['login', '--chat', '--agent', 'hermes'], captureIo(), deps)).toBe(0);
+    const starting = await fakeBackend(sharedDir(deps.paths, 'chat', 'hermes'), 'mcp', { listenAfterMs: 3_000, startedAt: Date.now(), readyMs: 60_000 });
+    try {
+      const io = captureIo();
+      expect(await main(['logout'], io, deps)).toBe(0);
+      expect(io.out).toContain('Waiting for the shared Twake Chat server');
+      expect(io.out).toContain('✓ mcp-twake-chat shared server of hermes stopped');
+    } finally {
+      starting.child.kill('SIGKILL');
+    }
+  });
+
   it('shows what uninstall removes, then removes it with --yes', async () => {
     const { deps, cursor } = await readyForSetup();
     expect(await main(['setup', '--agents', 'cursor,vscode', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
