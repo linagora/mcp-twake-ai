@@ -376,6 +376,20 @@ describe('a shared service, when the server or a client goes away', () => {
     await client.exited;
   });
 
+  it('closes the session it leaves behind when it finds its own server again', { timeout: 60_000 }, async () => {
+    const { root } = await setup();
+    const client = await launch(root);
+    await whoami(client);
+    // the port refuses for a moment: the relay looks for the server of the moment, and finds the same one
+    client.send({ id: 3, method: 'tools/call', params: { name: 'pause', arguments: {} } });
+    await client.next();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    client.send({ id: 4, method: 'tools/call', params: { name: 'sessions', arguments: {} } });
+    expect(JSON.parse((await client.next()).result.content[0].text).sessions).toBe(1);
+    client.close();
+    await client.exited;
+  });
+
   it('exits, so that the agent starts it again, when no server can be found any more', { timeout: 90_000 }, async () => {
     const { root, paths } = await setup();
     const client = await launch(root);

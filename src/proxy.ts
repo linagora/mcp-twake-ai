@@ -139,12 +139,21 @@ class Relay {
         } catch (error) {
           if (again || !(sessionGone(error) || (serverGone(error) && this.options.reconnect))) throw error;
           again = true;
-          await this.closeUpstream();
           if (sessionGone(error)) {
+            await this.closeUpstream();
             this.log(`the shared server closed its session: opening another one`);
           } else {
             this.log(`the shared server is gone: looking for the next one`);
-            await this.findServer();
+            const left = this.detachUpstream();
+            const was = { url: this.url, token: this.token };
+            await this.findServer().finally(async () => {
+              // the same server after all (its port refused for a moment): the session left behind is closed there,
+              // best effort and 2 s at most, instead of waiting for the server's 6-hour sweep
+              if (left && this.url === was.url && this.token === was.token) {
+                await Promise.race([left.terminateSession().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+              }
+              await left?.close().catch(() => {});
+            });
           }
         }
       } else {
@@ -299,6 +308,11 @@ class Relay {
   }
 
   private async closeUpstream(): Promise<void> {
+    await this.detachUpstream()?.close().catch(() => {});
+  }
+
+  /** Lets go of the session: nothing more is read from it, and it is not recorded any more. */
+  private detachUpstream(): StreamableHTTPClientTransport | undefined {
     const upstream = this.upstream;
     this.upstream = undefined;
     this.options.onSession?.(undefined);
@@ -307,7 +321,7 @@ class Relay {
       upstream.onmessage = undefined;
       upstream.onerror = undefined;
     }
-    await upstream?.close().catch(() => {});
+    return upstream;
   }
 
   /** Ends this client's session on the server, then the relay: the backend closes with its last client. */
