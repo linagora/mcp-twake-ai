@@ -35,6 +35,9 @@ import { runService } from './launcher.js';
 import { defaultServices, exportFiles, writeExport } from './exporter.js';
 import { ensureInstalled, prefixDir, type Runner } from './installer.js';
 import { join, posix, resolve as resolvePath, win32 } from 'node:path';
+import { userInfo } from 'node:os';
+import { cliSettingsFile, delegateCall, forgetUnattended, readCliSettings, UNATTENDED_NAME, writeCliSettings } from './cli-call.js';
+import { t } from './i18n.js';
 
 export interface Io {
   stdout(text: string): void;
@@ -75,6 +78,25 @@ export interface CliDeps {
   nodePath: string;
   cliPath: string;
   loopbackPorts?: number[];
+  /** the account's home folder as the system knows it (cli.json lives there, never under TWAKE_AI_HOME); undefined: none */
+  accountHome?: string;
+  /** stdin and stderr are a terminal and no agent started the command: allow-unattended may ask */
+  promptable?: boolean;
+  /** one answer typed on the terminal, the question written on stderr */
+  readAnswer?(question: string): Promise<string>;
+  /** node options put before cliPath when a command starts mcp-twake-ai again (tests: --import tsx) */
+  nodeArgs?: string[];
+  /** how call and tools give the server's command line our stdio: 'pipe' in tests */
+  childStdio?: 'inherit' | 'pipe';
+}
+
+/** The account's home folder as the system knows it, never $HOME; none if the system gives none (then no cli.json). */
+function accountHome(): string | undefined {
+  try {
+    return userInfo().homedir || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function defaultDeps(): CliDeps {
@@ -94,6 +116,10 @@ export function defaultDeps(): CliDeps {
     now: () => Math.floor(Date.now() / 1000),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     readLine: (question) => readLineFrom(process.stdin, process.stdout, question),
+    accountHome: accountHome(),
+    // the agent markers the servers know; cli.json may add some (checked again in allowUnattendedCommand)
+    promptable: Boolean(process.stdin.isTTY && process.stderr.isTTY && !process.env.CLAUDECODE && !process.env.HERMES_HOME),
+    readAnswer: (question) => readLineFrom(process.stdin, process.stderr, question),
     nodePath: process.execPath,
     cliPath: fileURLToPath(new URL('./bin.js', import.meta.url)),
   };
@@ -135,6 +161,9 @@ const USAGE = `usage:
   mcp-twake-ai status --print-env <service> [--agent <id>]
   mcp-twake-ai logout
   mcp-twake-ai uninstall [--yes] [--force] [--delete-chat-stores]
+  mcp-twake-ai tools <${SERVICE_IDS.join('|')}> [<tool>] [--json-output]
+  mcp-twake-ai call <${SERVICE_IDS.join('|')}> <tool> [the options of the server's call]
+  mcp-twake-ai allow-unattended <name> [--revoke]
   mcp-twake-ai --version
 `;
 
@@ -155,14 +184,18 @@ export async function main(argv: string[], io: Io, deps: CliDeps = defaultDeps()
   } catch (error) {
     failure = describeError(error);
     io.stderr(`mcp-twake-ai: ${failure}\n`);
-    code = error instanceof TwakeAiError && error.code === 'usage' ? 2 : 1;
+    // call and tools: 2 usage, 4 anything that kept the server's command line from running (spec CLI §2.1)
+    code = error instanceof TwakeAiError && error.code === 'usage' ? 2 : command === 'call' || command === 'tools' ? 4 : 1;
   }
   // token and run are called all day long by the servers: only their failures are worth a line
   // a finished uninstall has removed the journal: it must not come back
   // whatever its exit code (a revocation may have failed), once config.json is gone uninstall has removed its files
   const uninstalled = command === 'uninstall' && args.includes('--yes') && !(await stat(deps.paths.configFile).then(() => true, () => false));
-  if (!uninstalled && (code !== 0 || (command !== 'token' && command !== 'run'))) {
-    await journal(deps.paths, `${[command, ...args].join(' ')} → ${code}${failure ? `: ${failure.split('\n')[0]}` : ''}`);
+  // call and tools too, and never call's arguments: only the service and the tool
+  const quiet = ['token', 'run', 'call', 'tools'].includes(command ?? '');
+  const logged = command === 'call' || command === 'tools' ? [command, ...args.slice(0, 2).filter((arg) => !arg.startsWith('-'))] : [command, ...args];
+  if (!uninstalled && (code !== 0 || !quiet)) {
+    await journal(deps.paths, `${logged.join(' ')} → ${code}${failure ? `: ${failure.split('\n')[0]}` : ''}`);
   }
   return code;
 }
@@ -189,6 +222,23 @@ async function dispatch(command: string | undefined, args: string[], io: Io, dep
       return await exportCommand(args, io, deps);
     case 'run':
       return await runCommand(args, deps);
+    case 'tools':
+    case 'call':
+      return await delegateCall(command, args, {
+        paths: deps.paths,
+        config: await loadConfig(deps.paths),
+        context: (config) => catalogContext(config, deps),
+        env: deps.env,
+        nodePath: deps.nodePath,
+        nodeArgs: deps.nodeArgs ?? [],
+        cliPath: agentCliPath(deps),
+        runInstall: deps.runInstall,
+        stdio: deps.childStdio ?? 'inherit',
+        stdout: (text) => io.stdout(text),
+        stderr: (text) => io.stderr(text),
+      });
+    case 'allow-unattended':
+      return await allowUnattendedCommand(args, io, deps);
     default:
       io.stderr(USAGE);
       return 2;
@@ -322,6 +372,37 @@ async function runCommand(args: string[], d: CliDeps): Promise<number> {
     language: detectLanguage(d.env),
     timezone: systemTimezone(),
   });
+}
+
+/** allow-unattended <name> [--revoke]: the names whose `call --yes --as <name>` writes without a terminal (spec CLI §2.3). */
+async function allowUnattendedCommand(args: string[], io: Io, d: CliDeps): Promise<number> {
+  const { positionals, values } = usageErrors(() => parseArgs({ args, options: { revoke: { type: 'boolean' } }, allowPositionals: true, strict: true }));
+  const [name, ...extra] = positionals;
+  if (name === undefined || extra.length > 0) throw new TwakeAiError('usage', USAGE);
+  if (!UNATTENDED_NAME.test(name)) throw new TwakeAiError('usage', `"${name}" is not a valid name: use lowercase letters, digits and dashes (cron-agenda…).`);
+  if (d.accountHome === undefined) throw new TwakeAiError('unavailable', 'The system gives no home folder for this account: allowed names cannot be kept.');
+  const file = cliSettingsFile(d.platform, d.accountHome);
+  const settings = await readCliSettings(file);
+  const allowed = new Set(settings.allowedUnattended);
+  if (values.revoke) {
+    allowed.delete(name);
+    await writeCliSettings(file, { ...settings, allowedUnattended: [...allowed].sort() });
+    io.stdout(`--yes --as ${name} no longer approves anything.\n`);
+    return 0;
+  }
+  const agent = settings.agentMarkers.some((marker) => (d.env[marker] ?? '') !== '');
+  if (!d.promptable || !d.readAnswer || agent) {
+    throw new TwakeAiError('usage', 'allow-unattended asks you to confirm in a terminal: type it yourself, not from a script or an agent.');
+  }
+  const answer = await d.readAnswer(t(detectLanguage(d.env), 'cliAllowUnattendedConfirm', { name })).catch(() => '');
+  if (!['y', 'yes', 'o', 'oui'].includes(answer.trim().toLowerCase())) {
+    io.stdout('Nothing changed.\n');
+    return 1;
+  }
+  allowed.add(name);
+  await writeCliSettings(file, { ...settings, allowedUnattended: [...allowed].sort() });
+  io.stdout(`${name} may now write with --yes --as ${name}, for the six Twake.ai servers. Undo it with \`mcp-twake-ai allow-unattended ${name} --revoke\`.\n`);
+  return 0;
 }
 
 /** export --agent <id>: the configuration files for any agent, after installing the servers they start. */
@@ -638,6 +719,10 @@ async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number
   };
   report(await checkSession(broker), 'Twake session');
   if (config.drive) report(await checkDrive(broker), 'Twake Drive');
+  if (d.accountHome !== undefined) {
+    const allowed = await readCliSettings(cliSettingsFile(d.platform, d.accountHome)).then((s) => s.allowedUnattended, () => []);
+    if (allowed.length) io.stdout(`Allowed to write without a terminal: ${allowed.join(', ')}\n`);
+  }
   const adapters = await createAdapters({ platform: d.platform, env: d.env, home: d.home, now: () => new Date(d.now() * 1000) });
   const wanted = values.agents === undefined ? (Object.keys(config.agents ?? {}).filter(isAgentId) as AgentId[]) : values.agents.split(',').map((name) => name.trim());
   for (const name of wanted) {
@@ -685,6 +770,8 @@ async function logoutCommand(io: Io, d: CliDeps): Promise<number> {
   }
   const vault = await openVault(config.vault, d.paths);
   const { done, failed } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+  // signed out, nobody writes without a terminal any more: allowing again is typed again
+  if (d.accountHome !== undefined) await forgetUnattended(cliSettingsFile(d.platform, d.accountHome)).catch(() => undefined);
   for (const line of done) io.stdout(`✓ ${line}\n`);
   for (const line of failed) io.stdout(`✗ ${line}\n`);
   io.stdout(failed.length ? 'The secrets are forgotten here; what could not be revoked expires on its own, or can be removed from your Twake account.\n' : 'Signed out. Run mcp-twake-ai login to sign in again.\n');

@@ -210,6 +210,18 @@ claude mcp add twake-project --scope user \
 
 `mcp-twake-ai token <mail|dav|space|project>` prints `{"access_token": "...", "expires_at": <epoch s>}`. It serves the cached token while it is valid for more than 60 seconds, and otherwise renews it under a lock shared by every process, so several servers in several agents never spend the same refresh token twice. When the session has expired, it says to run `mcp-twake-ai login`.
 
+### From the command line: `tools` and `call`
+
+Each Twake.ai server has a command line (`npx mcp-twake-mail call …`). `mcp-twake-ai call` runs it with your Twake.ai sign-in:
+
+```sh
+npx mcp-twake-ai tools mail
+npx mcp-twake-ai call mail search_emails --arg participant=bob@example.com --arg limit=5
+npx mcp-twake-ai call dav get_events_in_range --arg when="next week" --arg calendar=mine --json-output
+```
+
+Typed by you in a terminal, a write is approved without a question (`--i` asks first). Started by an agent, it is refused: agents write through their MCP tools, which ask you. Without a terminal (cron), it needs `--yes --as <name>` for a name you allowed once, in a terminal, with `mcp-twake-ai allow-unattended <name>` (kept in `~/.config/twake-ai/cli.json`, shared with the servers; `status` lists the names, `logout` forgets them). Twake Chat needs a device for the command line: `mcp-twake-ai login --chat --agent cli`, once. Exit codes: 0 done, 1 the tool failed, 2 wrong command, 3 a write was not approved, 4 not signed in or the server could not be reached.
+
 ## Files
 
 | What                                       | Where (Linux, macOS)                                                                      |

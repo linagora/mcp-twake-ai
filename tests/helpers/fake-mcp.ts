@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CATALOG } from '../../src/catalog.js';
 import type { ServiceId } from '../../src/broker.js';
@@ -53,4 +53,23 @@ export function fakeNpm(paths: AppPaths): Runner & { calls: string[][] } {
   }) as Runner & { calls: string[][] };
   run.calls = calls;
   return run;
+}
+
+/** A server with a command line: `call`/`tools` print their arguments and the variables they got, then exit with FAKE_CALL_EXIT. */
+export const FAKE_CLI_MCP = `const [sub, ...rest] = process.argv.slice(2);
+if (sub === 'call' || sub === 'tools') {
+  process.stdout.write(JSON.stringify({ sub, rest, server: process.env.TWAKE_MCP_CLI_SERVER, lang: process.env.USER_LANGUAGE, home: process.env.TWAKE_AI_HOME }) + '\\n');
+  process.exit(Number(process.env.FAKE_CALL_EXIT ?? 0));
+}
+process.stdin.resume();
+`;
+
+/** Puts a server in the private prefix whose package.json declares (or not) a command line. */
+export async function installFakeCliMcp(paths: AppPaths, service: ServiceId, withCommandLine = true): Promise<void> {
+  await installFakeMcp(paths, service, FAKE_CLI_MCP);
+  const pkg = CATALOG[service];
+  const file = join(serverDir(paths, pkg.name), 'node_modules', pkg.name, 'package.json');
+  const json = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  if (withCommandLine) json.twake = { commandLine: 1 };
+  await writeFile(file, JSON.stringify(json));
 }

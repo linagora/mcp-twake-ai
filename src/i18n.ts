@@ -28,6 +28,7 @@ const EN = {
   shortcutNotInPath: 'Add {dir} to your PATH to type mcp-twake-ai from anywhere.',
   nothingChosen: 'No agent chosen: nothing to do.',
   failed: 'Setup stopped: {reason}',
+  cliAllowUnattendedConfirm: 'Let "{name}" write without asking you, whenever a command passes --yes --as {name}? [y/N] ',
 } as const;
 
 export type MessageKey = keyof typeof EN;
@@ -60,6 +61,7 @@ const FR: Record<MessageKey, string> = {
   shortcutNotInPath: 'Ajoutez {dir} à votre PATH pour taper mcp-twake-ai depuis n’importe où.',
   nothingChosen: 'Aucun agent choisi : rien à faire.',
   failed: 'Setup arrêté : {reason}',
+  cliAllowUnattendedConfirm: "Autoriser « {name} » à écrire sans vous demander, chaque fois qu'une commande passe --yes --as {name} ? [o/N] ",
 };
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = { en: EN, fr: FR };
