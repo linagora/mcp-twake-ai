@@ -464,7 +464,10 @@ describe('a shared service, when what answers on its port is not plainly its ser
     bystanders.push(busy.child);
     // logout tries it: a server it cannot reach is still a server that runs
     expect((await runningBackends(paths)).map((running) => running.backend.pid)).toEqual([busy.pid]);
-    await expect(stopShared(paths, 'chat', 'claude-code')).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(String(busy.pid)) });
+    const asked = Date.now();
+    await expect(stopShared(paths, 'chat', 'claude-code', { busyMs: 500 })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(String(busy.pid)) });
+    // asked again for as long as it was told, not the 10 s logout gives
+    expect(Date.now() - asked).toBeLessThan(5_000);
     expect(alive(busy.pid)).toBe(true);
     expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toEqual({ pid: busy.pid, port: busy.port });
   });

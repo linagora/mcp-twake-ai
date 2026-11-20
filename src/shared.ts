@@ -570,12 +570,15 @@ export async function stopSharedIfUnused(paths: AppPaths, service: ServiceId, ag
   return stopIfUnused(sharedDir(paths, service, agent), paths.locksDir);
 }
 
-/** Stops the backend of that agent, whoever still lists itself as a client: what `logout` and `uninstall` use. */
-export async function stopShared(paths: AppPaths, service: ServiceId, agent: string): Promise<boolean> {
+/**
+ * Stops the backend of that agent, whoever still lists itself as a client: what `logout` and `uninstall` use. `busyMs`:
+ * how long one that does not answer is asked again before this gives up (BUSY_MS).
+ */
+export async function stopShared(paths: AppPaths, service: ServiceId, agent: string, options: { busyMs?: number } = {}): Promise<boolean> {
   const dir = sharedDir(paths, service, agent);
   if (!(await readBackend(dir))) return false;
   await withLock(paths.locksDir, sharedLock(dir), async () => {
-    await stopBackend(dir);
+    await stopBackend(dir, options);
     await rm(dir, { recursive: true, force: true });
   }, { timeoutMs: LOCK_MS });
   return true;
