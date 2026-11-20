@@ -8,7 +8,8 @@ const sdk = (module: string) => pathToFileURL(join(fileURLToPath(new URL('../../
  * A streamable-HTTP MCP server standing in for mcp-twake-chat's shared mode: it reads MCP_HTTP_HOST, MCP_HTTP_PORT and
  * MCP_HTTP_TOKEN_FILE, keeps one MCP session per client over one process, answers `whoami` with its pid and environment,
  * and asks the client (elicitation/create) before answering `ask`. `forget` closes the session of its caller, as the
- * server's 6-hour idle sweep does, and `wait` writes what became of it (cancelled or not) next to the token file.
+ * server's 6-hour idle sweep does, and `wait` writes what became of it (cancelled or not) next to the token file. A
+ * request with no session is served statelessly, as the real server does.
  */
 export const FAKE_HTTP_MCP = `import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -63,7 +64,14 @@ const http = createServer(async (req, res) => {
     if (req.method === 'DELETE') sessions.delete(String(sid));
     return void (await session.transport.handleRequest(req, res, body));
   }
-  if (!body || body.method !== 'initialize') return void res.writeHead(400).end();
+  // as the real server: a request with no session (the ping that tells our server from a stranger) is served statelessly
+  if (!body || body.method !== 'initialize') {
+    const mcp = newServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on('close', () => void transport.close());
+    await mcp.connect(transport);
+    return void (await transport.handleRequest(req, res, body));
+  }
   const mcp = newServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID(), onsessioninitialized: (id) => sessions.set(id, { transport, mcp }) });
   await mcp.connect(transport);

@@ -5,8 +5,11 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { alive, runningBackends, sharedDir, stopShared } from '../src/shared.js';
+import { alive, enterSharedBackend, runningBackends, sharedDir, stopShared, type SharedBackendOptions } from '../src/shared.js';
 import { saveConfig, type TwakeAiConfig } from '../src/config.js';
+import { entryPoint } from '../src/installer.js';
+import type { AppPaths } from '../src/paths.js';
+import { fakeBackend } from './helpers/fake-backend.js';
 import { FAKE_HTTP_MCP } from './helpers/fake-http-mcp.js';
 import { installFakeMcp } from './helpers/fake-mcp.js';
 import { tempPaths } from './helpers/tmp.js';
@@ -265,5 +268,58 @@ describe('a shared service, when the server or a client goes away', () => {
     running.push(watcher as ChildProcessWithoutNullStreams);
     await expect.poll(() => alive(pid), { timeout: 30_000 }).toBe(false);
     expect(await runningBackends(paths)).toEqual([]);
+  });
+});
+
+/** What `run` gives `enterSharedBackend`, with the fake server as the backend. */
+async function backendOptions(paths: AppPaths): Promise<SharedBackendOptions> {
+  return {
+    paths,
+    service: 'chat',
+    agent: 'claude-code',
+    env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+    nodePath: process.execPath,
+    entry: await entryPoint(paths, 'chat'),
+    cliPath: join(repoRoot, 'src', 'bin.ts'),
+  };
+}
+
+describe('a shared service, when what answers on its port is not plainly its server', () => {
+  it('takes a server that answers its ping with the token of that start for its own', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const server = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'mcp');
+    bystanders.push(server.child);
+    expect((await runningBackends(paths)).map((running) => running.backend)).toEqual([{ pid: server.pid, port: server.port }]);
+  });
+
+  it('never takes a port that answers anything but JSON-RPC for its server', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const stranger = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'html');
+    bystanders.push(stranger.child);
+    expect(await runningBackends(paths)).toEqual([]);
+    expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
+    expect(alive(stranger.pid)).toBe(true);
+  });
+
+  it('keeps a server too busy to answer, and starts no second one on its store', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const dir = sharedDir(paths, 'chat', 'claude-code');
+    const busy = await fakeBackend(dir, 'busy');
+    bystanders.push(busy.child);
+    await expect(enterSharedBackend({ ...(await backendOptions(paths)), busyMs: 1_000 })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(String(busy.pid)) });
+    expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toEqual({ pid: busy.pid, port: busy.port });
+    expect(alive(busy.pid)).toBe(true);
+  });
+
+  it('neither stops nor forgets a server too busy to answer, and says so', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    const dir = sharedDir(paths, 'chat', 'claude-code');
+    const busy = await fakeBackend(dir, 'busy');
+    bystanders.push(busy.child);
+    // logout tries it: a server it cannot reach is still a server that runs
+    expect((await runningBackends(paths)).map((running) => running.backend.pid)).toEqual([busy.pid]);
+    await expect(stopShared(paths, 'chat', 'claude-code')).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(String(busy.pid)) });
+    expect(alive(busy.pid)).toBe(true);
+    expect(JSON.parse(await readFile(join(dir, 'backend.json'), 'utf8'))).toEqual({ pid: busy.pid, port: busy.port });
   });
 });

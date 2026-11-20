@@ -87,38 +87,98 @@ export function alive(pid: number): boolean {
   }
 }
 
-/** True when something accepts connections on the port: a backend that is still starting answers nothing yet. */
-export function listening(port: number, timeoutMs = 500): Promise<boolean> {
+/**
+ * Whether something accepts connections on the port: `refused` when nothing does (a backend that is still starting
+ * answers nothing yet), `silent` when the connection neither opens nor fails in time — the kernel accepts for a process
+ * whatever its load, so that one is not taken for a no.
+ */
+function connects(port: number, timeoutMs = 500): Promise<'open' | 'refused' | 'silent'> {
   return new Promise((resolve) => {
     const socket = connect({ host: SHARED_HOST, port });
-    const done = (open: boolean) => {
+    const done = (state: 'open' | 'refused' | 'silent') => {
       socket.removeAllListeners();
       socket.destroy();
-      resolve(open);
+      resolve(state);
     };
-    socket.setTimeout(timeoutMs, () => done(false));
-    socket.once('connect', () => done(true));
-    socket.once('error', () => done(false));
+    socket.setTimeout(timeoutMs, () => done('silent'));
+    socket.once('connect', () => done('open'));
+    socket.once('error', () => done('refused'));
   });
 }
 
 /**
- * True when the process of `backend.json` is really our server, and not an unrelated process that inherited its pid after
- * a reboot: the port answers, and `/mcp` takes our token, which was generated for this start and lived in a 0600 file.
- * Anything else answers 401 (the token is wrong) or nothing at all (the port is closed, or something else holds it).
+ * What the process of `backend.json` is: `ours`, `foreign`, or `unknown` when it does not say in time.
+ *
+ * - ours: the port answers our ping with JSON-RPC, and `/mcp` took our token, which was generated for this start and
+ *   lived in a 0600 file.
+ * - foreign: the process is gone, or the port is closed, or it turns our token down (401), or something answers that
+ *   speaks no JSON-RPC — an unrelated process that inherited the pid after a reboot, or that holds the port.
+ * - unknown: the process lives and the port is open, but no answer came (a Matrix sync keeping the server busy, a
+ *   laptop waking up). Its state must not be forgotten then: the next client would start a second server on the same
+ *   store, and nothing could stop the first one any more.
  */
-export async function isBackend(dir: string, backend: SharedBackend): Promise<boolean> {
+export type BackendState = 'ours' | 'foreign' | 'unknown';
+
+export async function probeBackend(dir: string, backend: SharedBackend): Promise<BackendState> {
   const token = await readToken(dir);
-  if (!token || !alive(backend.pid) || !(await listening(backend.port))) return false;
-  const answer = await fetch(backendUrl(backend), {
-    method: 'POST',
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 'mcp-twake-ai', method: 'ping' }),
-    signal: AbortSignal.timeout(2_000),
-  }).catch(() => undefined);
-  if (!answer) return false;
-  await answer.body?.cancel().catch(() => {});
-  return answer.status !== 401;
+  if (!token || !alive(backend.pid)) return 'foreign';
+  const port = await connects(backend.port);
+  if (port !== 'open') return port === 'refused' ? 'foreign' : 'unknown';
+  try {
+    const answer = await fetch(backendUrl(backend), {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'mcp-twake-ai', method: 'ping' }),
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (answer.status === 401) {
+      await answer.body?.cancel().catch(() => {});
+      return 'foreign';
+    }
+    return isJsonRpc(await answer.text()) ? 'ours' : 'foreign';
+  } catch {
+    // a timeout, or a connection reset while it answered: nothing says it is not ours
+    return 'unknown';
+  }
+}
+
+/**
+ * True when the body is a JSON-RPC answer, plain or as a server-sent event: a result, or an error the MCP transport
+ * gives (a server that wants a session first) — either way, an MCP server that took our token.
+ */
+function isJsonRpc(body: string): boolean {
+  const candidates = body.trimStart().startsWith('{') ? [body] : body.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5));
+  return candidates.some((text) => {
+    try {
+      const message = JSON.parse(text) as { jsonrpc?: unknown; result?: unknown; error?: unknown };
+      return message.jsonrpc === '2.0' && ('result' in message || 'error' in message);
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * The state of a backend that may be busy: asked again until it says, for `busyMs` at most. Still unknown then, it is
+ * reported as such, and the caller fails rather than guess.
+ */
+async function settleBackend(dir: string, backend: SharedBackend, busyMs: number): Promise<BackendState> {
+  const deadline = Date.now() + busyMs;
+  for (;;) {
+    const state = await probeBackend(dir, backend);
+    if (state !== 'unknown' || Date.now() >= deadline) return state;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+/** The error of a backend that lives and does not answer: nothing is started over it, nothing is stopped blindly. */
+function busyError(dir: string, backend: SharedBackend): TwakeAiError {
+  const [service, ...agent] = (dir.split(/[\\/]/).at(-1) ?? '').split('-');
+  const name = CATALOG[service as ServiceId]?.name ?? service;
+  return new TwakeAiError(
+    'unavailable',
+    `The shared ${name} server of ${agent.join('-')} (pid ${backend.pid}) runs but does not answer: try again in a moment. If it stays so, stop that process, then try again; its log is ${logFile(dir)}.`,
+  );
 }
 
 /** A port nobody holds right now: the backend is asked to listen on it (MCP_HTTP_PORT takes no 0). */
@@ -147,7 +207,12 @@ export interface SharedBackendOptions {
   cliPath: string;
   /** how long a starting backend may take to accept connections: Matrix signs in and syncs its rooms first */
   readyMs?: number;
+  /** how long a running backend that does not answer is asked again before the client gives up */
+  busyMs?: number;
 }
+
+/** How long a backend that lives and does not answer is asked again: a sync that keeps it busy for longer is a hung one. */
+const BUSY_MS = 10_000;
 
 async function startBackend(options: SharedBackendOptions, dir: string): Promise<SharedBackend> {
   const port = await freePort();
@@ -177,7 +242,7 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
   await writePrivateFile(backendFile(dir), `${JSON.stringify(backend)}\n`);
   const deadline = Date.now() + (options.readyMs ?? 60_000);
   while (Date.now() < deadline) {
-    if (await listening(port)) {
+    if ((await connects(port)) === 'open') {
       await watchBackend(options, dir);
       return backend;
     }
@@ -235,7 +300,8 @@ export async function watchShared(shared: string, locksDir: string, options: Wat
       continue;
     }
     if (Date.now() - idleSince < idleMs) continue;
-    if (await stopIfUnused(shared, locksDir)) return;
+    // a backend that does not answer is neither stopped nor forgotten: the next look tries again
+    if (await stopIfUnused(shared, locksDir).catch(() => false)) return;
     idleSince = Date.now();
   }
 }
@@ -277,7 +343,10 @@ async function endSession(backend: SharedBackend, token: string, session: string
 
 async function stopBackend(dir: string, options: { trusted?: boolean } = {}): Promise<void> {
   const backend = await readBackend(dir);
-  if (backend && alive(backend.pid) && (options.trusted || (await isBackend(dir, backend)))) {
+  const state = !backend || !alive(backend.pid) ? 'foreign' : options.trusted ? 'ours' : await settleBackend(dir, backend, BUSY_MS);
+  // a server that may be ours keeps its state: forgotten, it would run on with the Matrix device and nothing to stop it
+  if (state === 'unknown') throw busyError(dir, backend!);
+  if (backend && state === 'ours') {
     // close the sessions first: every client's stream ends, and the Matrix client sees its clients go before it closes
     const token = await readToken(dir);
     if (token) for (const session of await recordedSessions(dir)) await endSession(backend, token, session);
@@ -323,7 +392,10 @@ export async function enterSharedBackend(options: SharedBackendOptions): Promise
   const wait = (options.readyMs ?? 60_000) + 10_000;
   return withLock(options.paths.locksDir, sharedLock(dir), async () => {
     const state = await readBackend(dir);
-    let backend = state && (await isBackend(dir, state)) ? state : undefined;
+    const known = state ? await settleBackend(dir, state, options.busyMs ?? BUSY_MS) : 'foreign';
+    // a second server on the same store is what this whole folder prevents: better no Chat for now than two
+    if (state && known === 'unknown') throw busyError(dir, state);
+    let backend = known === 'ours' ? state : undefined;
     if (!backend) {
       // a backend that was killed, or whose port was taken meanwhile: its state is worthless
       await rm(backendFile(dir), { force: true });
@@ -403,9 +475,10 @@ export async function runningBackends(paths: AppPaths): Promise<{ service: Servi
     const [service, ...rest] = name.split('-');
     const agent = rest.join('-');
     if (!isSharedService(service as ServiceId) || !agent) continue;
-    // a backend.json survives a reboot, and its pid may now belong to another process: only our server is reported
+    // a backend.json survives a reboot, and its pid may now belong to another process: only our server is reported, or
+    // one too busy to say, which `logout` must still try to stop
     const backend = await readBackend(join(root, name));
-    if (backend && (await isBackend(join(root, name), backend))) found.push({ service: service as ServiceId, agent, backend });
+    if (backend && (await probeBackend(join(root, name), backend)) !== 'foreign') found.push({ service: service as ServiceId, agent, backend });
   }
   return found;
 }
