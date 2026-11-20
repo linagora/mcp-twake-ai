@@ -328,7 +328,15 @@ export interface WatchOptions {
   idleMs?: number;
   /** how often the clients are looked at */
   intervalMs?: number;
+  /** how long the server may take connections and answer none before it is taken for hung, and stopped */
+  frozenMs?: number;
 }
+
+/**
+ * How long a server may go on not answering before its watchdog stops it, clients or not: every client waits on it, and
+ * a Matrix sync never keeps the event loop busy for minutes. The clients then find the port refused, and start the next.
+ */
+const FROZEN_MS = 5 * 60_000;
 
 /**
  * Stops a backend nobody uses any more. Under the lock of the pair, and looking at the clients again: a client that
@@ -340,10 +348,18 @@ export async function watchShared(shared: string, locksDir: string, options: Wat
   // idle since the first look that found no client, not since the last one that found some: after a laptop's sleep,
   // every client's entry is old until its next heartbeat, and that is no reason to stop a server in use
   let idleSince: number | undefined = Date.now();
+  let frozenSince: number | undefined;
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     const backend = await readBackend(shared);
     if (!backend || backend.pid !== options.pid || !alive(backend.pid)) return;
+    // its own server, handed by the start (not read from a file a reboot left), that takes connections and answers none
+    if ((await probeBackend(shared, backend)) === 'unknown' && !starting(backend)) {
+      frozenSince ??= Date.now();
+      if (Date.now() - frozenSince >= (options.frozenMs ?? FROZEN_MS) && (await stopFrozen(shared, locksDir, options.pid).catch(() => false))) return;
+    } else {
+      frozenSince = undefined;
+    }
     if ((await livingClients(clientsDir(shared), CLIENT_STALE_MS)) > 0) {
       idleSince = undefined;
       continue;
@@ -524,6 +540,16 @@ async function livingClients(dir: string, staleMs?: number): Promise<number> {
 /** Forgets this client of the backend. */
 export async function leaveSharedClient(paths: AppPaths, service: ServiceId, agent: string): Promise<void> {
   await rm(join(clientsDir(sharedDir(paths, service, agent)), String(process.pid)), { force: true });
+}
+
+/** Stops a hung server under the lock of its pair, if `backend.json` still names the one the watchdog was given. */
+async function stopFrozen(dir: string, locksDir: string, pid: number): Promise<boolean> {
+  return withLock(locksDir, sharedLock(dir), async () => {
+    if ((await readBackend(dir))?.pid !== pid) return false;
+    await stopBackend(dir, { trusted: true });
+    await rm(dir, { recursive: true, force: true });
+    return true;
+  }, { timeoutMs: LOCK_MS });
 }
 
 async function stopIfUnused(dir: string, locksDir: string, staleMs?: number): Promise<boolean> {

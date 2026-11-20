@@ -511,6 +511,16 @@ describe('the watchdog of a shared server', () => {
     }
   });
 
+  it('stops its server once it has stopped answering for good', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    // the port takes connections, and nothing ever answers: a hung event loop, which every client waits on
+    const frozen = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'busy');
+    bystanders.push(frozen.child);
+    const watching = watchShared(sharedDir(paths, 'chat', 'claude-code'), paths.locksDir, { pid: frozen.pid, idleMs: 60_000, intervalMs: 100, frozenMs: 1_000 });
+    await Promise.race([watching, new Promise((resolve) => setTimeout(resolve, 10_000))]);
+    expect(alive(frozen.pid)).toBe(false);
+  });
+
   it('leaves alone a server started after its own one', { timeout: 30_000 }, async () => {
     const { paths } = await setup();
     const dir = sharedDir(paths, 'chat', 'claude-code');
