@@ -21,6 +21,12 @@ npx mcp-twake-ai setup
 
 You type your email address and sign in once at your Twake.ai identity provider. `mcp-twake-ai` finds your services, writes them into the agents you choose, then stays behind as their token broker: the refresh token sits in your operating system's keychain, and each MCP server gets a fresh access token whenever it needs one. No password or token is written into an agent's configuration.
 
+It also gives you:
+
+- **The servers' command line, with your sign-in**: `mcp-twake-ai call <service> <tool>` and `mcp-twake-ai tools <service>` run the tools of the servers you installed from a terminal or a script. A write you type in a terminal is approved without a question (`--i` asks first); a write started by an agent is refused, since agents write through their MCP tools, which ask you; without a terminal (cron), a write needs `--yes --as <name>`, for a name you allowed once in a terminal with `mcp-twake-ai allow-unattended <name>` (see [From the command line](#from-the-command-line-tools-and-call)).
+- **One approval for a series of writes**: `setup` installs the `twake-batch-approval` skill for Claude Code and Hermes. Before several writes, the agent asks you once for the exact list with the servers' `approve_batch`, then makes each listed call without another question, once, within 15 minutes; anything not in the list asks as usual (see [Use it from Claude Code](#use-it-from-claude-code)).
+- **One Twake Chat server per agent**: every client of an agent (two Claude Code windows, the Hermes gateway, `mcp-twake-ai call chat`) joins the Chat server the first one started, so they use Chat at the same time on one device; it stops after 10 minutes without a client (see [One Twake Chat server per agent](#check-sign-out-uninstall)).
+
 ## Part of Twake.ai
 
 [Twake.ai](https://twake.ai) is the truly open source and sovereign Digital Workplace developed by [LINAGORA](https://linagora.com): Twake Mail, Twake Calendar, Twake Drive, Twake Chat, Twake Space and Twake Visio with a single account, hosted in France or on your own infrastructure.
