@@ -1,17 +1,18 @@
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { posix, join, win32 } from 'node:path';
 import { isServiceId, SERVICE_IDS, type ServiceId } from './broker.js';
 import { CATALOG, serviceEnv, type CatalogContext } from './catalog.js';
 import type { TwakeAiConfig } from './config.js';
 import { TwakeAiError } from './errors.js';
-import { readPrivateJson, writePrivateFile } from './files.js';
+import { writePrivateFile } from './files.js';
 import { entryPoint, ensureInstalled, serverDir, type Runner } from './installer.js';
 import type { AppPaths } from './paths.js';
 
 /**
  * `mcp-twake-ai call|tools <service> …`: the installed server's own command line, started with the Twake.ai
- * sign-in, its server being `mcp-twake-ai run <service> --agent cli` as agents start it (spec CLI §4).
+ * sign-in, the server started as for the agent `cli`: Chat through `run chat --agent cli` (its shared server), the
+ * others directly with the environment `run` would build (spec CLI §4).
  */
 export const CLI_AGENT = 'cli';
 
@@ -33,17 +34,28 @@ export interface CliSettings {
 
 export const UNATTENDED_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
-/** The same rules as the servers': a damaged file is an error, never an empty list written over it. */
-export async function readCliSettings(file: string): Promise<CliSettings> {
+/**
+ * The servers' rules exactly (src/cli-call/settings.ts there): a file other accounts may write is refused, one they
+ * may only read is fine; a damaged file is an error, never an empty list written over it.
+ */
+export async function readCliSettings(file: string, platform: NodeJS.Platform = process.platform): Promise<CliSettings> {
+  let text: string;
+  try {
+    if (platform !== 'win32' && ((await stat(file)).mode & 0o022) !== 0) {
+      throw new TwakeAiError('insecure_file', `${file} may be written by other accounts: run \`chmod 600 ${file}\`, or delete it.`);
+    }
+    text = await readFile(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, allowedUnattended: [], agentMarkers: [] };
+    throw error;
+  }
   const damaged = new TwakeAiError('damaged_file', `${file} is damaged: fix it, or delete it to start again with no allowed names.`);
   let raw: unknown;
   try {
-    raw = await readPrivateJson(file);
-  } catch (error) {
-    if (error instanceof SyntaxError) throw damaged;
-    throw error;
+    raw = JSON.parse(text) as unknown;
+  } catch {
+    throw damaged;
   }
-  if (raw === undefined) return { version: 1, allowedUnattended: [], agentMarkers: [] };
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw damaged;
   const { version, allowedUnattended = [], agentMarkers = [] } = raw as Record<string, unknown>;
   const strings = (value: unknown, pattern: RegExp) => Array.isArray(value) && value.every((v) => typeof v === 'string' && pattern.test(v));
@@ -109,7 +121,9 @@ export async function delegateCall(command: 'call' | 'tools', args: string[], d:
   const env = {
     ...d.env,
     ...serviceEnv(service, CLI_AGENT, d.context(d.config)),
-    TWAKE_MCP_CLI_SERVER: JSON.stringify([d.nodePath, ...d.nodeArgs, d.cliPath, 'run', service, '--agent', CLI_AGENT]),
+    // Chat goes through `run` and its shared server; the others are started directly with the environment above,
+    // so closing the call closes them (on Windows a signal to `run` would not reach its child)
+    TWAKE_MCP_CLI_SERVER: JSON.stringify(service === 'chat' ? [d.nodePath, ...d.nodeArgs, d.cliPath, 'run', service, '--agent', CLI_AGENT] : [d.nodePath, entry]),
   };
   return new Promise((resolve, reject) => {
     const child = spawn(d.nodePath, [entry, command, ...rest], { stdio: d.stdio, env, windowsHide: true });

@@ -771,7 +771,9 @@ async function logoutCommand(io: Io, d: CliDeps): Promise<number> {
   const vault = await openVault(config.vault, d.paths);
   const { done, failed } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
   // signed out, nobody writes without a terminal any more: allowing again is typed again
-  if (d.accountHome !== undefined) await forgetUnattended(cliSettingsFile(d.platform, d.accountHome)).catch(() => undefined);
+  if (d.accountHome !== undefined) {
+    await forgetUnattended(cliSettingsFile(d.platform, d.accountHome)).catch((error) => io.stderr(`The names allowed to write without a terminal are kept: ${describeError(error)}\n`));
+  }
   for (const line of done) io.stdout(`✓ ${line}\n`);
   for (const line of failed) io.stdout(`✗ ${line}\n`);
   io.stdout(failed.length ? 'The secrets are forgotten here; what could not be revoked expires on its own, or can be removed from your Twake account.\n' : 'Signed out. Run mcp-twake-ai login to sign in again.\n');
@@ -827,6 +829,10 @@ async function uninstallCommand(args: string[], io: Io, d: CliDeps): Promise<num
   if (config) {
     const vault = await openVault(config.vault, d.paths);
     const { done: revoked, failed: notRevoked } = await logout({ paths: d.paths, config, vault, http: { fetch: d.fetch, now: d.now, sleep: d.sleep } });
+    // the servers' cli.json outlives mcp-twake-ai's files: its allowed names go with the sign-in (spec CLI §4)
+    if (d.accountHome !== undefined) {
+      await forgetUnattended(cliSettingsFile(d.platform, d.accountHome)).catch((error) => io.stderr(`The names allowed to write without a terminal are kept: ${describeError(error)}\n`));
+    }
     for (const line of revoked) io.stdout(`✓ ${line}\n`);
     for (const line of notRevoked) io.stdout(`✗ ${line}\n`);
     revocationFailed = notRevoked.length > 0;

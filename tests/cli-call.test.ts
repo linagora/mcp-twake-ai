@@ -1,8 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { main, type CliDeps } from '../src/cli.js';
 import { cliSettingsFile } from '../src/cli-call.js';
 import { saveConfig } from '../src/config.js';
+import { entryPoint } from '../src/installer.js';
 import { journalFile } from '../src/journal.js';
 import { fakeNpm, installFakeCliMcp } from './helpers/fake-mcp.js';
 import { captureIo, cliDeps } from './helpers/cli-deps.js';
@@ -33,7 +35,8 @@ describe('mcp-twake-ai call / tools', { timeout: 30_000 }, () => {
     const seen = JSON.parse(r.out) as { sub: string; rest: string[]; server: string; lang: string; home: string };
     expect(seen.sub).toBe('call');
     expect(seen.rest).toEqual(['search_emails', '--arg', 'participant=bob@x', '--yes', '--as', 'cron']);
-    expect(JSON.parse(seen.server)).toEqual([d.nodePath, ...(d.nodeArgs ?? []), d.cliPath, 'run', 'mail', '--agent', 'cli']);
+    // no `run` in between for a stdio server: nothing is left behind when the call closes it (Windows has no signal to relay)
+    expect(JSON.parse(seen.server)).toEqual([d.nodePath, await entryPoint(d.paths, 'mail')]);
     expect(seen.lang).toBe('en');
     expect(seen.home).toBe(d.env.TWAKE_AI_HOME);
   });
@@ -43,6 +46,14 @@ describe('mcp-twake-ai call / tools', { timeout: 30_000 }, () => {
     expect(JSON.parse((await cli(['tools', 'mail', 'search_emails'], d)).out)).toMatchObject({ sub: 'tools', rest: ['search_emails'] });
     d.env.FAKE_CALL_EXIT = '3';
     expect((await cli(['call', 'mail', 'send_email'], d)).code).toBe(3);
+  });
+
+  it('starts Chat through `run`, so a call joins the shared Chat server', async () => {
+    const d = await ready();
+    await saveConfig(d.paths, { ...sampleConfig, chat: { cli: { userId: '@jdoe:linagora.com', deviceId: 'DEVICECLI' } } });
+    await installFakeCliMcp(d.paths, 'chat');
+    const seen = JSON.parse((await cli(['call', 'chat', 'list_rooms'], d)).out) as { server: string };
+    expect(JSON.parse(seen.server)).toEqual([d.nodePath, ...(d.nodeArgs ?? []), d.cliPath, 'run', 'chat', '--agent', 'cli']);
   });
 
   it('exits 4 for a server version without a command line', async () => {
@@ -88,5 +99,38 @@ describe('mcp-twake-ai allow-unattended', () => {
     expect((await cli(['status', '--no-start'], d)).out).toContain('Allowed to write without a terminal: cron-agenda');
     await cli(['logout'], d);
     expect(await allowedIn(d)).toEqual([]);
+  });
+});
+
+describe('mcp-twake-ai and the servers read cli.json the same way', () => {
+  it('forgets the allowed names on uninstall', async () => {
+    const d = await ready({ promptable: true, readAnswer: async () => 'y' });
+    await saveConfig(d.paths, { ...sampleConfig, drive: undefined, chat: undefined });
+    await cli(['allow-unattended', 'cron-agenda'], d);
+    await cli(['uninstall', '--yes'], d);
+    expect(await allowedIn(d)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('takes a cli.json other accounts may read but not write, as the servers do', async () => {
+    const d = await ready({ promptable: true, readAnswer: async () => 'y' });
+    await saveConfig(d.paths, { ...sampleConfig, drive: undefined, chat: undefined });
+    const file = cliSettingsFile(d.platform, d.accountHome!);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, '{"version":1,"allowedUnattended":["cron-x"],"agentMarkers":[]}');
+    await chmod(file, 0o644);
+    expect((await cli(['status', '--no-start'], d)).out).toContain('Allowed to write without a terminal: cron-x');
+    await cli(['logout'], d);
+    expect(await allowedIn(d)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('says so when logout cannot forget the names', async () => {
+    const d = await ready();
+    await saveConfig(d.paths, { ...sampleConfig, drive: undefined, chat: undefined });
+    const file = cliSettingsFile(d.platform, d.accountHome!);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, '{"version":1,"allowedUnattended":["cron-x"],"agentMarkers":[]}');
+    await chmod(file, 0o666);
+    const r = await cli(['logout'], d);
+    expect(r.err).toContain(file);
   });
 });
