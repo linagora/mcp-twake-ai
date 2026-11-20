@@ -696,7 +696,12 @@ async function statusCommand(args: string[], io: Io, d: CliDeps): Promise<number
       io.stdout(`  ${mark(chat)} Twake Chat (${name}): ${chat.detail}\n`);
       // the one Matrix process every client of this agent talks to, while at least one runs
       const backend = shared.find((running) => running.service === 'chat' && running.agent === name);
-      if (backend) io.stdout(`  ✓ Twake Chat shared server (${name}): 127.0.0.1:${backend.backend.port}\n`);
+      if (backend?.answers) io.stdout(`  ✓ Twake Chat shared server (${name}): 127.0.0.1:${backend.backend.port}\n`);
+      else if (backend) {
+        // it holds the Matrix device, and every client of this agent waits for it: that is not healthy
+        healthy = false;
+        io.stdout(`  ✗ Twake Chat shared server (${name}): 127.0.0.1:${backend.backend.port}, pid ${backend.backend.pid}, does not answer (still starting, or busy)\n`);
+      }
     }
   }
   return healthy ? 0 : 1;

@@ -15,6 +15,8 @@ import { loadConfig, saveConfig } from '../src/config.js';
 import { startFakeCozy, type FakeCozy } from './helpers/fake-cozy.js';
 import { startFakeSynapse, type FakeSynapse } from './helpers/fake-synapse.js';
 import { fakeNpm } from './helpers/fake-mcp.js';
+import { fakeBackend } from './helpers/fake-backend.js';
+import { sharedDir } from '../src/shared.js';
 import { prefixDir, serverDir } from '../src/installer.js';
 import { shortcutPath } from '../src/self-install.js';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -567,6 +569,20 @@ describe('main: Twake Drive and Twake Chat', () => {
     expect(io.out).toContain('Cursor');
     expect(io.out).toMatch(/✓ twake-mail\s+in place/);
     expect(io.out).toMatch(/✓ Twake Chat \(cursor\): @alice:example.com/);
+  });
+
+  it('shows a shared Chat server that runs but does not answer as such, and exits with 1', { timeout: 30_000 }, async () => {
+    const { deps } = await readyForSetup();
+    deps.nodePath = process.execPath;
+    expect(await main(['setup', '--agents', 'cursor', '--services', 'mail,chat', '--yes'], captureIo(), deps)).toBe(0);
+    const busy = await fakeBackend(sharedDir(deps.paths, 'chat', 'cursor'), 'busy');
+    try {
+      const io = captureIo();
+      expect(await main(['status', '--no-start'], io, deps)).toBe(1);
+      expect(io.out).toContain(`✗ Twake Chat shared server (cursor): 127.0.0.1:${busy.port}, pid ${busy.pid}, does not answer`);
+    } finally {
+      busy.child.kill('SIGKILL');
+    }
   });
 
   it('says what is wrong, and exits with 1', async () => {

@@ -571,18 +571,27 @@ export async function withSharedStopped<T>(paths: AppPaths, service: ServiceId, 
   }, { timeoutMs: LOCK_MS });
 }
 
+/** A backend that runs for this account: `answers` is false while it is still starting, or too busy to say. */
+export interface RunningBackend {
+  service: ServiceId;
+  agent: string;
+  backend: SharedBackend;
+  answers: boolean;
+}
+
 /** Every backend running for this account, as `(service, agent)`, for `logout`, `uninstall` and `status`. */
-export async function runningBackends(paths: AppPaths): Promise<{ service: ServiceId; agent: string; backend: SharedBackend }[]> {
+export async function runningBackends(paths: AppPaths): Promise<RunningBackend[]> {
   const root = join(paths.dataDir, 'shared');
-  const found: { service: ServiceId; agent: string; backend: SharedBackend }[] = [];
+  const found: RunningBackend[] = [];
   for (const name of await readdir(root).catch(() => [] as string[])) {
     const [service, ...rest] = name.split('-');
     const agent = rest.join('-');
     if (!isSharedService(service as ServiceId) || !agent) continue;
     // a backend.json survives a reboot, and its pid may now belong to another process: only our server is reported, or
-    // one too busy to say, which `logout` must still try to stop
+    // one still starting or too busy to say, which `logout` must still try to stop
     const backend = await readBackend(join(root, name));
-    if (backend && (await probeBackend(join(root, name), backend)) !== 'foreign') found.push({ service: service as ServiceId, agent, backend });
+    const state = backend ? await probeBackend(join(root, name), backend) : 'foreign';
+    if (backend && state !== 'foreign') found.push({ service: service as ServiceId, agent, backend, answers: state === 'ours' });
   }
   return found;
 }
