@@ -205,7 +205,7 @@ export interface SharedBackendOptions {
   entry: string;
   /** mcp-twake-ai's own command, which watches the backend once its last client is gone */
   cliPath: string;
-  /** how long a starting backend may take to accept connections: Matrix signs in and syncs its rooms first */
+  /** how long a starting backend may take to answer: Matrix signs in and syncs its rooms first */
   readyMs?: number;
   /** how long a running backend that does not answer is asked again before the client gives up */
   busyMs?: number;
@@ -242,7 +242,9 @@ async function startBackend(options: SharedBackendOptions, dir: string): Promise
   await writePrivateFile(backendFile(dir), `${JSON.stringify(backend)}\n`);
   const deadline = Date.now() + (options.readyMs ?? 60_000);
   while (Date.now() < deadline) {
-    if ((await connects(port)) === 'open') {
+    // the server it started, and not whatever took the port it was given meanwhile (a sign-in and a first sync are long):
+    // that process lives, and the port takes the token of this start
+    if ((await probeBackend(dir, backend)) === 'ours') {
       await watchBackend(options, dir);
       return backend;
     }

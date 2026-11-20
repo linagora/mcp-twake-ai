@@ -311,6 +311,18 @@ describe('a shared service, when what answers on its port is not plainly its ser
     expect(alive(busy.pid)).toBe(true);
   });
 
+  it('does not take whatever listens on its port for the server it started', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    // what answers on the port turns the token of this start down: another process took it, or the server is not ours
+    await installFakeMcp(
+      paths,
+      'chat',
+      `import { createServer } from 'node:http';\ncreateServer((_req, res) => void res.writeHead(401).end()).listen(Number(process.env.MCP_HTTP_PORT), process.env.MCP_HTTP_HOST);\n`,
+    );
+    await expect(enterSharedBackend({ ...(await backendOptions(paths)), readyMs: 2_000 })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining('could not start') });
+    expect(await runningBackends(paths)).toEqual([]);
+  });
+
   it('neither stops nor forgets a server too busy to answer, and says so', { timeout: 30_000 }, async () => {
     const { paths } = await setup();
     const dir = sharedDir(paths, 'chat', 'claude-code');
