@@ -38,4 +38,6 @@ export interface AgentAdapter {
   read(): Promise<Record<string, Entry>>;
   /** sets and removes entries; on failure the agent is put back as it was, and the error is thrown */
   write(change: EntryChange): Promise<{ backup?: string }>;
+  /** the skill entries this agent should have (agents that read skills, see agents/skill.ts) */
+  skills?: Record<string, Entry>;
 }

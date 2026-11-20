@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- `setup` installs the `twake-batch-approval` skill for Claude Code (`~/.claude/skills/`) and Hermes (its `skills/` folder): before a series of writes, the agent proposes one approval for the exact list with the servers' `approve_batch`. The skill is an entry like the servers' (a hand-changed `SKILL.md` is left alone without `--force`, `uninstall` removes it), and `export` includes it.
 - `mcp-twake-ai call <service> <tool>` and `mcp-twake-ai tools <service>` run the command line of the installed Twake.ai server with your sign-in, its server started as agents start it (`run <service> --agent cli`, so Chat goes through its shared server). `mcp-twake-ai allow-unattended <name>` lets a cron write with `--yes --as <name>`; `status` lists the allowed names and `logout` forgets them. The journal never keeps the arguments of a call.
 
 ## [0.3.2] - 2026-11-17

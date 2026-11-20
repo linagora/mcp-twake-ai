@@ -7,7 +7,8 @@ import { claudeCodeAgent } from './claude-code.js';
 import { resolvePlan, type EntryAction } from './entries.js';
 import { hermesAgent } from './hermes.js';
 import { claudeDesktopAgent, cursorAgent, vscodeAgent } from './json-config.js';
-import { hermesHome, type Place } from './locations.js';
+import { claudeCodeSkills, hermesHome, pathOf, type Place } from './locations.js';
+import { batchSkillText, withSkills } from './skill.js';
 import { AGENT_IDS, type AgentAdapter, type AgentId } from './types.js';
 
 export interface AgentsDeps extends Place {
@@ -19,9 +20,12 @@ export interface AgentsDeps extends Place {
 /** The five agents mcp-twake-ai configures itself (spec §10.1). */
 export async function createAdapters(d: AgentsDeps): Promise<Record<AgentId, AgentAdapter>> {
   const place = { platform: d.platform, env: d.env, home: d.home };
+  const hermes = await hermesHome(place);
+  // the agents that read skills also get twake-batch-approval (spec §6)
+  const skill = await batchSkillText();
   return {
-    'claude-code': claudeCodeAgent(place, d.run),
-    hermes: hermesAgent(await hermesHome(place), d.now),
+    'claude-code': withSkills(claudeCodeAgent(place, d.run), claudeCodeSkills(place), skill),
+    hermes: withSkills(hermesAgent(hermes, d.now), pathOf(place).join(hermes, 'skills'), skill),
     'claude-desktop': claudeDesktopAgent(place, d.now),
     cursor: cursorAgent(place, d.now),
     vscode: vscodeAgent(place, d.now),

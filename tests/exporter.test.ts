@@ -41,7 +41,7 @@ async function context(): Promise<CatalogContext> {
 describe('exportFiles', () => {
   it('writes every format, each readable by its own parser, through the launcher', async () => {
     const files = await exportFiles({ agent: 'zed', services: ['mail', 'chat'], raw: false }, await context());
-    expect(Object.keys(files).sort()).toEqual(['README.md', 'chat.env', 'claude-code.sh', 'codex.toml', 'commands.txt', 'hermes.yaml', 'mail.env', 'mcpServers.json', 'vscode-mcp.json']);
+    expect(Object.keys(files).sort()).toEqual(['README.md', 'chat.env', 'claude-code.sh', 'codex.toml', 'commands.txt', 'hermes.yaml', 'mail.env', 'mcpServers.json', 'skills/twake-batch-approval/SKILL.md', 'vscode-mcp.json']);
     const launcher = { command: '/usr/bin/node', args: ['/opt/twake-ai/build/bin.js', 'run', 'mail', '--agent', 'zed'] };
     expect(JSON.parse(files['mcpServers.json']!).mcpServers['twake-mail']).toEqual(launcher);
     expect(JSON.parse(files['vscode-mcp.json']!).servers['twake-mail']).toEqual({ type: 'stdio', ...launcher });
