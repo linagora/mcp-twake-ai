@@ -112,9 +112,10 @@ function connects(port: number, timeoutMs = 500): Promise<'open' | 'refused' | '
  * - ours: the port answers our ping with JSON-RPC, and `/mcp` took our token, which was generated for this start and
  *   lived in a 0600 file.
  * - foreign: the process is gone, or the port is closed, or it turns our token down (401), or something answers that
- *   speaks no JSON-RPC — an unrelated process that inherited the pid after a reboot, or that holds the port.
- * - unknown: the process lives and the port is open, but no answer came (a Matrix sync keeping the server busy, a
- *   laptop waking up). Its state must not be forgotten then: the next client would start a second server on the same
+ *   speaks no JSON-RPC, or no HTTP at all — an unrelated process that inherited the pid after a reboot, or that holds
+ *   the port.
+ * - unknown: the process lives and the port is open, but no answer came in time (a Matrix sync keeping the server
+ *   busy, a laptop waking up). Its state must not be forgotten then: the next client would start a second server on the same
  *   store, and nothing could stop the first one any more.
  */
 export type BackendState = 'ours' | 'foreign' | 'unknown';
@@ -136,9 +137,10 @@ export async function probeBackend(dir: string, backend: SharedBackend): Promise
       return 'foreign';
     }
     return isJsonRpc(await answer.text()) ? 'ours' : 'foreign';
-  } catch {
-    // a timeout, or a connection reset while it answered: nothing says it is not ours
-    return 'unknown';
+  } catch (error) {
+    // no answer in time says nothing; an answer that is not HTTP (a banner, a reset) comes from something else
+    const name = (error as Error).name;
+    return name === 'TimeoutError' || name === 'AbortError' ? 'unknown' : 'foreign';
   }
 }
 

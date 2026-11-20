@@ -338,6 +338,17 @@ describe('a shared service, when what answers on its port is not plainly its ser
     expect(alive(stranger.pid)).toBe(true);
   });
 
+  it('takes what speaks no HTTP on its port for a stranger, not for a busy server', { timeout: 30_000 }, async () => {
+    const { paths } = await setup();
+    // after a reboot: the pid is some service's, and so is the port, which answers with a banner
+    const stranger = await fakeBackend(sharedDir(paths, 'chat', 'claude-code'), 'garbage');
+    bystanders.push(stranger.child);
+    expect(await runningBackends(paths)).toEqual([]);
+    const { backend } = await enterSharedBackend({ ...(await backendOptions(paths)), busyMs: 1_000 });
+    expect(backend.pid).not.toBe(stranger.pid);
+    expect(alive(stranger.pid)).toBe(true);
+  });
+
   it('keeps a server too busy to answer, and starts no second one on its store', { timeout: 30_000 }, async () => {
     const { paths } = await setup();
     const dir = sharedDir(paths, 'chat', 'claude-code');
