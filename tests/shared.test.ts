@@ -287,6 +287,21 @@ describe('a shared service, when the server or a client goes away', () => {
     expect(await client.exited).toBe(0);
   });
 
+  it('starts the next server on the device the agent has now', { timeout: 90_000 }, async () => {
+    const { root, paths } = await setup();
+    const client = await launch(root);
+    expect((await whoami(client)).env.MATRIX_STORE_DIR).toMatch(/DEVICEONE$/);
+    // what `login --chat` does: a new device recorded, the server of the old one stopped
+    await saveConfig(paths, { ...config, chat: { 'claude-code': { userId: '@jdoe:linagora.com', deviceId: 'DEVICETWO' } } });
+    expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
+
+    client.send({ id: 3, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
+    const answer = await client.next();
+    expect(JSON.parse(answer.result.content[0].text).env.MATRIX_STORE_DIR).toMatch(/DEVICETWO$/);
+    client.close();
+    await client.exited;
+  });
+
   it('exits, so that the agent starts it again, when no server can be found any more', { timeout: 90_000 }, async () => {
     const { root, paths } = await setup();
     const client = await launch(root);

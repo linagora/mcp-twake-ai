@@ -29,10 +29,14 @@ export interface LaunchDeps {
  */
 export async function runService(service: ServiceId, agent: string, deps: LaunchDeps): Promise<number> {
   checkAgentId(agent);
-  const config = await loadConfig(deps.paths);
-  if (!config) throw new TwakeAiError('login_required', 'mcp-twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
-  const built = serviceEnv(service, agent, { config, paths: deps.paths, nodePath: deps.nodePath, cliPath: deps.cliPath, platform: deps.platform, language: deps.language, timezone: deps.timezone });
-  if (isSharedService(service)) return runShared(service, agent, deps, built);
+  // read again at each start of a shared server: `login --chat` may have given the agent another device meanwhile
+  const build = async () => {
+    const config = await loadConfig(deps.paths);
+    if (!config) throw new TwakeAiError('login_required', 'mcp-twake-ai is not set up on this computer: run `mcp-twake-ai login --email <address>`.');
+    return serviceEnv(service, agent, { config, paths: deps.paths, nodePath: deps.nodePath, cliPath: deps.cliPath, platform: deps.platform, language: deps.language, timezone: deps.timezone });
+  };
+  const built = await build();
+  if (isSharedService(service)) return runShared(service, agent, deps, build);
   // what the agent's environment already sets wins (spec §9)
   const env = { ...built, ...deps.env };
   const entry = await entryPoint(deps.paths, service);
@@ -69,9 +73,8 @@ function serverSetting(name: string): boolean {
  * other client of that server. The rest of the process environment is inherited — home folder, keychain bus, proxies,
  * certificates — which the server and its token command need to reach the same keychain and network as any client.
  */
-async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, env: Record<string, string>): Promise<number> {
-  const inherited = Object.entries(stringEnv(deps.env)).filter(([name]) => !serverSetting(name));
-  const backendEnv = { ...Object.fromEntries(inherited), ...env };
+async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, build: () => Promise<Record<string, string>>): Promise<number> {
+  const inherited = Object.fromEntries(Object.entries(stringEnv(deps.env)).filter(([name]) => !serverSetting(name)));
   // a signal while the server starts stops this client's wait: the server goes on starting, for the next client
   const starting = new AbortController();
   let entering: Promise<unknown> = Promise.resolve();
@@ -106,7 +109,9 @@ async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, en
   const entry = await entryPoint(deps.paths, service);
   // this process registers as a client before the start returns, under the same lock the last client leaving takes
   const enter = async () => {
-    const entered = enterSharedBackend({ paths: deps.paths, service, agent, env: backendEnv, nodePath: deps.nodePath, cliPath: deps.cliPath, entry, signal: starting.signal });
+    // the device, hence the store, of the agent as configured now: a server started after `login --chat` uses the new one
+    const env = { ...inherited, ...(await build()) };
+    const entered = enterSharedBackend({ paths: deps.paths, service, agent, env, nodePath: deps.nodePath, cliPath: deps.cliPath, entry, signal: starting.signal });
     entering = entered;
     shared = await entered;
     return shared;
