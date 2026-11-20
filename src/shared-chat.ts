@@ -48,6 +48,17 @@ export function sharedChatFiles(paths: AppPaths, agent: string): { dir: string; 
   return { dir, state: join(dir, 'server.json'), log: join(dir, 'server.log') };
 }
 
+/** What turns mcp-twake-chat into the agent's shared server (spec §3.1), on top of serviceEnv('chat', agent). */
+export function sharedChatEnv(paths: AppPaths, agent: string): Record<string, string> {
+  return {
+    MCP_TRANSPORT: 'http',
+    MCP_HTTP_HOST: '127.0.0.1',
+    MCP_HTTP_PORT: '0',
+    MCP_HTTP_STATE_FILE: sharedChatFiles(paths, agent).state,
+    MCP_HTTP_EXIT_WHEN_IDLE_MS: '600000',
+  };
+}
+
 /** mcp-twake-chat 0.7.0 and later declare `"twake": { "sharedHttp": 1 }`: older ones keep running over stdio. */
 export async function supportsSharedHttp(paths: AppPaths): Promise<boolean> {
   const pkg = CATALOG.chat;
