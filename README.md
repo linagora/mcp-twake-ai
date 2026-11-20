@@ -194,7 +194,8 @@ So `run chat --agent <id>` does not start the server itself. The first client st
 - The other services are stateless: they keep one process per agent, as before.
 - The last client to leave stops the server; when a client is killed instead (a crash, `kill -9`), a watchdog stops it once nobody has used it for a few minutes, so nothing keeps syncing in the background.
 - Twake Chat closes a session left idle for hours: the next request opens a new one, and you see nothing of it.
-- `logout` and `uninstall` close the sessions and stop the shared servers before revoking anything.
+- A shared server that runs but does not answer (a long sync) is never replaced by a second one: the client fails after 10 s with the server's pid, and `logout` reports it instead of stopping it blindly.
+- `logout` and `uninstall` close the sessions and stop the shared servers before revoking anything; `login --chat` stops the agent's shared server before giving it a new device, and the next client starts one on that device.
 - The environment an agent sets for `twake-chat` is not passed on: it belongs to a process now shared with other clients.
 
 ### Any other agent: `export`
