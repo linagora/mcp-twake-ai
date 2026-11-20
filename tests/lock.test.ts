@@ -1,3 +1,5 @@
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { withLock } from '../src/lock.js';
@@ -52,4 +54,21 @@ describe('withLock', () => {
     const result = await withLock(paths.locksDir, 'oidc', () => withLock(paths.locksDir, 'vault-file', async () => 'nested', { timeoutMs: 300 }));
     expect(result).toBe('nested');
   });
+
+  it('fails cleanly, without an uncaught error, when its lock is taken away while it is held', { timeout: 20_000 }, async () => {
+    const { paths } = await tempPaths();
+    // what a long sleep or a clock jump past the stale time does: someone else may take the lock meanwhile
+    const result = withLock(
+      paths.locksDir,
+      'shared-chat-hermes',
+      async () => {
+        await rm(join(paths.locksDir, 'shared-chat-hermes.lock'), { recursive: true, force: true });
+        await sleep(2_500);
+        return 'done';
+      },
+      { staleMs: 2_000 },
+    );
+    await expect(result).rejects.toMatchObject({ code: 'lock_timeout', message: expect.stringContaining('lost') });
+  });
 });
+
