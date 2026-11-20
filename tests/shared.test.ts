@@ -157,10 +157,22 @@ describe('a shared service', () => {
   it('gives the server only the configuration mcp-twake-ai builds, whichever client starts it', { timeout: 90_000 }, async () => {
     const { root } = await setup();
     // what an agent's entry may set for twake-chat: it would reach every other client's server, as the first one wants
-    const client = await launch(root, { MATRIX_SEARCH_BACKFILL_DAYS: '7', MATRIX_USER_ID: '@someone-else:linagora.com' });
+    const client = await launch(root, {
+      MATRIX_SEARCH_BACKFILL_DAYS: '7',
+      MATRIX_USER_ID: '@someone-else:linagora.com',
+      TOM_URL: 'https://tom.elsewhere.example',
+      LOG_LEVEL: 'debug',
+      USER_LANGUAGE: 'xx',
+      MCP_HTTP_EXTRA: 'from the agent',
+    });
     const { env } = await whoami(client);
     expect(env.MATRIX_SEARCH_BACKFILL_DAYS).toBeUndefined();
     expect(env.MATRIX_USER_ID).toBe('@jdoe:linagora.com');
+    // this account has no ToM server: none is given, whatever the agent says
+    expect(env.TOM_URL).toBeUndefined();
+    expect(env.LOG_LEVEL).toBeUndefined();
+    expect(env.USER_LANGUAGE).toBe('en');
+    expect(env.MCP_HTTP_EXTRA).toBeUndefined();
     client.close();
     await client.exited;
   });

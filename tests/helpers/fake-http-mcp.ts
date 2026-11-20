@@ -20,7 +20,7 @@ import { McpServer } from '${sdk('server/mcp.js')}';
 import { StreamableHTTPServerTransport } from '${sdk('server/streamableHttp.js')}';
 
 const token = readFileSync(process.env.MCP_HTTP_TOKEN_FILE, 'utf8').trim();
-const environment = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(MATRIX|USER)_/.test(key)));
+const environment = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(MATRIX_|USER_|TOM_|MCP_|LOG_LEVEL$)/.test(key)));
 const started = Date.now();
 const text = (value) => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 
