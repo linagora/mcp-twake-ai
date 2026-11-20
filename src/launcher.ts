@@ -55,13 +55,23 @@ export async function runService(service: ServiceId, agent: string, deps: Launch
 }
 
 /**
+ * The variables mcp-twake-chat reads as its configuration (MATRIX_*, MCP_*, TOM_*, USER_LANGUAGE, USER_TIMEZONE,
+ * LOG_LEVEL): a shared server takes them from what mcp-twake-ai builds only, never from the client that happens to start
+ * it, so that it behaves the same whichever agent came first.
+ */
+function serverSetting(name: string): boolean {
+  return /^(MATRIX|MCP|TOM)_/.test(name) || ['USER_LANGUAGE', 'USER_TIMEZONE', 'LOG_LEVEL'].includes(name);
+}
+
+/**
  * `run` for a shared service: one backend per agent, started by the first client and stopped by the last one, and every
- * client bridged to a session of its own. The environment the agent sets for the service is not passed on: it belongs to
- * the process that starts the server, which here is shared with other clients. The process environment is inherited, so
- * that the backend finds the same home folder, keychain and network as its first client.
+ * client bridged to a session of its own. What the agent sets for the server is not passed on: it would reach every
+ * other client of that server. The rest of the process environment is inherited — home folder, keychain bus, proxies,
+ * certificates — which the server and its token command need to reach the same keychain and network as any client.
  */
 async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, env: Record<string, string>): Promise<number> {
-  const backendEnv = { ...stringEnv(deps.env), ...env };
+  const inherited = Object.entries(stringEnv(deps.env)).filter(([name]) => !serverSetting(name));
+  const backendEnv = { ...Object.fromEntries(inherited), ...env };
   // a signal during the start stops the server this client was starting: see the handlers below
   const starting = new AbortController();
   let entering: Promise<unknown> = Promise.resolve();

@@ -63,10 +63,10 @@ async function setup() {
 }
 
 /** `mcp-twake-ai run chat --agent claude-code`, as an agent starts it, with a JSON-RPC client on its stdio. */
-async function launch(root: string) {
+async function launch(root: string, env: Record<string, string> = {}) {
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/bin.ts', 'run', 'chat', '--agent', 'claude-code'], {
     cwd: repoRoot,
-    env: { ...process.env, TWAKE_AI_HOME: root, LANG: 'en_US.UTF-8' },
+    env: { ...process.env, TWAKE_AI_HOME: root, LANG: 'en_US.UTF-8', ...env },
   });
   running.push(child);
   const lines: unknown[] = [];
@@ -150,6 +150,17 @@ describe('a shared service', () => {
     await expect.poll(() => alive(pid), { timeout: 15_000 }).toBe(false);
     expect(await runningBackends(paths)).toEqual([]);
     client.close();
+  });
+
+  it('gives the server only the configuration mcp-twake-ai builds, whichever client starts it', { timeout: 90_000 }, async () => {
+    const { root } = await setup();
+    // what an agent's entry may set for twake-chat: it would reach every other client's server, as the first one wants
+    const client = await launch(root, { MATRIX_SEARCH_BACKFILL_DAYS: '7', MATRIX_USER_ID: '@someone-else:linagora.com' });
+    const { env } = await whoami(client);
+    expect(env.MATRIX_SEARCH_BACKFILL_DAYS).toBeUndefined();
+    expect(env.MATRIX_USER_ID).toBe('@jdoe:linagora.com');
+    client.close();
+    await client.exited;
   });
 
   it('leaves the other services to their own process', { timeout: 30_000 }, async () => {

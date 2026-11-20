@@ -196,7 +196,7 @@ So `run chat --agent <id>` does not start the server itself. The first client st
 - Twake Chat closes a session left idle for hours: the next request opens a new one, and you see nothing of it.
 - A shared server that runs but does not answer (a long sync) is never replaced by a second one: the client fails after 10 s with the server's pid, and `logout` reports it instead of stopping it blindly.
 - `logout` and `uninstall` close the sessions and stop the shared servers before revoking anything; `login --chat` stops the agent's shared server before giving it a new device, and the next client starts one on that device.
-- The environment an agent sets for `twake-chat` is not passed on: it belongs to a process now shared with other clients.
+- What an agent's entry sets for `twake-chat` (`MATRIX_*`, `MCP_*`, `TOM_*`, `USER_LANGUAGE`, `USER_TIMEZONE`, `LOG_LEVEL`) is not passed on: the shared server would apply it to every other client. Its configuration is only what mcp-twake-ai builds, so it behaves the same whichever agent starts it; the rest of the environment (home folder, keychain, proxies, certificates) is inherited from the client that starts it.
 
 ### Any other agent: `export`
 
