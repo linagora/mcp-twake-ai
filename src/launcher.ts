@@ -92,20 +92,16 @@ async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, en
     process.once(signal, handler);
     return [signal, handler] as const;
   });
-  try {
-    // this process registers as a client before the start returns, under the same lock the last client leaving takes
-    const entered = enterSharedBackend({
-      paths: deps.paths,
-      service,
-      agent,
-      env: backendEnv,
-      nodePath: deps.nodePath,
-      cliPath: deps.cliPath,
-      entry: await entryPoint(deps.paths, service),
-      signal: starting.signal,
-    });
+  const entry = await entryPoint(deps.paths, service);
+  // this process registers as a client before the start returns, under the same lock the last client leaving takes
+  const enter = async () => {
+    const entered = enterSharedBackend({ paths: deps.paths, service, agent, env: backendEnv, nodePath: deps.nodePath, cliPath: deps.cliPath, entry, signal: starting.signal });
     entering = entered;
     shared = await entered;
+    return shared;
+  };
+  try {
+    shared = await enter();
     // the watchdog believes a client's pid only while its entry is touched: a pid is soon someone else's on some systems
     stopBeat = keepSharedClient(deps.paths, service, agent);
     return await proxyShared({
@@ -116,6 +112,11 @@ async function runShared(service: ServiceId, agent: string, deps: LaunchDeps, en
       onSession: (id) => {
         session = id;
         void setSharedSession(deps.paths, service, agent, id);
+      },
+      // the server went under a connected client: the one running now, or a new one, as at the start
+      reconnect: async () => {
+        const next = await enter();
+        return { url: backendUrl(next.backend), token: next.token };
       },
     });
   } finally {

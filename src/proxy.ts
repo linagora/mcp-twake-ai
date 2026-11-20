@@ -20,6 +20,11 @@ export interface ProxyOptions {
   readyMs?: number;
   /** the id of the upstream session, as it opens and when it is closed: `stop` deletes them before stopping the server */
   onSession?: (sessionId: string | undefined) => void;
+  /**
+   * where the shared server is now, once ours stopped answering (stopped by `login --chat`, a crash, the watchdog):
+   * found, or started, as `run` did at first. When it fails, the relay ends and `run` exits, so the agent starts it again
+   */
+  reconnect?: () => Promise<{ url: string; token: string }>;
   /** where to say what the relay cannot pass on; never stdout, which carries JSON-RPC */
   log?: (line: string) => void;
 }
@@ -27,6 +32,16 @@ export interface ProxyOptions {
 /** True for the 404 the shared server answers once its idle sweep has closed our session ("initialize again"). */
 function sessionGone(error: unknown): boolean {
   return error instanceof StreamableHTTPError && error.code === 404;
+}
+
+/**
+ * True when our server is no longer there: nothing listens on its port any more, or what listens there now turns our
+ * token down (another start, with a token of its own).
+ */
+function serverGone(error: unknown): boolean {
+  if (error instanceof StreamableHTTPError) return error.code === 401;
+  const cause = error instanceof Error ? (error.cause as { code?: unknown } | undefined) : undefined;
+  return error instanceof TypeError && (cause?.code === 'ECONNREFUSED' || cause?.code === 'ECONNRESET');
 }
 
 function isInitialize(message: JSONRPCMessage): message is JSONRPCRequest {
@@ -68,11 +83,20 @@ class Relay {
   /** the relay has completed the handshake: the agent's own `notifications/initialized` has nothing left to say */
   private handed = false;
   private replays = 0;
+  /** where the server is: it changes when ours went and another one was found */
+  private url: string;
+  private token: string;
+  /** resolved with the exit code when the relay cannot go on: no server could be found any more */
+  readonly ended: Promise<number>;
+  private end: (code: number) => void = () => {};
 
   constructor(
     private readonly stdio: StdioServerTransport,
     private readonly options: ProxyOptions,
   ) {
+    this.url = options.url;
+    this.token = options.token;
+    this.ended = new Promise((resolve) => (this.end = resolve));
     stdio.onmessage = (message) => this.enqueue(message);
   }
 
@@ -97,10 +121,15 @@ class Relay {
           await this.upstream?.send(message);
           return;
         } catch (error) {
-          if (!sessionGone(error) || again) throw error;
+          if (again || !(sessionGone(error) || (serverGone(error) && this.options.reconnect))) throw error;
           again = true;
-          this.log(`the shared server closed its session: opening another one`);
           await this.closeUpstream();
+          if (sessionGone(error)) {
+            this.log(`the shared server closed its session: opening another one`);
+          } else {
+            this.log(`the shared server is gone: looking for the next one`);
+            await this.findServer();
+          }
         }
       } else {
         return;
@@ -113,8 +142,8 @@ class Relay {
     const opening = forward ?? this.replay();
     const deadline = this.opened ? Date.now() : Date.now() + (this.options.readyMs ?? 30_000);
     for (;;) {
-      const transport = new StreamableHTTPClientTransport(new URL(this.options.url), {
-        requestInit: { headers: { authorization: `Bearer ${this.options.token}` } },
+      const transport = new StreamableHTTPClientTransport(new URL(this.url), {
+        requestInit: { headers: { authorization: `Bearer ${this.token}` } },
       });
       transport.onmessage = (message) => this.fromUpstream(message);
       transport.onerror = (error) => this.report(undefined, error);
@@ -143,6 +172,18 @@ class Relay {
       this.opened = true;
       this.options.onSession?.(transport.sessionId);
       return;
+    }
+  }
+
+  /** Moves to the server `run` finds now, or ends the relay when there is none: the message still gets its error. */
+  private async findServer(): Promise<void> {
+    try {
+      const found = await this.options.reconnect!();
+      this.url = found.url;
+      this.token = found.token;
+    } catch (error) {
+      this.end(1);
+      throw error;
     }
   }
 
@@ -204,6 +245,11 @@ class Relay {
     const upstream = this.upstream;
     this.upstream = undefined;
     this.options.onSession?.(undefined);
+    if (upstream) {
+      // a server that is gone has nothing more to say: its stream's last error is no news
+      upstream.onmessage = undefined;
+      upstream.onerror = undefined;
+    }
     await upstream?.close().catch(() => {});
   }
 
@@ -220,15 +266,23 @@ class Relay {
   }
 }
 
-/** Bridges an agent's stdio to one MCP session of the shared backend until the agent closes its side of the pipe. */
+/**
+ * Bridges an agent's stdio to one MCP session of the shared backend until the agent closes its side of the pipe (0), or
+ * until no server can be found any more (1): the agent then sees its server exit, and starts it again.
+ */
 export async function proxyShared(options: ProxyOptions): Promise<number> {
   const stdio = new StdioServerTransport();
   const relay = new Relay(stdio, options);
   await stdio.start();
-  await new Promise<void>((resolve) => {
-    process.stdin.once('end', resolve);
-    process.stdin.once('close', resolve);
-  });
+  const code = await Promise.race([
+    new Promise<number>((resolve) => {
+      process.stdin.once('end', () => resolve(0));
+      process.stdin.once('close', () => resolve(0));
+    }),
+    relay.ended,
+  ]);
   await relay.close();
-  return 0;
+  // stdin is no longer read: a relay that ended while the agent still holds the pipe lets the process exit
+  await stdio.close();
+  return code;
 }

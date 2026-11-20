@@ -242,6 +242,36 @@ describe('a shared service, when the server or a client goes away', () => {
     await second.exited;
   });
 
+  it('finds the next server when its own was stopped under it', { timeout: 90_000 }, async () => {
+    const { root, paths } = await setup();
+    const client = await launch(root);
+    const before = await whoami(client);
+    // what `login --chat`, a crash or the watchdog leave a connected client with: no server on that port any more
+    expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
+
+    client.send({ id: 3, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
+    const answer = await client.next();
+    expect(answer.error).toBeUndefined();
+    const after = JSON.parse(answer.result.content[0].text) as { pid: number };
+    expect(after.pid).not.toBe(before.pid);
+    expect(alive(after.pid)).toBe(true);
+    client.close();
+    expect(await client.exited).toBe(0);
+  });
+
+  it('exits, so that the agent starts it again, when no server can be found any more', { timeout: 90_000 }, async () => {
+    const { root, paths } = await setup();
+    const client = await launch(root);
+    await whoami(client);
+    expect(await stopShared(paths, 'chat', 'claude-code')).toBe(true);
+    // the next start fails at once
+    await installFakeMcp(paths, 'chat', `process.stderr.write('no Matrix today\\n');\nprocess.exit(1);\n`);
+
+    client.send({ id: 3, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
+    expect(await client.next()).toMatchObject({ id: 3, error: { code: -32603 } });
+    expect(await client.exited).not.toBe(0);
+  });
+
   it('opens a new session when the server closed ours', { timeout: 90_000 }, async () => {
     const { root } = await setup();
     const client = await launch(root);
